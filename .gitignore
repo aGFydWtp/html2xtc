@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.wrangler/
+.dev.vars
+worker-configuration.d.ts
+
+.venv/
+__pycache__/
+.pytest_cache/
+
+.DS_Store

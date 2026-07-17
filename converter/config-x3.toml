@@ -1,0 +1,37 @@
+# xtctool config for the Xteink X3 (528x792 target resolution).
+# Schema follows xtctool's DEFAULT_CONFIG; user values are shallow-merged.
+
+[output]
+width = 528
+height = 792
+# Frame format inside the .xtc container: "xth" = 4-level grayscale, "xtg" = 1-bit.
+# Must be "xtg": crosspoint firmware (v0.1.7) treats the "XTC\0" container magic
+# as 1-bit XTG frames only; XTH frames inside .xtc fail with INVALID_MAGIC
+# ("ページ読み込みエラー"). 4-level grayscale would need the ".xtch" container,
+# which xtctool does not emit. Bonus: halves the output size (~51KB/page).
+format = "xtg"
+# BOX suits text-heavy pages; use "LANCZOS" instead for photo-heavy sources.
+resample_method = "BOX"
+title = ""
+author = ""
+publisher = ""
+language = "ja-JP"
+direction = "ltr"
+
+[pdf]
+# xtctool default is 144; 200 keeps small print legible on the X3.
+resolution = 200
+
+[xth]
+threshold1 = 85
+threshold2 = 170
+threshold3 = 255
+invert = false
+dither = true
+dither_strength = 0.8
+
+[xtg]
+threshold = 128
+invert = false
+dither = true
+dither_strength = 0.8

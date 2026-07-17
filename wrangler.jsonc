@@ -1,0 +1,90 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "url-to-xtc",
+	"main": "src/index.ts",
+	// quickAction requires compatibility_date >= 2026-03-24
+	"compatibility_date": "2026-07-01",
+	"browser": {
+		"binding": "BROWSER",
+		// Without remote:true, quickAction fails in local `wrangler dev`
+		// ("The RPC receiver does not implement the method").
+		"remote": true
+	},
+	"r2_buckets": [
+		{
+			"binding": "XTC_BUCKET",
+			"bucket_name": "xteink-conversions"
+		}
+	],
+	"containers": [
+		{
+			"class_name": "XtcConverterContainer",
+			"image": "./converter/Dockerfile",
+			"max_instances": 2,
+			// Default is "lite" (256MiB); PyMuPDF rasterization needs more headroom.
+			"instance_type": "basic"
+		}
+	],
+	"workflows": [
+		{
+			"name": "xtc-convert",
+			"binding": "CONVERT_WORKFLOW",
+			// Exported from src/index.ts (defined in src/workflow.ts).
+			// No migrations entry needed: those apply to DO classes only.
+			"class_name": "ConvertWorkflow"
+		}
+	],
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "XTC_CONVERTER",
+				"class_name": "XtcConverterContainer"
+			}
+		]
+	},
+	"migrations": [
+		{
+			"tag": "v1",
+			// Container classes require new_sqlite_classes (new_classes is rejected).
+			"new_sqlite_classes": [
+				"XtcConverterContainer"
+			]
+		}
+	],
+	"assets": {
+		// Mobile WebUI (single page, no build step). Served directly by the
+		// edge without invoking the Worker, so checkAuth/authorize never runs
+		// for these files; protection comes from the Cloudflare Access app on
+		// the workers.dev host (see claudedocs/deploy-guide.md, Phase 4).
+		"directory": "./public",
+		// API paths always hit the Worker first, even if an asset with the
+		// same name ever appears under public/.
+		"run_worker_first": [
+			"/convert",
+			"/jobs",
+			"/jobs/*",
+			"/download/*"
+		]
+	},
+	"routes": [
+		{
+			// Custom domain on the hr20k.com zone (same Cloudflare account).
+			// Deploy auto-creates the DNS record and certificate. The Access
+			// app must also cover this hostname or the static UI is exposed
+			// (API paths still require the Access JWT via authorize()).
+			"pattern": "xtc.hr20k.com",
+			"custom_domain": true
+		}
+	],
+	"vars": {
+		// Enables in-Worker verification of the edge Access JWT (auth.ts).
+		// Not secrets: both values appear in the public Access login redirect.
+		// ACCESS_POLICY_AUD is the Access application's AUD tag; it changes
+		// only if the Access app is deleted and recreated.
+		"ACCESS_TEAM_DOMAIN": "https://hr20k.cloudflareaccess.com",
+		"ACCESS_POLICY_AUD": "4791af6175c765a9bb745b9855b6a43e5d6a5b5e57b43f549b0cbec1b26f0ef5"
+	},
+	"observability": {
+		"enabled": true
+	}
+}

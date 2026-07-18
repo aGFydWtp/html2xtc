@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 haruki
+# Copyright (C) 2026 aGFydWtp
 #
 # 正規デプロイスクリプト。
 # AGPL-3.0 対応のため、稼働版（デプロイされたコード）と公開ソースの対応を

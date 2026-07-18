@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2026 haruki
+// Copyright (C) 2026 aGFydWtp
 
 import { decodeTitleHeader, outputXtcKey } from "./jobs";
 import type { Env } from "./types";

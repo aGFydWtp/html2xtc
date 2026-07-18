@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 haruki
+# Copyright (C) 2026 aGFydWtp
 
 # --- builder: clone + install xtctool into a venv -------------------------
 # xtctool needs Python 3.11+ (tomllib); all deps ship amd64 wheels, so no

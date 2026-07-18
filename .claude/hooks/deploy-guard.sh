@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 haruki
+# Copyright (C) 2026 aGFydWtp
 #
 # Claude Code PreToolUse hook: wrangler deploy 系コマンドの直接実行をブロックし、
 # scripts/deploy.sh（npm run deploy）経由のデプロイに誘導する。

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 haruki
+
 import type { Env } from "./types";
 
 // Print CSS for the Xteink X3 page geometry (66mm x 99mm at 4mm margins).

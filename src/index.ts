@@ -278,53 +278,54 @@ async function handleConvert(request: Request, env: Env): Promise<Response> {
     console.error(`[${jobId}] R2 put ${pdfKey} failed`, putResult.reason);
   }
 
-  if (convertResult.status === "rejected") {
-    console.error(`[${jobId}] converter fetch failed`, convertResult.reason);
-    await deleteBestEffort(env, pdfKey);
-    return Response.json(
-      { error: "conversion service unavailable", jobId },
-      { status: 502 },
-    );
-  }
-
-  const converterResponse = convertResult.value;
-  if (!converterResponse.ok) {
-    console.error(
-      `[${jobId}] converter returned ${converterResponse.status}: ${await converterResponse.text()}`,
-    );
-    await deleteBestEffort(env, pdfKey);
-    // A container 413 means the PDF passed the Worker's own size check but the
-    // container still rejected it as oversized; surface it as a size error
-    // that matches the up-front 422 above rather than the generic failure.
-    if (converterResponse.status === 413) {
+  try {
+    if (convertResult.status === "rejected") {
+      console.error(`[${jobId}] converter fetch failed`, convertResult.reason);
       return Response.json(
-        {
-          error: `rendered PDF exceeds the ${maxPdfBytes} byte limit; try a shorter page`,
-          jobId,
-        },
-        { status: 422 },
+        { error: "conversion service unavailable", jobId },
+        { status: 502 },
       );
     }
-    return Response.json({ error: "XTC conversion failed", jobId }, { status: 422 });
+
+    const converterResponse = convertResult.value;
+    if (!converterResponse.ok) {
+      console.error(
+        `[${jobId}] converter returned ${converterResponse.status}: ${await converterResponse.text()}`,
+      );
+      // A container 413 means the PDF passed the Worker's own size check but
+      // the container still rejected it as oversized; surface it as a size
+      // error that matches the up-front 422 above rather than the generic
+      // failure.
+      if (converterResponse.status === 413) {
+        return Response.json(
+          {
+            error: `rendered PDF exceeds the ${maxPdfBytes} byte limit; try a shorter page`,
+            jobId,
+          },
+          { status: 422 },
+        );
+      }
+      return Response.json({ error: "XTC conversion failed", jobId }, { status: 422 });
+    }
+
+    let title: string | undefined;
+    try {
+      ({ title } = await storeXtcOutput(env, jobId, converterResponse));
+    } catch (error) {
+      console.error(`[${jobId}] R2 put output.xtc failed`, error);
+      return Response.json({ error: "storage error", jobId }, { status: 500 });
+    }
+
+    return Response.json({
+      jobId,
+      downloadUrl: `/download/${jobId}`,
+      ...(title !== undefined ? { title } : {}),
+    });
+  } finally {
+    // The sync path never reads the PDF back (conversion used the in-memory
+    // bytes); success or failure, the diagnostic copy has served its purpose.
+    await deleteBestEffort(env, pdfKey);
   }
-
-  let title: string | undefined;
-  try {
-    ({ title } = await storeXtcOutput(env, jobId, converterResponse));
-  } catch (error) {
-    console.error(`[${jobId}] R2 put output.xtc failed`, error);
-    return Response.json({ error: "storage error", jobId }, { status: 500 });
-  }
-
-  // The sync path never reads the PDF back (conversion used the in-memory
-  // bytes), so once the XTC is stored the diagnostic copy can go too.
-  await deleteBestEffort(env, pdfKey);
-
-  return Response.json({
-    jobId,
-    downloadUrl: `/download/${jobId}`,
-    ...(title !== undefined ? { title } : {}),
-  });
 }
 
 async function deleteBestEffort(env: Env, key: string): Promise<void> {

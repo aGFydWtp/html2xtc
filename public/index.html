@@ -146,7 +146,7 @@
     <p class="intro" data-i18n="intro">記事の URL を入れるだけで、電子ペーパー端末 Xteink X3 用の XTC ファイルに変換します。登録は不要です。有料記事、会員限定ページなどアクセスが制限されたコンテンツは対象外です。変換には使用しないでください。</p>
     <details class="x3-note">
       <summary>
-        <b data-i18n="x3_title">X3 用ってどういうこと？</b>
+        <b data-i18n="x3_title">X3 用とは</b>
         <span class="caret" aria-hidden="true">▼</span>
       </summary>
       <span class="x3-body" data-i18n="x3_body">記事をX3の画面サイズ（66×99mm・528×792px）に合わせた印刷レイアウトに整え、200dpiでレンダリングしたうえで、1-bit（ディザリングあり）のXTCに変換します。E-ink上で文字がかすれにくいよう、本文の文字色を黒に調整します。また、印刷時に通常不要となるナビゲーション、広告、Cookie同意バナーなどの表示要素は、可能な範囲で非表示にします。</span>
@@ -171,11 +171,8 @@
     <ul id="jobs" class="jobs"></ul>
     <p id="empty" class="empty" style="display:none" data-i18n="empty">まだ履歴はありません。</p>
     <footer class="site">
-      <span data-i18n="footer_note">送信された URL・ジョブ情報・生成ファイルはサーバー上に約 24 時間保存された後、自動的に削除されます。</span><br>
-      <span data-i18n="footer_note2">本サービス独自のアカウント登録や、広告・マーケティング目的のアクセス解析はありません。履歴はこのブラウザ内にのみ残ります。フォントの配信に Google Fonts を利用しています。</span><br>
-      <a href="/about" data-i18n="about_link">このサービスについて（利用規約・連絡先）</a><br>
-      <span data-i18n="copyright_line">© 2026 aGFydWtp ・ 本サービスは GNU AGPL-3.0-or-later のもとで、無保証で提供されます。</span><br>
-      <a id="source-link" href="https://github.com/aGFydWtp/html2xtc" target="_blank" rel="noopener" data-i18n="source_link">本サービスのソースコード（AGPL-3.0-or-later）</a><span id="running-commit" hidden>（<span data-i18n="running_commit_label">稼働中のソースコード: commit </span><span id="commit-short"></span>）</span> ・ <a id="license-link" href="https://github.com/aGFydWtp/html2xtc/blob/main/LICENSE" target="_blank" rel="noopener" data-i18n="license_link">ライセンス</a>
+      <a href="/about" data-i18n="about_link">このサービスについて</a><br>
+      <span data-i18n="copyright_line">© 2026 aGFydWtp</span>
     </footer>
   </section>
 </main>
@@ -187,7 +184,7 @@ const I18N = {
   ja: {
     brand: "XTC 変換",
     intro: "記事の URL を入れるだけで、電子ペーパー端末 Xteink X3 用の XTC ファイルに変換します。登録は不要です。有料記事、会員限定ページなどアクセスが制限されたコンテンツは対象外です。変換には使用しないでください。",
-    x3_title: "X3 用ってどういうこと？",
+    x3_title: "X3 用とは",
     x3_body: "記事をX3の画面サイズ（66×99mm・528×792px）に合わせた印刷レイアウトに整え、200dpiでレンダリングしたうえで、1-bit（ディザリングあり）のXTCに変換します。E-ink上で文字がかすれにくいよう、本文の文字色を黒に調整します。また、印刷時に通常不要となるナビゲーション、広告、Cookie同意バナーなどの表示要素は、可能な範囲で非表示にします。",
     convert: "変換する",
     form_note: "変換には 1〜2 分ほどかかります。生成されたファイルは約 24 時間後に自動削除されます。",
@@ -197,13 +194,8 @@ const I18N = {
     history: "履歴",
     clear_all: "すべて削除",
     empty: "まだ履歴はありません。",
-    footer_note: "送信された URL・ジョブ情報・生成ファイルはサーバー上に約 24 時間保存された後、自動的に削除されます。",
-    footer_note2: "本サービス独自のアカウント登録や、広告・マーケティング目的のアクセス解析はありません。履歴はこのブラウザ内にのみ残ります。フォントの配信に Google Fonts を利用しています。",
-    about_link: "このサービスについて（利用規約・連絡先）",
-    copyright_line: "© 2026 aGFydWtp ・ 本サービスは GNU AGPL-3.0-or-later のもとで、無保証で提供されます。",
-    source_link: "本サービスのソースコード（AGPL-3.0-or-later）",
-    running_commit_label: "稼働中のソースコード: commit ",
-    license_link: "ライセンス",
+    about_link: "このサービスについて",
+    copyright_line: "© 2026 aGFydWtp",
     dl: "XTC をダウンロード",
     dl_small: "XTC ↓",
     confirm_clear: "履歴をすべて削除しますか？（サーバー上のファイルは削除されません）",
@@ -226,13 +218,8 @@ const I18N = {
     history: "History",
     clear_all: "Clear all",
     empty: "No history yet.",
-    footer_note: "Submitted URLs, job data and generated files are kept on the server for about 24 hours and then deleted automatically.",
-    footer_note2: "No accounts of our own, no ad or marketing analytics. History is stored only in this browser. Fonts are served from Google Fonts.",
-    about_link: "About this service (terms & contact)",
-    copyright_line: "© 2026 aGFydWtp · This service is provided under the GNU AGPL-3.0-or-later, without any warranty.",
-    source_link: "Source code of this service (AGPL-3.0-or-later)",
-    running_commit_label: "running source code: commit ",
-    license_link: "License",
+    about_link: "About this service",
+    copyright_line: "© 2026 aGFydWtp",
     dl: "Download XTC",
     dl_small: "XTC \u2193",
     confirm_clear: "Delete all history? (Files on the server are not deleted.)",
@@ -556,23 +543,6 @@ $("lang-en").addEventListener("click", () => { lang = "en"; localStorage.setItem
 applyLang();
 refreshStale();
 
-// --- 稼働コミット表示（AGPL 対応: 稼働版と対応するソースの特定用）--------------
-// デプロイ時に scripts/deploy.sh が生成する /version.json を取得できた場合のみ
-// 表示する。取得失敗時（ローカル開発など）は非表示のまま、リポジトリトップへの
-// リンクだけが残る。
-fetch("/version.json", { cache: "no-store" })
-  .then((res) => (res.ok ? res.json() : null))
-  .then((v) => {
-    if (!v || typeof v.commit !== "string" || !/^[0-9a-f]{40}$/.test(v.commit)) return;
-    const short = typeof v.short === "string" && /^[0-9a-f]{4,40}$/.test(v.short)
-      ? v.short : v.commit.slice(0, 7);
-    const repo = "https://github.com/aGFydWtp/html2xtc";
-    $("source-link").href = `${repo}/tree/${v.commit}`;
-    $("license-link").href = `${repo}/blob/${v.commit}/LICENSE`;
-    $("commit-short").textContent = short;
-    $("running-commit").hidden = false;
-  })
-  .catch(() => { /* version.json なし: 非表示のまま */ });
 </script>
 </body>
 </html>

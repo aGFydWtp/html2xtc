@@ -72,6 +72,21 @@ class ActiveRequestTracker:
 ACTIVE_REQUESTS = ActiveRequestTracker()
 
 
+def effective_max_pdf_bytes(headers) -> int:
+    """Size limit for the incoming PDF. The Worker owns the authoritative
+    limit and passes it via X-Max-Pdf-Bytes; fall back to the module default
+    (env MAX_PDF_BYTES) when the header is absent or not a positive integer."""
+    raw = headers.get("X-Max-Pdf-Bytes")
+    if raw is not None:
+        try:
+            value = int(raw)
+        except ValueError:
+            value = 0
+        if value > 0:
+            return value
+    return MAX_PDF_BYTES
+
+
 class ConversionError(Exception):
     def __init__(self, message: str, stderr: str = "") -> None:
         super().__init__(message)
@@ -236,11 +251,12 @@ class Handler(BaseHTTPRequestHandler):
                 400, {"error": "request body (PDF bytes) is required"}, close=True
             )
             return
-        if content_length > MAX_PDF_BYTES:
+        max_pdf_bytes = effective_max_pdf_bytes(self.headers)
+        if content_length > max_pdf_bytes:
             # Body is never read, so the connection cannot be reused.
             self._send_json(
                 413,
-                {"error": f"request body exceeds the {MAX_PDF_BYTES} byte limit"},
+                {"error": f"request body exceeds the {max_pdf_bytes} byte limit"},
                 close=True,
             )
             return

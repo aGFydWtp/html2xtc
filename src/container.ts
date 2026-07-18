@@ -1,4 +1,5 @@
 import { Container, getContainer } from "@cloudflare/containers";
+import { resolveMaxPdfBytes } from "./jobs";
 import type { Env } from "./types";
 
 export class XtcConverterContainer extends Container {
@@ -32,7 +33,12 @@ export function convertInContainer(
   return container.fetch(
     new Request("http://converter/convert", {
       method: "POST",
-      headers: { "Content-Type": "application/pdf" },
+      headers: {
+        "Content-Type": "application/pdf",
+        // Worker owns the authoritative size limit; tell the container so its
+        // 413 threshold tracks resolveMaxPdfBytes instead of its own default.
+        "X-Max-Pdf-Bytes": String(resolveMaxPdfBytes(env)),
+      },
       body: pdfBytes,
       signal: AbortSignal.timeout(timeoutMs),
     }),

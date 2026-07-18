@@ -2,7 +2,6 @@ import { authorize } from "./auth";
 import { convertInContainer } from "./container";
 import {
   decideMissingDownload,
-  decodeTitleHeader,
   intermediatePdfKey,
   mapInstanceStatus,
   needsPhaseProbe,
@@ -11,6 +10,7 @@ import {
   xtcContentDisposition,
 } from "./jobs";
 import { renderPdf } from "./pdf";
+import { storeXtcOutput } from "./pipeline";
 import type { Env } from "./types";
 import { UrlValidationError, validatePublicUrl } from "./validate";
 
@@ -279,19 +279,24 @@ async function handleConvert(request: Request, env: Env): Promise<Response> {
       `[${jobId}] converter returned ${converterResponse.status}: ${await converterResponse.text()}`,
     );
     await deleteBestEffort(env, pdfKey);
+    // A container 413 means the PDF passed the Worker's own size check but the
+    // container still rejected it as oversized; surface it as a size error
+    // that matches the up-front 422 above rather than the generic failure.
+    if (converterResponse.status === 413) {
+      return Response.json(
+        {
+          error: `rendered PDF exceeds the ${maxPdfBytes} byte limit; try a shorter page`,
+          jobId,
+        },
+        { status: 422 },
+      );
+    }
     return Response.json({ error: "XTC conversion failed", jobId }, { status: 422 });
   }
 
-  // Page title extracted from the PDF by converter/app.py; best-effort.
-  const title = decodeTitleHeader(converterResponse.headers.get("X-Xtc-Title"));
-  const xtcBytes = await converterResponse.arrayBuffer();
+  let title: string | undefined;
   try {
-    await env.XTC_BUCKET.put(outputXtcKey(jobId), xtcBytes, {
-      httpMetadata: { contentType: "application/octet-stream" },
-      // The download handler reads the title back from here for the
-      // Content-Disposition filename.
-      customMetadata: title !== undefined ? { title } : undefined,
-    });
+    ({ title } = await storeXtcOutput(env, jobId, converterResponse));
   } catch (error) {
     console.error(`[${jobId}] R2 put output.xtc failed`, error);
     return Response.json({ error: "storage error", jobId }, { status: 500 });

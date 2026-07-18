@@ -24,7 +24,7 @@ npm run deploy
 
 ## 成功時の動作
 
-wrangler deploy 成功後、`deploy-<UTC日時>`（例: `deploy-20260718-123456Z`）という annotated タグが自動作成され、origin へ push される。
+wrangler deploy 成功後、`deploy-<UTC日時>-<短縮コミットハッシュ>`（例: `deploy-20260718-123456Z-6c8f88d`）という annotated タグが自動作成され、origin へ push される。
 
 ## 理由
 

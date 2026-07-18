@@ -15,16 +15,12 @@ fi
 INPUT="$(cat)"
 COMMAND="$(printf '%s' "$INPUT" | jq -r '.tool_input.command // ""' 2>/dev/null)" || exit 0
 
-# 正規ルート（scripts/deploy.sh / npm run deploy）は許可
-case "$COMMAND" in
-  *scripts/deploy.sh*|*"npm run deploy"*)
-    exit 0
-    ;;
-esac
-
 # wrangler deploy / wrangler versions upload / wrangler versions deploy をブロック
-# （npx/bunx 経由や引数付きも含む）
-if printf '%s' "$COMMAND" | grep -Eq 'wrangler[[:space:]]+(deploy|versions[[:space:]]+(upload|deploy))'; then
+# （npx/bunx 経由・引数付き・wrangler@<version> 指定も含む）。
+# 許可リストは持たない: 正規ルート（npm run deploy / bash scripts/deploy.sh）の
+# コマンド文字列自体はこの正規表現にマッチせず、scripts/deploy.sh 内部で動く
+# wrangler は hook の対象外なので、マッチ = 常に deny でよい。
+if printf '%s' "$COMMAND" | grep -Eq 'wrangler(@[^[:space:]]+)?[[:space:]]+(deploy|versions[[:space:]]+(upload|deploy))'; then
   cat <<'JSON'
 {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"wrangler deploy の直接実行は禁止です。AGPL-3.0 対応のため、デプロイは必ず `npm run deploy`（scripts/deploy.sh）経由で行い、稼働版に対応する Git タグを自動記録してください。"}}
 JSON

@@ -104,12 +104,12 @@ lifecycle は wrangler.jsonc では設定できないため、デプロイとは
 
 ```bash
 npx wrangler r2 bucket lifecycle add xteink-conversions expire-intermediate-pdf intermediate/ --expire-days 1
-npx wrangler r2 bucket lifecycle add xteink-conversions expire-job-outputs jobs/ --expire-days 30
+npx wrangler r2 bucket lifecycle add xteink-conversions expire-job-outputs jobs/ --expire-days 1
 npx wrangler r2 bucket lifecycle list xteink-conversions   # 確認
 ```
 
-- 中間 PDF（`intermediate/{jobId}/source.pdf`）は 1 日、成果物 XTC（`jobs/{jobId}/output.xtc`）は 30 日で自動削除される（削除は expiration から最大 ~24h 遅延）。
-- 旧配置の `jobs/*/source.pdf` は `jobs/` の 30 日ルールでいずれ消えるため移行処理は不要。
+- 中間 PDF（`intermediate/{jobId}/source.pdf`）・成果物 XTC（`jobs/{jobId}/output.xtc`）とも 1 日（24 時間）で自動削除される（削除は expiration から最大 ~24h 遅延）。一般公開ハードニングで `jobs/` を 30 日 → 24 時間に短縮した。既存バケットに旧 30 日ルールが残っている場合は `lifecycle remove` で削除してから上記を再適用すること。
+- 旧配置の `jobs/*/source.pdf` は `jobs/` の 1 日ルールでいずれ消えるため移行処理は不要。
 
 ### 動作確認
 
@@ -198,7 +198,7 @@ service token で認証されたリクエストにも Access は同じ AUD の J
 ### 4-7. 動作確認
 
 - ブラウザ（スマホ）で `https://url-to-xtc.<your-subdomain>.workers.dev/` を開く → Access のログイン（One-time PIN）→ UI が表示される → URL を入れて変換 → 進捗表示 → ダウンロード。
-- 履歴はブラウザの localStorage に保存される（最大 50 件、サーバー上のファイルは約 30 日で自動削除）。
+- 履歴はブラウザの localStorage に保存される（最大 50 件、サーバー上のファイルは約 24 時間で自動削除）。
 - 手順 6 の旧 Access 手動設定は本節（ワンクリック有効化）で置き換えられた。
 
 ## 運用メモ

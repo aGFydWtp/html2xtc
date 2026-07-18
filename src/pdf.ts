@@ -184,9 +184,18 @@ export const X3_PRINT_CSS = `
   }
 `;
 
+/**
+ * User agent the rendering browser announces when fetching the target page.
+ * Named after the Googlebot "+URL" convention so site operators can identify
+ * this service, block it by UA if unwanted, and find policy/contact
+ * information at the linked /about page.
+ */
+export const RENDER_USER_AGENT = "xtc-converter/1.0 (+https://xtc.hr20k.com/about)";
+
 export function renderPdf(env: Env, url: string): Promise<Response> {
   return env.BROWSER.quickAction("pdf", {
     url,
+    userAgent: RENDER_USER_AGENT,
     addStyleTag: [{ content: X3_PRINT_CSS }],
     gotoOptions: {
       waitUntil: "networkidle2",

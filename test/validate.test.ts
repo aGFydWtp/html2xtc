@@ -48,6 +48,14 @@ describe("validatePublicUrl", () => {
       await expectRejected("http://metadata.google.internal/computeMetadata/v1/");
     });
 
+    it("rejects this service's own hosts (self-request loop guard)", async () => {
+      await expectRejected("https://xtc.hr20k.com/");
+      await expectRejected("https://XTC.HR20K.COM/about");
+      await expectRejected("https://xtc.hr20k.com./");
+      await expectRejected("https://url-to-xtc.example.workers.dev/");
+      await expectRejected("http://anything.workers.dev/page");
+    });
+
     it("allows ordinary public hostnames", async () => {
       await expectAllowed("https://ja.wikipedia.org/wiki/E_Ink");
       await expectAllowed("https://sub.domain.example.co.jp/path?q=1");

@@ -167,6 +167,8 @@
     padding: 0.85rem 0.5rem; margin: -0.85rem -0.5rem -0.85rem auto;
   }
   .empty { color: var(--muted); font-size: 0.85rem; }
+  footer.about { margin-top: 2.5rem; text-align: center; }
+  footer.about a { color: var(--muted); font-size: 0.75rem; }
 </style>
 </head>
 <body>
@@ -187,10 +189,14 @@
       <h2>履歴</h2>
       <button id="clear" type="button">履歴を全削除</button>
     </div>
-    <p class="note">ファイルはサーバー上に約 30 日間保存され、その後は自動削除されてダウンロードできなくなります。</p>
+    <p class="note">ファイルはサーバー上に約 24 時間保存され、その後は自動削除されてダウンロードできなくなります。</p>
     <ul id="jobs" class="jobs"></ul>
     <p id="empty" class="empty">まだ履歴はありません。</p>
   </section>
+
+  <footer class="about">
+    <a href="/about">このサービスについて（利用規約・連絡先）</a>
+  </footer>
 </main>
 
 <script>
@@ -280,7 +286,7 @@ function renderCurrent(job, note) {
   `;
 }
 
-const EXPIRY_MS = 30 * 24 * 60 * 60 * 1000;
+const EXPIRY_MS = 24 * 60 * 60 * 1000;
 
 // Completed entries older than the server-side R2 retention are shown as
 // expired instead of offering a download that would 404.

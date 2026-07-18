@@ -9,7 +9,7 @@
 - リポジトリ: https://github.com/chazeon/xtctool
 - 使用コミット: `d7bff34ff835889e158ca8ff2253de06a3e825cf`（2026-07-17 検証）
 - ライセンス: リポジトリの `LICENSE` ファイルは **GPL-3.0**。ただし同コミットの `pyproject.toml` は `license = {text = "MIT"}` と宣言しており、両者は矛盾している。本プロジェクトでは保守的に **GPL-3.0 として扱う**。
-- 利用形態: `converter/Dockerfile` のビルド時に上記コミットを clone し venv へ `pip install`（extras: `[performance,markdown]`）。実行時はコンテナ内で CLI として subprocess 起動する（`converter/app.py`）。本リポジトリに xtctool のコードは含まれない。
+- 利用形態: `converter/Dockerfile` のビルド時に上記コミットを clone し venv へ `pip install --no-deps`（extras: `[performance,markdown]`）。依存パッケージは事前に [converter/requirements.lock](converter/requirements.lock) からバージョン・ハッシュ固定でインストールされる。実行時はコンテナ内で CLI として subprocess 起動する（`converter/app.py`）。本リポジトリに xtctool のコードは含まれない。
 - ビルド時に加えている変更: `pyproject.toml` の `[tool.hatch.build.targets.wheel.force-include]` セクション（2 行）を `sed` で削除している。新しめの hatchling が `packages = ["xtctool"]` と重複する include を拒否するための、パッケージング設定のみの変更であり、**ソースコード本体は改変していない**。
 
 ## PyMuPDF
@@ -21,7 +21,7 @@
 
 ## その他の依存関係
 
-- xtctool の推移的依存（click、Pillow、numpy、requests、tqdm、numba、typst、jinja2 など）は、それぞれのライセンスに従ってビルド時にインストールされる。
+- xtctool の推移的依存（click、Pillow、numpy、requests、tqdm、numba、typst、jinja2 など）は、それぞれのライセンスに従ってビルド時にインストールされる。全 pip 依存は [converter/requirements.lock](converter/requirements.lock) でバージョン・ハッシュとも完全固定しており、同じ Git リビジョンから再ビルドすれば稼働版と同一バージョンの依存構成が再現される（AGPL の対応ソースの再現性確保）。ただしビルド時依存（xtctool の PEP 517 ビルドに使われる hatchling 等の build-system.requires）は固定対象外で、将来のバージョン更新によりビルド自体が失敗する可能性は残る。
 - Worker 側の npm 依存は [package.json](package.json) を参照。
 
 本ファイルは網羅的なライセンス調査の結果ではない。イメージや成果物を配布する際は、その時点の依存関係で改めてライセンスを確認すること。

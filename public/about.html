@@ -3,81 +3,66 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="light dark">
-<title>このサービスについて | URL → XTC 変換</title>
+<title>このサービスについて | XTC 変換 for Xteink X3</title>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #f6f6f4;
-    --card: #ffffff;
-    --text: #1c1c1a;
-    --muted: #6b6b66;
-    --line: #e2e2de;
-    --accent: #0a6e5c;
-    --accent-text: #ffffff;
-    --error: #b3392f;
-    --ok: #0a6e5c;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #161815;
-      --card: #1f221e;
-      --text: #ecece8;
-      --muted: #9a9a93;
-      --line: #33362f;
-      --accent: #4cc2a9;
-      --accent-text: #10241f;
-      --error: #e07a70;
-      --ok: #4cc2a9;
-    }
+    --bg: #f4f1ea;
+    --panel: #ece8dd;
+    --text: #1c1a17;
+    --muted: #8a857b;
+    --muted2: #6b665c;
+    --line: #ddd6c8;
+    --ink: #1c1a17;
+    --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   }
   * { box-sizing: border-box; }
   body {
     margin: 0;
     background: var(--bg);
     color: var(--text);
-    font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    font-family: "Zen Kaku Gothic New", system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
     line-height: 1.6;
     -webkit-font-smoothing: antialiased;
+    font-size: 16px;
   }
-  main {
-    max-width: 40rem;
-    margin: 0 auto;
-    padding: 1.25rem 1rem 3rem;
-  }
-  h1 {
-    font-size: 1.15rem;
-    margin: 0.25rem 0 0.25rem;
-    letter-spacing: 0.02em;
-  }
-  .sub { color: var(--muted); font-size: 0.8rem; margin: 0 0 1.25rem; }
-  section {
-    margin-top: 1rem;
-    padding: 0.9rem 1rem;
-    border: 1px solid var(--line);
-    border-radius: 12px;
-    background: var(--card);
-  }
-  section h2 { font-size: 0.95rem; margin: 0 0 0.5rem; }
-  section p { font-size: 0.85rem; margin: 0.5rem 0 0; }
-  section ul { font-size: 0.85rem; margin: 0.5rem 0 0; padding-left: 1.25rem; }
-  section li { margin-top: 0.25rem; }
+  a { color: var(--text); }
+  a:hover { color: #555; }
+  main { max-width: 44rem; margin: 0 auto; padding: 28px 20px 48px; }
+  header.site { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .brand-name { font-size: 20px; font-weight: 700; letter-spacing: .06em; }
+  .brand-sub { font-family: var(--mono); font-size: 14px; color: var(--muted); letter-spacing: .18em; }
+  .back { font-size: 14px; color: var(--muted); }
+  h1 { margin: 32px 0 6px; font-size: 22px; font-weight: 700; letter-spacing: .04em; }
+  .sub { margin: 0 0 4px; font-size: 14px; color: var(--muted); }
+  section { border-top: 1px solid var(--line); padding-top: 18px; margin-top: 22px; }
+  h2 { margin: 0 0 8px; font-size: 16px; font-weight: 700; letter-spacing: .06em; }
+  p { margin: 0; color: var(--muted2); line-height: 1.8; }
+  ul { margin: 0; padding-left: 1.3em; color: var(--muted2); line-height: 1.9; display: flex; flex-direction: column; gap: 6px; }
   code {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 0.9em;
-    background: var(--bg);
-    border: 1px solid var(--line);
-    border-radius: 4px;
-    padding: 0 0.25em;
+    font-family: var(--mono); font-size: 14px; background: var(--panel);
+    border-radius: 4px; padding: 1px 6px; color: #4d4a42;
   }
-  a { color: var(--accent); }
-  .back { margin-top: 1.5rem; font-size: 0.85rem; }
-  .back a { color: var(--muted); }
+  footer.site {
+    border-top: 1.5px solid var(--ink); padding-top: 16px; margin-top: 26px;
+    display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap;
+  }
+  footer.site .back-link { font-size: 14px; color: var(--muted); }
+  footer.site .gh { font-family: var(--mono); font-size: 14px; }
 </style>
 </head>
 <body>
 <main>
+  <header class="site">
+    <div>
+      <div class="brand-name">XTC 変換</div>
+      <div class="brand-sub">FOR XTEINK X3</div>
+    </div>
+    <a class="back" href="./">← 変換ページに戻る</a>
+  </header>
+
   <h1>このサービスについて</h1>
-  <p class="sub">URL → XTC 変換の概要・利用規約・クローラー情報・連絡先</p>
+  <p class="sub">概要・利用規約・クローラー情報・連絡先</p>
 
   <section>
     <h2>サービス概要</h2>
@@ -87,11 +72,15 @@
   <section>
     <h2>利用規約</h2>
     <ul>
-      <li>変換対象コンテンツの著作権その他の権利処理は、利用者自身の責任で行ってください。</li>
-      <li>権利侵害にあたる利用、違法なコンテンツの変換、および第三者サイトへの負荷行為（大量アクセスなど）を禁止します。</li>
-      <li>本サービスは無保証で提供され、予告なく停止・変更されることがあります。</li>
-      <li>変換結果のファイルはサーバー上に約 24 時間保存され、その後自動削除されます。</li>
-      <li>規約違反が確認された場合、利用を制限することがあります。</li>
+      <li>本サービスは、個人が私生活上の読書・学習のために利用する場合に限って利用できます。業務、職務、事業、営業その他これらに類する目的での利用を禁止します。</li>
+      <li>利用者は、著作権者の許諾、適用されるライセンスまたは法令上の例外により、適法に複製・変換できるコンテンツのみを指定してください。</li>
+      <li>生成された XTC ファイルは、変換を行った利用者本人だけが利用できます。第三者への送信、公開、共有、譲渡、販売または再配布を禁止します。</li>
+      <li>有料記事、会員限定コンテンツその他アクセスが制限されたコンテンツについて、認証、購読制限、技術的保護手段等を回避して利用することを禁止します。</li>
+      <li>違法に公開されたコンテンツであることを知りながら変換すること、その他第三者の著作権その他の権利を侵害する利用を禁止します。</li>
+      <li>第三者サイトに過度な負荷を与える利用、大量または自動的な変換、本サービスの動作を妨害する行為を禁止します。</li>
+      <li>生成された XTC ファイルはサーバー上に約 24 時間保存され、その後自動的に削除されます。変換途中の PDF は XTC の生成後速やかに削除され、利用者には提供されません。</li>
+      <li>本サービスは現状有姿かつ無保証で提供され、予告なく内容の変更、利用制限または提供停止を行うことがあります。</li>
+      <li>本規約に違反する利用が確認された場合、成果物の削除や利用制限を行うことがあります。</li>
     </ul>
   </section>
 
@@ -102,10 +91,13 @@
 
   <section>
     <h2>連絡先</h2>
-    <p>（公開前に運営者が設定）</p>
+    <p>ご意見・削除依頼などは <a href="mailto:haruki@conatt.com">haruki@conatt.com</a> までご連絡ください。</p>
   </section>
 
-  <p class="back"><a href="/">← 変換ページに戻る</a></p>
+  <footer class="site">
+    <a class="back-link" href="./">← 変換ページに戻る</a>
+    <a class="gh" href="https://github.com/aGFydWtp/html2xtc" target="_blank" rel="noopener">GitHub ↗</a>
+  </footer>
 </main>
 </body>
 </html>

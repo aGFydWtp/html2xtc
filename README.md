@@ -23,7 +23,7 @@ Worker
 
 - PDF/XTC のバイト列は Worker ↔ Container 間で直接送受信する。R2 への読み書きは Worker の binding に一元化し、Container には R2 クレデンシャルもユーザー入力 URL も渡さない。
 - Container は固定プール名（`converter-0` / `converter-1`、`max_instances: 2` に対応）に jobId のハッシュで振り分け、ウォームインスタンスを再利用する。
-- 変換設定は `converter/config-x3.toml`（528×792、4 階調 xth、日本語メタデータ）。
+- 変換設定は `converter/config-x3.toml`（528×792、1-bit xtg、日本語メタデータ）。
 - PDF の最終ページに奥付（タイトル・サイト名・著者・URL・変換日時・個人利用の注記）を追加する（`src/pdf.ts` の `buildColophonScript`。addScriptTag による DOM 注入。ページの CSP でブロックされた場合は奥付なしで変換される）。
 
 ## WebUI
@@ -183,7 +183,7 @@ public/
 src/
   index.ts       ルーティング・エラーハンドリング
   auth.ts        認証（Access JWT または Bearer AUTH_TOKEN の OR）
-  workflow.ts    ConvertWorkflow（render-pdf → convert-xtc の 2 ステップ）
+  workflow.ts    ConvertWorkflow（render-pdf → convert-xtc → delete-intermediate-pdf の 3 ステップ）
   jobs.ts        ジョブ状態写像・R2 キー導出（純関数、vitest 対象）
   pdf.ts         X3_PRINT_CSS + Browser Run quickAction("pdf") 呼び出し
   container.ts   XtcConverterContainer + convertInContainer（@cloudflare/containers）
@@ -214,4 +214,4 @@ test/
 
 - Container イメージは xtctool を検証済み commit（`d7bff34`、2026-07-17 検証）に固定し、非 root ユーザー（uid 10001）で実行する。
 - `converter/config-x3.toml` の `resample_method` は BOX（テキスト向き）。写真主体のページが多い場合は LANCZOS に変更する。
-- XTC 出力サイズの目安は約 102KB/ページ（4 階調 xth、無圧縮）。
+- XTC 出力サイズの目安は約 51KB/ページ（1-bit xtg、無圧縮）。

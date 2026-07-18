@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 aGFydWtp
 
-import { authorize } from "./auth";
 import { convertInContainer } from "./container";
 import {
   decideMissingDownload,
@@ -43,14 +42,6 @@ export default {
 } satisfies ExportedHandler<Env>;
 
 async function route(request: Request, env: Env): Promise<Response> {
-  // Access JWT or Bearer AUTH_TOKEN (see src/auth.ts). Static assets in
-  // public/ are served before the Worker and never reach this check; they
-  // are protected by the edge-side Cloudflare Access app instead.
-  const unauthorized = await authorize(request, env);
-  if (unauthorized) {
-    return unauthorized;
-  }
-
   const { pathname } = new URL(request.url);
 
   if (pathname === "/convert") {

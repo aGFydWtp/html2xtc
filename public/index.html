@@ -199,7 +199,6 @@ const I18N = {
     dl: "XTC をダウンロード",
     dl_small: "XTC ↓",
     confirm_clear: "履歴をすべて削除しますか？（サーバー上のファイルは削除されません）",
-    session: "セッションが切れました。ページを再読み込みしてください。",
     poll_fail: "状態の取得に失敗しました。ページを再読み込みしてください。",
     no_server: "サーバーに接続できません。",
     http_error: (s) => `エラー (HTTP ${s})`,
@@ -223,7 +222,6 @@ const I18N = {
     dl: "Download XTC",
     dl_small: "XTC \u2193",
     confirm_clear: "Delete all history? (Files on the server are not deleted.)",
-    session: "Session expired. Please reload the page.",
     poll_fail: "Failed to fetch status. Please reload the page.",
     no_server: "Could not reach the server.",
     http_error: (s) => `Error (HTTP ${s})`,
@@ -292,7 +290,7 @@ function nameLines(j) {
 
 let activeView = null; // {job, note} of what #current shows, for re-render on language switch
 
-// note is an i18n key ("session") or {key, args} for parameterized messages
+// note is an i18n key ("no_server") or {key, args} for parameterized messages
 // ("http_error"); it is kept untranslated in activeView so that a language
 // switch re-resolves it via applyLang() -> renderCurrent().
 function noteText(note) {
@@ -367,11 +365,6 @@ let pollFailures = 0; // consecutive failures of the active loop
 let poll404s = 0;     // consecutive 404s of the active loop
 let activeJob = null; // job tracked by the continuous poller
 
-// An expired Access session redirects API fetches to the team login page.
-function sessionExpired(res) {
-  return res.redirected && res.url.includes("cloudflareaccess.com");
-}
-
 function startPolling(job) {
   clearTimeout(pollTimer);
   pollGen += 1;
@@ -394,10 +387,6 @@ async function submit(event) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ url }),
     });
-    if (sessionExpired(res)) {
-      renderCurrent({ url, jobId: "", status: "failed" }, "session");
-      return;
-    }
     const body = await res.json().catch(() => null);
     if (!res.ok || !body) {
       // Server-sent error text stays as-is on the job; the generic fallback
@@ -422,10 +411,6 @@ async function poll(job, gen) {
   try {
     const res = await fetch(`/jobs/${encodeURIComponent(job.jobId)}`);
     if (gen !== pollGen) return;
-    if (sessionExpired(res)) {
-      renderCurrent(job, "session");
-      return;
-    }
     if (res.status === 404) {
       // 404 can be a true absence, a transient error, or a first poll before
       // the job is queryable; only treat it as terminal after the grace count.
@@ -439,8 +424,8 @@ async function poll(job, gen) {
       try {
         body = await res.json();
       } catch {
-        // HTML (e.g. an Access login page) instead of JSON: not recoverable.
-        renderCurrent(job, "session");
+        // Non-JSON response (e.g. an HTML error page): not recoverable.
+        renderCurrent(job, "poll_fail");
         return;
       }
       pollFailures = 0;
@@ -482,7 +467,7 @@ async function refreshStale() {
           if (attempt === MAX_POLL_FAILURES - 1) { job.status = "expired"; upsertJob(job); }
           continue;
         }
-        if (res.ok && !sessionExpired(res)) {
+        if (res.ok) {
           const body = await res.json().catch(() => null);
           if (body) {
             job.status = body.status;

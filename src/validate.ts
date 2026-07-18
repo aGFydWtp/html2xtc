@@ -34,8 +34,7 @@ export class UrlValidationError extends Error {
 export type DnsResolver = (hostname: string, type: "A" | "AAAA") => Promise<string[]>;
 
 // "xtc.hr20k.com" is this service's own custom domain: letting the renderer
-// fetch it would recurse the converter into itself (self-request loops, and a
-// probe of our own Access-protected UI/API from inside the trust boundary).
+// fetch it would recurse the converter into itself (self-request loops).
 const FORBIDDEN_HOSTNAMES = new Set([
   "localhost",
   "metadata.google.internal",

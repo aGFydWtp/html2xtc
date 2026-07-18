@@ -63,7 +63,7 @@ spec の推奨どおり、まず同期処理で end-to-end を通す。
 spec「注意点」節の残項目を消化する。
 
 - **SSRF 強化**: リダイレクト先の再検証（Browser Run 側オプションで制御できるか確認）、最大ページ数・最大処理時間の上限設定
-- **アクセス制御**: Cloudflare Access で API を保護（個人利用前提）+ 必要ならレート制限
+- **アクセス制御**: レート制限で濫用を抑止（認証は設けず一般公開）
 - **エラーハンドリング**: Browser Run 失敗（502）、xtctool 失敗（stderr をログへ）、R2 障害の各系統を分離してレスポンスコードを整理
 - **observability**: `wrangler.jsonc` で observability 有効化、jobId 単位の構造化ログ
 - **テスト**: `@cloudflare/vitest-pool-workers` で validate/ルーティングの単体テスト、Container の app.py は pytest でローカルテスト

@@ -193,7 +193,7 @@ export const X3_PRINT_CSS = `
 export const RENDER_USER_AGENT = "xtc-converter/1.0 (+https://xtc.hr20k.com/about)";
 
 /** Formats a timestamp as e.g. "2026-07-18 21:30 JST" for the colophon. */
-function formatJstTimestamp(date: Date): string {
+export function formatJstTimestamp(date: Date): string {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Tokyo",
     year: "numeric",
@@ -244,28 +244,36 @@ export function buildColophonScript(url: string, convertedAt: string): string {
       return v && v.trim() ? v.trim() : "";
     };
 
-    var title = (doc.title || "").trim();
+    // Empty <title> would otherwise print a bare "タイトル: " label.
+    var title = (doc.title || "").trim() || "(無題)";
     var siteName = meta('meta[property="og:site_name"]') || location.hostname;
 
     // Author, best effort; when nothing usable is found the line is omitted.
     var author = meta('meta[name="author"]');
     if (!author) {
-      // article:author is often a profile URL rather than a name; skip URLs.
+      // article:author is often a profile URL rather than a name; skip
+      // absolute URLs plus root-relative and protocol-relative paths
+      // ("/...", "//...").
       var fbAuthor = meta('meta[property="article:author"]');
-      if (fbAuthor && !/^https?:/i.test(fbAuthor)) author = fbAuthor;
+      if (fbAuthor && !/^(https?:|\\/)/i.test(fbAuthor)) author = fbAuthor;
     }
     if (!author) {
       // JSON-LD: top-level "author" only (string / object / array of both);
       // walking @graph is not worth the complexity for a colophon line.
+      // Every loop is capped at MAX_LD entries: this script runs inside the
+      // quickAction time budget, so a pathologically large JSON-LD payload
+      // must degrade to "no author line" — never eat the action timeout and
+      // fail the render (same fail-soft rationale as the outer try/catch).
+      var MAX_LD = 20;
       var blocks = doc.querySelectorAll('script[type="application/ld+json"]');
-      for (var i = 0; i < blocks.length && !author; i++) {
+      for (var i = 0; i < Math.min(blocks.length, MAX_LD) && !author; i++) {
         try {
           var data = JSON.parse(blocks[i].textContent || "");
           var nodes = Array.isArray(data) ? data : [data];
-          for (var j = 0; j < nodes.length && !author; j++) {
+          for (var j = 0; j < Math.min(nodes.length, MAX_LD) && !author; j++) {
             var a = nodes[j] && nodes[j].author;
             var cands = Array.isArray(a) ? a : [a];
-            for (var k = 0; k < cands.length && !author; k++) {
+            for (var k = 0; k < Math.min(cands.length, MAX_LD) && !author; k++) {
               var c = cands[k];
               if (typeof c === "string" && c.trim()) {
                 author = c.trim();

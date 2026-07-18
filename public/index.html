@@ -314,6 +314,7 @@ const POLL_FAIL_MSG = "状態の取得に失敗しました。ページを再読
 let pollTimer = null;
 let pollGen = 0;      // generation token: bumping it cancels older poll loops
 let pollFailures = 0; // consecutive failures of the active loop
+let poll404s = 0;     // consecutive 404s of the active loop
 let activeJob = null; // job tracked by the continuous poller
 
 // An expired Access session redirects API fetches to the team login page.
@@ -325,6 +326,7 @@ function startPolling(job) {
   clearTimeout(pollTimer);
   pollGen += 1;
   pollFailures = 0;
+  poll404s = 0;
   activeJob = job;
   renderCurrent(job);
   poll(job, pollGen);
@@ -373,11 +375,15 @@ async function poll(job, gen) {
       return;
     }
     if (res.status === 404) {
-      job.status = "expired";
-      upsertJob(job); renderCurrent(job);
-      return;
-    }
-    if (res.ok) {
+      // 404 は真の不在・一過性エラー・照会前の初回ポールを区別できない。
+      // 猶予回数を使い切ったときだけ expired 終端にし、それまでは IN_FLIGHT を
+      // 維持したまま末尾の再スケジュールへフォールスルーして次回ポールを続ける。
+      if (++poll404s >= MAX_POLL_FAILURES) {
+        job.status = "expired";
+        upsertJob(job); renderCurrent(job);
+        return;
+      }
+    } else if (res.ok) {
       let body;
       try {
         body = await res.json();
@@ -388,6 +394,7 @@ async function poll(job, gen) {
         return;
       }
       pollFailures = 0;
+      poll404s = 0;
       job.status = body.status;
       if (typeof body.title === "string" && body.title) job.title = body.title;
       if (body.error) job.error = body.error;
@@ -410,25 +417,36 @@ async function poll(job, gen) {
   pollTimer = setTimeout(() => poll(job, gen), POLL_MS);
 }
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 // Refresh statuses of jobs that were still running when the page was last
 // closed (one shot per job; the newest one resumes continuous polling).
 async function refreshStale() {
   const stale = loadJobs().filter((j) => IN_FLIGHT.includes(j.status));
   for (const [i, job] of stale.entries()) {
     if (i === 0) { startPolling(job); continue; }
-    try {
-      const res = await fetch(`/jobs/${encodeURIComponent(job.jobId)}`);
-      if (res.status === 404) { job.status = "expired"; upsertJob(job); }
-      else if (res.ok && !sessionExpired(res)) {
-        const body = await res.json().catch(() => null);
-        if (body) {
-          job.status = body.status;
-          if (typeof body.title === "string" && body.title) job.title = body.title;
-          if (body.error) job.error = body.error;
-          upsertJob(job);
+    // 404 は一過性でもあり得るため、poll と同じ猶予概念で連続404を数え、
+    // 全試行が 404 のときだけ expired に落とす（非404は下で break する）。
+    for (let attempt = 0; attempt < MAX_POLL_FAILURES; attempt++) {
+      if (attempt > 0) await sleep(POLL_MS);
+      try {
+        const res = await fetch(`/jobs/${encodeURIComponent(job.jobId)}`);
+        if (res.status === 404) {
+          if (attempt === MAX_POLL_FAILURES - 1) { job.status = "expired"; upsertJob(job); }
+          continue; // 猶予内: 次の試行へ
         }
-      }
-    } catch { /* leave as-is */ }
+        if (res.ok && !sessionExpired(res)) {
+          const body = await res.json().catch(() => null);
+          if (body) {
+            job.status = body.status;
+            if (typeof body.title === "string" && body.title) job.title = body.title;
+            if (body.error) job.error = body.error;
+            upsertJob(job);
+          }
+        }
+        break; // res.ok / session 切れ等は打ち切り
+      } catch { /* leave as-is */ break; }
+    }
   }
 }
 
@@ -442,6 +460,7 @@ document.addEventListener("visibilitychange", () => {
   if (activeJob && IN_FLIGHT.includes(activeJob.status)) {
     pollGen += 1;
     pollFailures = 0;
+    poll404s = 0;
     poll(activeJob, pollGen);
   }
 });

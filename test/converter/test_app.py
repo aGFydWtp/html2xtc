@@ -45,6 +45,12 @@ def run_no_output(cmd, **kwargs):
     return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
 
+def run_empty_output(cmd, **kwargs):
+    """Simulate xtctool succeeding but writing a zero-byte output file."""
+    Path(cmd[cmd.index("-o") + 1]).write_bytes(b"")
+    return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="empty run")
+
+
 def run_echo(cmd, **kwargs):
     """Write output derived from the input so cross-talk would be visible."""
     source = Path(cmd[2]).read_bytes()
@@ -103,6 +109,41 @@ class TestConvertPdf:
             with pytest.raises(app.ConversionError) as excinfo:
                 app.convert_pdf(FAKE_PDF)
         assert "no output" in str(excinfo.value)
+
+    def test_empty_output_file_raises_with_stderr(self):
+        with mock.patch.object(app.subprocess, "run", side_effect=run_empty_output):
+            with pytest.raises(app.ConversionError) as excinfo:
+                app.convert_pdf(FAKE_PDF)
+        assert "empty output file" in str(excinfo.value)
+        assert "empty run" in excinfo.value.stderr
+
+    def test_default_timeout_is_convert_timeout_seconds(self):
+        seen = {}
+
+        def recording_run(cmd, **kwargs):
+            seen["timeout"] = kwargs["timeout"]
+            return run_success(cmd, **kwargs)
+
+        with mock.patch.object(app.subprocess, "run", side_effect=recording_run):
+            app.convert_pdf(FAKE_PDF)
+        assert seen["timeout"] == app.CONVERT_TIMEOUT_SECONDS
+
+    def test_timeout_seconds_is_passed_to_subprocess_run(self):
+        seen = {}
+
+        def recording_run(cmd, **kwargs):
+            seen["timeout"] = kwargs["timeout"]
+            return run_success(cmd, **kwargs)
+
+        with mock.patch.object(app.subprocess, "run", side_effect=recording_run):
+            app.convert_pdf(FAKE_PDF, timeout_seconds=42)
+        assert seen["timeout"] == 42
+
+    def test_timeout_message_includes_timeout_seconds(self):
+        with mock.patch.object(app.subprocess, "run", side_effect=run_timeout):
+            with pytest.raises(app.ConversionError) as excinfo:
+                app.convert_pdf(FAKE_PDF, timeout_seconds=42)
+        assert "timed out after 42s" in str(excinfo.value)
 
 
 SAMPLE_CONFIG = """\
@@ -346,6 +387,107 @@ class TestHttpServer:
             status, _, body = request(server, "POST", "/convert", body=FAKE_PDF)
         assert status == 500
         assert "timed out" in json.loads(body)["error"]
+
+    def test_convert_timeout_header_sets_subprocess_timeout(self, server):
+        seen = {}
+
+        def recording_run(cmd, **kwargs):
+            seen["timeout"] = kwargs["timeout"]
+            return run_success(cmd, **kwargs)
+
+        expected = min(5, app.CONVERT_TIMEOUT_SECONDS)
+        with mock.patch.object(app.subprocess, "run", side_effect=recording_run):
+            status, _, _ = request(
+                server,
+                "POST",
+                "/convert",
+                body=FAKE_PDF,
+                headers={"X-Convert-Timeout-Seconds": "5"},
+            )
+        assert status == 200
+        assert seen["timeout"] == expected
+
+    def test_convert_timeout_header_is_clamped_to_ceiling(self, server):
+        seen = {}
+
+        def recording_run(cmd, **kwargs):
+            seen["timeout"] = kwargs["timeout"]
+            return run_success(cmd, **kwargs)
+
+        with mock.patch.object(app.subprocess, "run", side_effect=recording_run):
+            status, _, _ = request(
+                server,
+                "POST",
+                "/convert",
+                body=FAKE_PDF,
+                headers={"X-Convert-Timeout-Seconds": "9999"},
+            )
+        assert status == 200
+        assert seen["timeout"] == app.CONVERT_TIMEOUT_SECONDS
+
+    def test_convert_missing_timeout_header_uses_default(self, server):
+        seen = {}
+
+        def recording_run(cmd, **kwargs):
+            seen["timeout"] = kwargs["timeout"]
+            return run_success(cmd, **kwargs)
+
+        with mock.patch.object(app.subprocess, "run", side_effect=recording_run):
+            status, _, _ = request(server, "POST", "/convert", body=FAKE_PDF)
+        assert status == 200
+        assert seen["timeout"] == app.CONVERT_TIMEOUT_SECONDS
+
+    def test_convert_non_numeric_timeout_header_uses_default(self, server):
+        seen = {}
+
+        def recording_run(cmd, **kwargs):
+            seen["timeout"] = kwargs["timeout"]
+            return run_success(cmd, **kwargs)
+
+        with mock.patch.object(app.subprocess, "run", side_effect=recording_run):
+            status, _, _ = request(
+                server,
+                "POST",
+                "/convert",
+                body=FAKE_PDF,
+                headers={"X-Convert-Timeout-Seconds": "not-a-number"},
+            )
+        assert status == 200
+        assert seen["timeout"] == app.CONVERT_TIMEOUT_SECONDS
+
+    def test_convert_empty_output_is_500(self, server):
+        with mock.patch.object(app.subprocess, "run", side_effect=run_empty_output):
+            status, _, body = request(server, "POST", "/convert", body=FAKE_PDF)
+        assert status == 500
+        assert "empty output file" in json.loads(body)["error"]
+
+    def test_title_extraction_runs_inside_conversion_slot(self, server):
+        # A single-permit semaphore stands in for CONVERSION_SLOTS; if the title
+        # parse ran outside the slot, the non-blocking acquire below would win.
+        observed = {}
+        slot = threading.Semaphore(1)
+
+        def probing_extract(pdf_bytes):
+            acquired = slot.acquire(blocking=False)
+            observed["slot_free_during_extract"] = acquired
+            if acquired:
+                slot.release()
+            return ""
+
+        with mock.patch.object(app, "CONVERSION_SLOTS", slot):
+            with mock.patch.object(
+                app, "extract_pdf_title", side_effect=probing_extract
+            ):
+                with mock.patch.object(
+                    app.subprocess, "run", side_effect=run_success
+                ):
+                    status, _, body = request(
+                        server, "POST", "/convert", body=FAKE_PDF
+                    )
+
+        assert status == 200
+        assert body == FAKE_XTC
+        assert observed["slot_free_during_extract"] is False
 
     def test_unexpected_exception_still_gets_response(self, server, caplog):
         with caplog.at_level(logging.ERROR, logger="converter"):

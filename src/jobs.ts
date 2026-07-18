@@ -101,7 +101,8 @@ export type DownloadDecision =
   | { kind: "conflict"; status: JobApiStatus };
 
 /**
- * Decides the response for GET /jobs/:id/download when output.xtc is absent.
+ * Decides the response for GET /jobs/:id/download when output.xtc is absent,
+ * and equally for GET /jobs/:id/pdf when the intermediate PDF is absent.
  * completed-but-missing means the artifact already expired (R2 lifecycle);
  * failed jobs never produced one. Both are 404. Anything still in flight
  * is a 409 so pollers know to keep waiting.
@@ -193,6 +194,18 @@ function encodeRfc5987(value: string): string {
     /['()*]/g,
     (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
   );
+}
+
+/**
+ * Content-Disposition for the intermediate-PDF preview: inline, since the
+ * point is viewing it in the browser. The filename is the jobId (always
+ * ASCII), so unlike xtcContentDisposition no filename* parameter is needed.
+ * Expects a jobId already validated as a UUID by the caller (see
+ * UUID_PATTERN in src/index.ts); never pass unvalidated input, as the value
+ * is embedded in the header without further sanitization.
+ */
+export function pdfContentDisposition(jobId: string): string {
+  return `inline; filename="${jobId}.pdf"`;
 }
 
 const DEFAULT_MAX_PDF_BYTES = 20 * 1024 * 1024;

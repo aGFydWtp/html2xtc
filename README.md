@@ -24,6 +24,7 @@ Worker
 - PDF/XTC のバイト列は Worker ↔ Container 間で直接送受信する。R2 への読み書きは Worker の binding に一元化し、Container には R2 クレデンシャルもユーザー入力 URL も渡さない。
 - Container は固定プール名（`converter-0` / `converter-1`、`max_instances: 2` に対応）に jobId のハッシュで振り分け、ウォームインスタンスを再利用する。
 - 変換設定は `converter/config-x3.toml`（528×792、4 階調 xth、日本語メタデータ）。
+- PDF の最終ページに奥付（タイトル・サイト名・著者・URL・変換日時・個人利用の注記）を追加する（`src/pdf.ts` の `buildColophonScript`。addScriptTag による DOM 注入。ページの CSP でブロックされた場合は奥付なしで変換される）。
 
 ## WebUI
 

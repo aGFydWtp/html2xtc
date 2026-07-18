@@ -113,6 +113,17 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
       },
     );
 
+    // The convert step above is the intermediate PDF's only consumer, so it
+    // is deleted as soon as the XTC is stored. Best-effort: on failure the
+    // R2 lifecycle rule on intermediate/ still removes it within ~a day.
+    await step.do("delete-intermediate-pdf", async () => {
+      try {
+        await this.env.XTC_BUCKET.delete(pdfKey);
+      } catch (error) {
+        console.error(`[${jobId}] best-effort delete of ${pdfKey} failed`, error);
+      }
+    });
+
     // Exposed through instance.status().output once the run completes;
     // GET /jobs/:id surfaces the title from here.
     return { xtcKey, title };

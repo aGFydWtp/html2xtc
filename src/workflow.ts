@@ -2,13 +2,9 @@ import { WorkflowEntrypoint } from "cloudflare:workers";
 import type { WorkflowEvent, WorkflowStep } from "cloudflare:workers";
 import { NonRetryableError } from "cloudflare:workflows";
 import { convertInContainer } from "./container";
-import {
-  decodeTitleHeader,
-  intermediatePdfKey,
-  outputXtcKey,
-  resolveMaxPdfBytes,
-} from "./jobs";
+import { intermediatePdfKey, outputXtcKey, resolveMaxPdfBytes } from "./jobs";
 import { renderPdf } from "./pdf";
+import { storeXtcOutput } from "./pipeline";
 import type { ConvertJobParams, Env } from "./types";
 
 // xtctool may run up to 600s (XTC_TIMEOUT_SECONDS in container.ts); allow a
@@ -102,20 +98,18 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
           console.error(
             `[${jobId}] converter returned ${response.status}: ${await response.text()}`,
           );
+          // A container 413 means the PDF cleared the render-step size check
+          // but the container still rejected it as oversized; retrying would
+          // hit the same limit, so fail non-retryably with a size message.
+          if (response.status === 413) {
+            throw new NonRetryableError(
+              `rendered PDF exceeds the ${resolveMaxPdfBytes(this.env)} byte limit; try a shorter page`,
+            );
+          }
           throw new Error("XTC conversion failed");
         }
-        // Page title extracted from the PDF by converter/app.py; best-effort,
-        // absent when the source page had none.
-        const xtcTitle = decodeTitleHeader(response.headers.get("X-Xtc-Title"));
-        const xtcBytes = await response.arrayBuffer();
-        const key = outputXtcKey(jobId);
-        await this.env.XTC_BUCKET.put(key, xtcBytes, {
-          httpMetadata: { contentType: "application/octet-stream" },
-          // The download handler reads the title back from here for the
-          // Content-Disposition filename.
-          customMetadata: xtcTitle !== undefined ? { title: xtcTitle } : undefined,
-        });
-        return { xtcKey: key, title: xtcTitle };
+        const { title } = await storeXtcOutput(this.env, jobId, response);
+        return { xtcKey: outputXtcKey(jobId), title };
       },
     );
 

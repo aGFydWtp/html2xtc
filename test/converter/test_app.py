@@ -367,6 +367,49 @@ class TestHttpServer:
         assert status == 413
         assert "exceeds" in json.loads(body)["error"]
 
+    def test_convert_header_limit_overrides_default(self, server):
+        # The Worker's X-Max-Pdf-Bytes wins over the module default: a body
+        # under MAX_PDF_BYTES but over the header limit is still rejected.
+        with mock.patch.object(app, "MAX_PDF_BYTES", 10_000):
+            status, _, body = request(
+                server,
+                "POST",
+                "/convert",
+                body=FAKE_PDF,
+                headers={"X-Max-Pdf-Bytes": "8"},
+            )
+        assert status == 413
+        assert "exceeds the 8 byte limit" in json.loads(body)["error"]
+
+    def test_convert_invalid_header_limit_falls_back_to_default(self, server):
+        # A non-numeric header is ignored; the module default applies.
+        with mock.patch.object(app, "MAX_PDF_BYTES", 8):
+            status, _, body = request(
+                server,
+                "POST",
+                "/convert",
+                body=FAKE_PDF,
+                headers={"X-Max-Pdf-Bytes": "not-a-number"},
+            )
+        assert status == 413
+        assert "exceeds the 8 byte limit" in json.loads(body)["error"]
+
+    def test_convert_header_limit_raises_above_default(self, server):
+        # The intended direction: the Worker raises X-Max-Pdf-Bytes above the
+        # module default, so a body over the default still converts.
+        with mock.patch.object(app, "MAX_PDF_BYTES", 8):
+            with mock.patch.object(app.subprocess, "run", side_effect=run_success):
+                status, headers, body = request(
+                    server,
+                    "POST",
+                    "/convert",
+                    body=FAKE_PDF,
+                    headers={"X-Max-Pdf-Bytes": str(len(FAKE_PDF) + 1)},
+                )
+        assert status == 200
+        assert headers["Content-Type"] == "application/octet-stream"
+        assert body == FAKE_XTC
+
     def test_convert_failure_is_500_generic_with_stderr_logged(self, server, caplog):
         with caplog.at_level(logging.ERROR, logger="converter"):
             with mock.patch.object(app.subprocess, "run", side_effect=run_failure):

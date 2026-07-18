@@ -1,6 +1,6 @@
 # html-to-xtc
 
-URL を 1 つ POST すると、印刷用 CSS を適用して PDF 化し、Xteink X3 向けの XTC ファイルに変換して返す API + スマホ向け WebUI。Cloudflare Workers + Browser Run + Containers + R2 + Workflows で動く。Phase 4（WebUI・Cloudflare Access 対応）。
+URL を 1 つ POST すると、印刷用 CSS を適用して PDF 化し、Xteink X3 向けの XTC ファイルに変換して返す API + スマホ向け WebUI。Cloudflare Workers + Browser Run + Containers + R2 + Workflows で動く。
 
 ## アーキテクチャ
 
@@ -29,7 +29,7 @@ Worker
 
 `public/index.html`（依存なしの 1 ページ、スマホファースト）を Workers static assets として `/` で配信する。URL を入力すると `POST /jobs` → 数秒間隔のポーリングで進捗（待機中 → PDF 生成中 → XTC 変換中）を表示し、完了するとダウンロードリンクが出る。履歴はブラウザの localStorage に保存（最大 50 件。サーバー上のファイルは約 24 時間で自動削除される旨を表示）。サービス概要・利用規約・クローラー情報・連絡先は `/about`（`public/about.html`、静的配信）に掲示し、フッターからリンクする。
 
-静的アセットの配信は Worker を通らないため、UI の保護はエッジ側の **Cloudflare Access**（workers.dev のワンクリック有効化）が前提。設定手順は claudedocs/deploy-guide.md の「Phase 4」を参照。
+静的アセットの配信は Worker を通らないため、UI の保護はエッジ側の **Cloudflare Access**（workers.dev のワンクリック有効化）が前提。設定手順は claudedocs/deploy-guide.md を参照。
 
 ## 認証
 
@@ -67,7 +67,7 @@ API（`/convert` `/jobs` `/download`）は次の **OR** で通す（`src/auth.ts
 | 429 | IP ごとのレート制限超過（`Retry-After` ヘッダ付き） |
 | 500 | Workflow インスタンス作成失敗 |
 
-裏側は Cloudflare Workflows の 2 ステップ（render-pdf → convert-xtc）。各ステップは失敗時にそのステップだけ再試行される（render: 2 回 / convert: 2 回。PDF サイズ超過などの恒久エラーは再試行なしで failed）。
+裏側は Cloudflare Workflows（render-pdf → convert-xtc → delete-intermediate-pdf）。render / convert は失敗時にそのステップだけ再試行される（render: 2 回 / convert: 2 回。PDF サイズ超過などの恒久エラーは再試行なしで failed）。最後のステップは変換の成否にかかわらず中間 PDF を即削除する（best-effort）。
 
 ### GET /jobs/{jobId}
 
@@ -108,7 +108,7 @@ R2 上の XTC（`jobs/{jobId}/output.xtc`）を attachment で返す。未完了
 | 500 | R2 書き込み失敗などの内部エラー |
 | 502 | Browser Run の PDF 生成失敗、または Container に到達できない |
 
-エラーレスポンスは汎用メッセージ + jobId のみ。上流の詳細（Browser Run のエラー本文、xtctool の stderr）はログにのみ記録される。変換失敗時は中間 PDF（source.pdf）を R2 から削除する（best-effort）。診断用の中間 PDF は Phase 2 で `intermediate/{jobId}/source.pdf` に移り、R2 lifecycle により約 1 日で自動削除される。
+エラーレスポンスは汎用メッセージ + jobId のみ。上流の詳細（Browser Run のエラー本文、xtctool の stderr）はログにのみ記録される。診断用の中間 PDF（`intermediate/{jobId}/source.pdf`）は変換の成否にかかわらず処理後に即削除する（best-effort。削除に失敗しても R2 lifecycle により約 1 日で自動削除される）。
 
 同期 API のため、Container fetch 全体で 150 秒のタイムアウト内に収まる必要がある（xtctool 自体は 600 秒まで動けるが、同期パスは短ページ向けに 150 秒で打ち切る）。長いドキュメントは POST /jobs を使うこと。
 
@@ -135,11 +135,11 @@ R2 上の XTC を `application/octet-stream` + `Content-Length` + `Content-Dispo
 - IP リテラルの禁止レンジ: 0/8, 10/8, 100.64/10（CGNAT）, 127/8, 169.254/16, 172.16/12, 192.0.0/24, 192.168/16, 198.18/15, ::/128, ::1, fc00::/7, fe80::/10。IPv4 埋め込み IPv6（IPv4-mapped `::ffff:0:0/96`、IPv4-compatible `::/96`、6to4 `2002::/16`、NAT64 `64:ff9b::/96`）は埋め込み IPv4 を同じ判定にかける。
 - IP リテラル以外のホスト名は Cloudflare DoH（`cloudflare-dns.com/dns-query`）で A/AAAA を事前解決し、解決結果 IP を同じ禁止判定にかける。A/AAAA は個別に判定し（`Promise.allSettled`）、**片方のクエリが失敗しても、成功した側の解決 IP は必ず禁止判定にかける**。DoH の HTTP エラーだけでなく DNS RCODE≠0（SERVFAIL・REFUSED 等）もクエリ失敗として扱う。両クエリとも NOERROR で成功したのに解決 IP が 0 件の場合（スプリットホライズンの内部名など。Cloudflare DoH は CNAME を最終 A/AAAA までフラット化するため、正当な公開ホストでは起きない）は**拒否**（フェイルクローズ）。**両クエリとも失敗した場合のみブロックせず通す**（可用性優先。Browser Run 側でも解決されるため）。片方だけ成功して 0 件のときも DoH 障害の可能性があるため通す。
 
-**既知の限界（Phase 1 では未対応、README とコードコメントに明記）:**
+**既知の限界:**
 
 - TOCTOU / DNS リバインディング: DoH の事前解決と Browser Run 側の実解決は別クエリのため、リバインディング DNS はすり抜けられる。
 - DoH 失敗時の素通し: 両クエリ失敗時、および片方成功（解決 0 件）＋片方失敗時は無検査で通す。この partial-failure 経路は自ドメインの権威 DNS を制御する攻撃者が意図的に再現できるが、両クエリ失敗時の素通しと同レベルの受容済みリスク（可用性優先）。
-- リダイレクト先の再検証: quickAction の API では制御できない（Phase 2 検討事項）。
+- リダイレクト先の再検証: quickAction の API では制御できない。
 
 ## 名乗る User-Agent
 
@@ -202,6 +202,12 @@ test/
   ratelimit.test.ts       vitest（IP キー正規化・固定窓判定・上限パース）
   converter/test_app.py   pytest
 ```
+
+## ライセンス
+
+本リポジトリのコードは [MIT License](LICENSE)。本プロジェクトは **Xteink 社とは無関係な非公式ツール**であり、権利者の承認・提携・保証を受けていない。
+
+変換に使う [xtctool](https://github.com/chazeon/xtctool)（GPL-3.0 として扱う）と PyMuPDF（AGPL-3.0 / 商用デュアル）はリポジトリに含まれず、Docker ビルド時に取得する。使用コミット・ビルド時に加えている変更・配布時の義務は [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) を参照。**Docker イメージを第三者へ配布する場合は同ファイル記載の GPL/AGPL 対応が必要。**
 
 ## 補足
 

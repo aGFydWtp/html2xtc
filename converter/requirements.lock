@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 haruki
+# Copyright (C) 2026 aGFydWtp
 #
 # converter コンテナの Python 依存の完全固定リスト（xtctool の推移的依存を含む）。
 # AGPL-3.0 の Corresponding Source 対応として、同じ Git リビジョンから再ビルドした

@@ -171,8 +171,10 @@ npx wrangler dev
 
 # デプロイ（Docker デーモン起動が必要。イメージが自動 build & push される）
 npx wrangler secret put AUTH_TOKEN   # 本番は必須（または Cloudflare Access）
-npx wrangler deploy
+npm run deploy
 ```
+
+デプロイは必ず `npm run deploy`（[scripts/deploy.sh](scripts/deploy.sh)）で行う。作業ツリーがクリーンで HEAD が origin/main に push 済みであることを検証したうえで `wrangler deploy` を実行し、成功時に `deploy-<UTC日時>` の Git タグを自動作成・push する。AGPL-3.0 対応として「デプロイごとに対応する Git タグを記録する」運用は、このスクリプトで自動化されている。`wrangler deploy` の直叩きはしないこと。
 
 ## 構成ファイル
 

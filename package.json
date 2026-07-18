@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "deploy": "bash scripts/deploy.sh",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:converter": "python3 -m pytest test/converter/"

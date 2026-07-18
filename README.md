@@ -81,7 +81,7 @@ API（`/convert` `/jobs` `/download`）は次の **OR** で通す（`src/auth.ts
 - `status`: `queued` → `rendering` → `converting` → `completed` | `failed`
 - `completed` 時は `downloadUrl`（`/jobs/{jobId}/download`）付き、`failed` 時は `error`（メッセージ）付き。
 - `rendering`/`converting` の区別は R2 上の中間 PDF（`intermediate/{jobId}/source.pdf`）の有無から導出する（Workflows の status() は実行中ステップ名を返さないため）。
-- jobId が UUID 形式でなければ 400、不明・Workflows インスタンスの保持期限切れ（プラットフォーム固定 30 日）なら 404。なお成果物 XTC 自体は R2 lifecycle により約 24 時間で削除される（ダウンロード側で 404）。
+- jobId が UUID 形式でなければ 400、不明・Workflows インスタンスの保持期限切れ（`retention` 指定により成功・失敗とも約 1 日）なら 404。なお成果物 XTC 自体は R2 lifecycle により約 24 時間で削除される（ダウンロード側で 404）。
 
 ### GET /jobs/{jobId}/download
 

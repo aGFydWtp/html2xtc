@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 haruki
+
 """HTTP wrapper around the xtctool CLI. Standard library only, except for an
 optional pymupdf import (shipped with xtctool) used to read PDF metadata.
 

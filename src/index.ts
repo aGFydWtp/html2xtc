@@ -144,6 +144,13 @@ async function handleCreateJob(request: Request, env: Env): Promise<Response> {
     await env.CONVERT_WORKFLOW.create({
       id: jobId,
       params: { url: target.toString() },
+      // The submitted URL lives in params, so instance state must not outlive
+      // the ~24h promised to users (default retention is 30 days on Paid).
+      // Errored instances carry the URL too, hence the same errorRetention.
+      retention: {
+        successRetention: "1 day",
+        errorRetention: "1 day",
+      },
     });
   } catch (error) {
     // create() throws on duplicate IDs (practically impossible with fresh

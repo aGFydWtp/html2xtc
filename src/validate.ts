@@ -196,8 +196,10 @@ function isForbiddenIpv4(octets: number[]): boolean {
  * Expands an IPv6 literal (without brackets) into its eight 16-bit words.
  * Supports "::" compression, an embedded IPv4 tail ("::ffff:10.0.0.1"),
  * and a zone index suffix ("fe80::1%eth0"). Returns null if malformed.
+ * Exported for reuse by the rate limiter's /64 key normalization
+ * (src/ratelimit.ts).
  */
-function parseIpv6(literal: string): number[] | null {
+export function parseIpv6(literal: string): number[] | null {
   const addr = literal.split("%")[0] ?? "";
   const halves = addr.split("::");
   if (halves.length > 2) {

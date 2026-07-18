@@ -40,6 +40,10 @@ API（`/convert` `/jobs` `/download`）は次の **OR** で通す（`src/auth.ts
 
 認証なしで通すのは `ACCESS_TEAM_DOMAIN`・`ACCESS_POLICY_AUD`・`AUTH_TOKEN` の**3 つすべてが未設定**の場合のみ（ローカル開発用）。Access の 2 変数のうち片方だけ設定されている状態は誤設定（typo・設定漏れ）として扱い、素通しにはならない: Access JWT は受け付けず、`AUTH_TOKEN` が設定されていれば Bearer 認証のみ有効、なければ 401 を返す（フェイルクローズ）。**本番デプロイでは Cloudflare Access で保護するか、AUTH_TOKEN の設定が必須。** なお Access をエッジで有効化すると、素の Bearer だけのリクエストはエッジで遮断されるため CLI は service token が必要（deploy-guide 参照）。
 
+## レート制限
+
+変換を起動するエンドポイント（`POST /convert`・`POST /jobs`）は IP ごとに **1 時間あたり 50 件**（固定窓、Worker の var `RATE_LIMIT_PER_HOUR` で変更可）に制限する（`src/ratelimit.ts` / `src/ratelimiter.ts`）。IP は Cloudflare エッジが設定する `CF-Connecting-IP` から取り、IPv6 は /64 プレフィックス単位で数える（プレフィックス内でアドレスを回すすり抜け対策）。超過時は 429 + `Retry-After`（窓リセットまでの秒数）を返す。カウントは IP キーごとの Durable Object が保持し、DO 呼び出しが失敗した場合はブロックせず通す（validate.ts の DoH 障害時と同じ可用性優先）。GET 系（状態確認・ダウンロード）は対象外。
+
 ## API
 
 ### POST /jobs（推奨）
@@ -60,6 +64,7 @@ API（`/convert` `/jobs` `/download`）は次の **OR** で通す（`src/auth.ts
 |---|---|
 | 400 | body が JSON でない / `url` 欠落 / URL 検証エラー（/convert と同じ） |
 | 401 | AUTH_TOKEN 設定時、Bearer トークン欠落・不一致 |
+| 429 | IP ごとのレート制限超過（`Retry-After` ヘッダ付き） |
 | 500 | Workflow インスタンス作成失敗 |
 
 裏側は Cloudflare Workflows の 2 ステップ（render-pdf → convert-xtc）。各ステップは失敗時にそのステップだけ再試行される（render: 2 回 / convert: 2 回。PDF サイズ超過などの恒久エラーは再試行なしで failed）。
@@ -99,6 +104,7 @@ R2 上の XTC（`jobs/{jobId}/output.xtc`）を attachment で返す。未完了
 | 401 | AUTH_TOKEN 設定時、Bearer トークン欠落・不一致 |
 | 405 | メソッド不一致（`Allow` ヘッダ付き） |
 | 422 | 生成 PDF がサイズ上限超過、または xtctool の変換失敗 |
+| 429 | IP ごとのレート制限超過（`Retry-After` ヘッダ付き） |
 | 500 | R2 書き込み失敗などの内部エラー |
 | 502 | Browser Run の PDF 生成失敗、または Container に到達できない |
 
@@ -118,6 +124,7 @@ R2 上の XTC を `application/octet-stream` + `Content-Length` + `Content-Dispo
 | 受信 PDF の上限（Container） | 50 MiB | Container の env `MAX_PDF_BYTES`（超過は 413） |
 | xtctool タイムアウト | 600 秒 | Container の env `XTC_TIMEOUT_SECONDS`（`src/container.ts` の `envVars` で設定） |
 | 同時変換数（Container 内） | 2 | Container の env `MAX_CONCURRENT_CONVERSIONS`（Semaphore で制限） |
+| 変換リクエストのレート制限（IP ごと・1 時間固定窓） | 50 件 | Worker の var `RATE_LIMIT_PER_HOUR`（「レート制限」参照） |
 
 ## URL 検証（SSRF 対策）と既知の限界
 
@@ -173,6 +180,8 @@ src/
   jobs.ts        ジョブ状態写像・R2 キー導出（純関数、vitest 対象）
   pdf.ts         X3_PRINT_CSS + Browser Run quickAction("pdf") 呼び出し
   container.ts   XtcConverterContainer + convertInContainer（@cloudflare/containers）
+  ratelimit.ts   レート制限の純関数（IP キー正規化・固定窓判定、vitest 対象）
+  ratelimiter.ts RateLimiter Durable Object + enforceRateLimit（429 応答）
   validate.ts    SSRF 対策の URL 検証（DoH 事前解決含む）
   types.ts       Env 型・ConvertJobParams
 converter/
@@ -184,6 +193,7 @@ test/
   validate.test.ts        vitest
   auth.test.ts            vitest（認証 OR ロジック。JWT 検証はモック注入）
   jobs.test.ts            vitest（状態写像・キー導出の単体テスト）
+  ratelimit.test.ts       vitest（IP キー正規化・固定窓判定・上限パース）
   converter/test_app.py   pytest
 ```
 

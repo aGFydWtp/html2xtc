@@ -32,6 +32,9 @@ CONFIG_PATH = os.environ.get("XTC_CONFIG_PATH", "/app/config-x3.toml")
 CONVERT_TIMEOUT_SECONDS = int(os.environ.get("XTC_TIMEOUT_SECONDS", "120"))
 PORT = int(os.environ.get("PORT", "8080"))
 MAX_PDF_BYTES = int(os.environ.get("MAX_PDF_BYTES", str(50 * 1024 * 1024)))
+# Absolute ceiling for the header-supplied limit (defense-in-depth against a
+# compromised or misconfigured Worker); far above any normal operating limit.
+HARD_MAX_PDF_BYTES = 512 * 1024 * 1024
 MAX_CONCURRENT_CONVERSIONS = int(os.environ.get("MAX_CONCURRENT_CONVERSIONS", "2"))
 
 logger = logging.getLogger("converter")
@@ -75,7 +78,9 @@ ACTIVE_REQUESTS = ActiveRequestTracker()
 def effective_max_pdf_bytes(headers) -> int:
     """Size limit for the incoming PDF. The Worker owns the authoritative
     limit and passes it via X-Max-Pdf-Bytes; fall back to the module default
-    (env MAX_PDF_BYTES) when the header is absent or not a positive integer."""
+    (env MAX_PDF_BYTES) when the header is absent or not a positive integer.
+    Header values are clamped to HARD_MAX_PDF_BYTES so a compromised or
+    misconfigured Worker cannot disable the size floor entirely."""
     raw = headers.get("X-Max-Pdf-Bytes")
     if raw is not None:
         try:
@@ -83,7 +88,7 @@ def effective_max_pdf_bytes(headers) -> int:
         except ValueError:
             value = 0
         if value > 0:
-            return value
+            return min(value, HARD_MAX_PDF_BYTES)
     return MAX_PDF_BYTES
 
 

@@ -252,6 +252,23 @@ class TestTitleHandling:
         assert "config title merge failed" in caplog.text
 
 
+class TestEffectiveMaxPdfBytes:
+    def test_header_value_at_or_below_hard_max_is_used_as_is(self):
+        assert app.effective_max_pdf_bytes({"X-Max-Pdf-Bytes": "8"}) == 8
+        assert (
+            app.effective_max_pdf_bytes({"X-Max-Pdf-Bytes": str(app.HARD_MAX_PDF_BYTES)})
+            == app.HARD_MAX_PDF_BYTES
+        )
+
+    def test_header_value_above_hard_max_is_clamped(self):
+        # Defense-in-depth: a compromised/misconfigured Worker must not be able
+        # to remove the size floor by sending an arbitrarily large limit.
+        assert (
+            app.effective_max_pdf_bytes({"X-Max-Pdf-Bytes": str(10**18)})
+            == app.HARD_MAX_PDF_BYTES
+        )
+
+
 @pytest.fixture()
 def server():
     srv = ThreadingHTTPServer(("127.0.0.1", 0), app.Handler)

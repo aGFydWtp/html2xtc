@@ -174,8 +174,8 @@ async function handleJobStatus(jobId: string, env: Env): Promise<Response> {
   try {
     instance = await env.CONVERT_WORKFLOW.get(jobId);
   } catch {
-    // Unknown ID or past the Workflows instance retention (platform-fixed
-    // 30 days — distinct from the 24h R2 artifact lifecycle, whose expiry is
+    // Unknown ID or past the Workflows instance retention (set to 1 day at
+    // create() — distinct from the 24h R2 artifact lifecycle, whose expiry is
     // surfaced by the download handler / decideMissingDownload). Note: a
     // transient platform error in get() also lands here as 404; pollers will
     // see the real status again on the next request.

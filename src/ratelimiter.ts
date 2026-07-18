@@ -71,7 +71,7 @@ export async function enforceRateLimit(
     // (same availability-over-strictness stance as the DoH outage path in
     // validate.ts). Trade-off: during such an outage the limit is not
     // enforced — acceptable, since the limiter protects capacity rather
-    // than confidentiality, and authorize() has already run.
+    // than confidentiality.
     console.error("rate limiter unavailable", error);
     return null;
   }

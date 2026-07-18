@@ -17,6 +17,11 @@ export class XtcConverterContainer extends Container {
 // a new instance per jobId.
 const CONVERTER_POOL_SIZE = 2;
 
+// The container must abort its xtctool subprocess before this fetch aborts, so
+// it frees its conversion slot instead of running to XTC_TIMEOUT_SECONDS. Give
+// it a margin below the fetch budget for container startup + transfer.
+const CONVERTER_TIMEOUT_MARGIN_MS = 30_000;
+
 /**
  * Sends the PDF to the converter container and returns its response.
  * timeoutMs bounds the whole fetch: the sync /convert path passes a short
@@ -29,10 +34,19 @@ export function convertInContainer(
   timeoutMs: number,
 ): Promise<Response> {
   const container = getContainer(env.XTC_CONVERTER, converterInstanceName(jobId));
+  // Per-request subprocess timeout for app.py, kept below this fetch's budget
+  // so the container aborts xtctool first. XTC_TIMEOUT_SECONDS stays as the
+  // absolute upper bound (defense in depth).
+  const subprocessTimeoutSeconds = String(
+    Math.max(1, Math.floor((timeoutMs - CONVERTER_TIMEOUT_MARGIN_MS) / 1000)),
+  );
   return container.fetch(
     new Request("http://converter/convert", {
       method: "POST",
-      headers: { "Content-Type": "application/pdf" },
+      headers: {
+        "Content-Type": "application/pdf",
+        "X-Convert-Timeout-Seconds": subprocessTimeoutSeconds,
+      },
       body: pdfBytes,
       signal: AbortSignal.timeout(timeoutMs),
     }),

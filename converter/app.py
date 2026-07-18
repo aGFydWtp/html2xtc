@@ -126,7 +126,9 @@ def config_with_title(title: str) -> str:
     return "\n".join(lines)
 
 
-def convert_pdf(pdf_bytes: bytes, title: str = "") -> bytes:
+def convert_pdf(
+    pdf_bytes: bytes, title: str = "", timeout_seconds: int = CONVERT_TIMEOUT_SECONDS
+) -> bytes:
     """Run xtctool over the given PDF bytes and return the XTC bytes."""
     with tempfile.TemporaryDirectory() as workdir:
         pdf_path = Path(workdir) / "source.pdf"
@@ -158,12 +160,12 @@ def convert_pdf(pdf_bytes: bytes, title: str = "") -> bytes:
                 command,
                 capture_output=True,
                 text=True,
-                timeout=CONVERT_TIMEOUT_SECONDS,
+                timeout=timeout_seconds,
                 check=False,
             )
         except subprocess.TimeoutExpired as exc:
             raise ConversionError(
-                f"conversion timed out after {CONVERT_TIMEOUT_SECONDS}s"
+                f"conversion timed out after {timeout_seconds}s"
             ) from exc
 
         if result.returncode != 0:
@@ -174,6 +176,11 @@ def convert_pdf(pdf_bytes: bytes, title: str = "") -> bytes:
         if not xtc_path.is_file():
             raise ConversionError(
                 "xtctool reported success but produced no output",
+                stderr=result.stderr,
+            )
+        if xtc_path.stat().st_size == 0:
+            raise ConversionError(
+                "xtctool reported success but produced an empty output file",
                 stderr=result.stderr,
             )
         return xtc_path.read_bytes()
@@ -245,14 +252,35 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
+        # The Worker aborts its fetch after a per-request budget; honour that
+        # here so a slow conversion cannot pin a CONVERSION_SLOTS slot for the
+        # full CONVERT_TIMEOUT_SECONDS ceiling. Missing/invalid headers fall
+        # back to that ceiling, which also stays the absolute upper bound.
+        timeout_seconds = CONVERT_TIMEOUT_SECONDS
+        raw_timeout = self.headers.get("X-Convert-Timeout-Seconds")
+        if raw_timeout:
+            try:
+                requested = int(raw_timeout)
+            except ValueError:
+                requested = 0
+            if requested > 0:
+                timeout_seconds = max(1, min(requested, CONVERT_TIMEOUT_SECONDS))
+
         try:
             pdf_bytes = self.rfile.read(content_length)
             if len(pdf_bytes) != content_length:
                 self._send_json(400, {"error": "truncated request body"}, close=True)
                 return
-            title = extract_pdf_title(pdf_bytes)
+            # Title extraction opens the PDF in memory too, so keep it inside
+            # the slot to bound total concurrent PDF work. Trade-off: unlike
+            # convert_pdf, extract_pdf_title has no timeout (pymupdf runs in-
+            # process and cannot be cancelled), so a pathological parse holds
+            # the slot until it returns. Acceptable here because the input is
+            # always a PDF we rendered ourselves via Chromium, not arbitrary
+            # client bytes.
             with CONVERSION_SLOTS:
-                xtc_bytes = convert_pdf(pdf_bytes, title)
+                title = extract_pdf_title(pdf_bytes)
+                xtc_bytes = convert_pdf(pdf_bytes, title, timeout_seconds)
         except ConversionError as exc:
             logger.error("conversion failed: %s; stderr: %s", exc, exc.stderr)
             self._send_json(500, {"error": str(exc)})

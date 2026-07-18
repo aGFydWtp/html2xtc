@@ -33,11 +33,19 @@ if ! git merge-base --is-ancestor HEAD origin/main; then
   exit 1
 fi
 
+# 検証通過後: 稼働コミットを WebUI に表示するための version.json を生成
+# （public/version.json は .gitignore 済みのため検証1のクリーン判定には影響しない。
+#   AGPL-3.0 第 13 条対応: 利用者が稼働中バージョンに対応するソースを特定できるようにする）
+HEAD_HASH="$(git rev-parse HEAD)"
+SHORT_HASH="$(git rev-parse --short HEAD)"
+DEPLOYED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+printf '{"commit":"%s","short":"%s","deployedAt":"%s"}\n' \
+  "${HEAD_HASH}" "${SHORT_HASH}" "${DEPLOYED_AT}" > public/version.json
+
 # デプロイ本体
 npx wrangler deploy
 
 # 成功時: デプロイ対応タグを作成して push
-HEAD_HASH="$(git rev-parse HEAD)"
 TAG="deploy-$(date -u +%Y%m%d-%H%M%SZ)-$(git rev-parse --short HEAD)"
 
 if ! git tag -a "${TAG}" -m "wrangler deploy: ${HEAD_HASH}"; then

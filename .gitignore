@@ -4,6 +4,9 @@ dist/
 .dev.vars
 worker-configuration.d.ts
 
+# デプロイ時に scripts/deploy.sh が生成（稼働コミットの表示用）
+public/version.json
+
 .venv/
 __pycache__/
 .pytest_cache/

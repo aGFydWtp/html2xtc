@@ -22,6 +22,12 @@ npm run deploy
 
 `scripts/deploy.sh` がこの 2 点を検証し、満たさない場合はデプロイせずエラー終了する。
 
+## デプロイ時の動作
+
+1. 上記 2 つの事前条件を検証（満たさなければデプロイせずエラー終了）
+2. 稼働コミットを WebUI フッターに表示するための `public/version.json`（`{"commit","short","deployedAt"}`、gitignore 済み）を生成
+3. `npx wrangler deploy` を実行
+
 ## 成功時の動作
 
 wrangler deploy 成功後、`deploy-<UTC日時>-<短縮コミットハッシュ>`（例: `deploy-20260718-123456Z-6c8f88d`）という annotated タグが自動作成され、origin へ push される。

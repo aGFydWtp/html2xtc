@@ -13,7 +13,8 @@ import type { ConvertJobParams, Env } from "./types";
 const CONVERTER_FETCH_TIMEOUT_MS = 630_000;
 
 /**
- * Two-step conversion pipeline behind POST /jobs. The instance ID doubles as
+ * Three-step conversion pipeline behind POST /jobs (render-pdf → convert-xtc
+ * → delete-intermediate-pdf). The instance ID doubles as
  * the public jobId, and the R2 keys are derived from it, so no extra job
  * store is needed (see claudedocs/phase2-findings.md).
  *

@@ -192,11 +192,147 @@ export const X3_PRINT_CSS = `
  */
 export const RENDER_USER_AGENT = "xtc-converter/1.0 (+https://xtc.hr20k.com/about)";
 
+/** Formats a timestamp as e.g. "2026-07-18 21:30 JST" for the colophon. */
+function formatJstTimestamp(date: Date): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    // "h23" so midnight is "00", not "24" (hour12: false alone can yield 24).
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const get = (type: Intl.DateTimeFormatPartTypes): string =>
+    parts.find((p) => p.type === type)?.value ?? "";
+  return `${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")} JST`;
+}
+
+/**
+ * Builds the script injected via quickAction's addScriptTag (runs after page
+ * load, before PDF generation) that appends a colophon page: title, site
+ * name, author (best effort), source URL, conversion time, and a
+ * personal-use/no-redistribution notice.
+ *
+ * Design constraints:
+ * - Fail-soft: the whole script is wrapped in try/catch, and a page CSP with
+ *   a script-src directive may block the injected tag entirely. Either way
+ *   the conversion must still succeed — a missing colophon is an accepted
+ *   degradation, a broken render is not.
+ * - The container is a <div>, NOT <footer>/<header>/<aside>: X3_PRINT_CSS
+ *   hides "body footer" etc. with display:none, which would silently delete
+ *   the colophon. No class attribute either, so the [class~=...] hide rules
+ *   above can never match it.
+ * - All styles go through el.style.setProperty(..., "important") so site
+ *   CSS (including the site's own !important rules) cannot override them;
+ *   inline !important wins the cascade against stylesheet !important.
+ * - Text is built with createElement + textContent only — page-derived
+ *   strings never pass through innerHTML.
+ *
+ * `url` and `convertedAt` are embedded with JSON.stringify so arbitrary
+ * characters in the (already validated) URL cannot break out of the string
+ * literal and inject script.
+ */
+export function buildColophonScript(url: string, convertedAt: string): string {
+  return `(() => {
+  try {
+    var doc = document;
+    var meta = function (sel) {
+      var el = doc.querySelector(sel);
+      var v = el && el.getAttribute("content");
+      return v && v.trim() ? v.trim() : "";
+    };
+
+    var title = (doc.title || "").trim();
+    var siteName = meta('meta[property="og:site_name"]') || location.hostname;
+
+    // Author, best effort; when nothing usable is found the line is omitted.
+    var author = meta('meta[name="author"]');
+    if (!author) {
+      // article:author is often a profile URL rather than a name; skip URLs.
+      var fbAuthor = meta('meta[property="article:author"]');
+      if (fbAuthor && !/^https?:/i.test(fbAuthor)) author = fbAuthor;
+    }
+    if (!author) {
+      // JSON-LD: top-level "author" only (string / object / array of both);
+      // walking @graph is not worth the complexity for a colophon line.
+      var blocks = doc.querySelectorAll('script[type="application/ld+json"]');
+      for (var i = 0; i < blocks.length && !author; i++) {
+        try {
+          var data = JSON.parse(blocks[i].textContent || "");
+          var nodes = Array.isArray(data) ? data : [data];
+          for (var j = 0; j < nodes.length && !author; j++) {
+            var a = nodes[j] && nodes[j].author;
+            var cands = Array.isArray(a) ? a : [a];
+            for (var k = 0; k < cands.length && !author; k++) {
+              var c = cands[k];
+              if (typeof c === "string" && c.trim()) {
+                author = c.trim();
+              } else if (c && typeof c.name === "string" && c.name.trim()) {
+                author = c.name.trim();
+              }
+            }
+          }
+        } catch (e) {
+          // Invalid JSON-LD on the page; try the next block.
+        }
+      }
+    }
+
+    var setStyles = function (el, styles) {
+      for (var p in styles) el.style.setProperty(p, styles[p], "important");
+    };
+
+    var box = doc.createElement("div");
+    box.id = "xtc-colophon";
+    // break-before: page puts the colophon on its own final page. Keep the
+    // typography small and plain: the content box is only 58mm wide
+    // (66mm paper minus 4mm margins), and X3_PRINT_CSS already forces black
+    // text and mid-token wrapping (long URLs included) on every element.
+    setStyles(box, {
+      "break-before": "page",
+      "font-size": "8pt",
+      "line-height": "1.6",
+      "margin": "0",
+      "padding": "0",
+    });
+
+    var addLine = function (text, styles) {
+      var line = doc.createElement("div");
+      line.textContent = text;
+      setStyles(line, { "margin": "0", "padding": "0" });
+      if (styles) setStyles(line, styles);
+      box.appendChild(line);
+    };
+
+    addLine("タイトル: " + title);
+    addLine("サイト名: " + siteName);
+    if (author) addLine("著者: " + author);
+    addLine("URL: " + ${JSON.stringify(url)});
+    addLine("変換日時: " + ${JSON.stringify(convertedAt)});
+    addLine("個人的利用のために作成。再配布禁止。", {
+      "border-top": "1px solid black",
+      "margin-top": "6pt",
+      "padding-top": "4pt",
+    });
+    addLine("Created for personal use. Redistribution prohibited.");
+
+    doc.body.appendChild(box);
+  } catch (e) {
+    // Fail-soft: never let colophon construction break the PDF render.
+  }
+})();`;
+}
+
 export function renderPdf(env: Env, url: string): Promise<Response> {
+  const convertedAt = formatJstTimestamp(new Date());
   return env.BROWSER.quickAction("pdf", {
     url,
     userAgent: RENDER_USER_AGENT,
     addStyleTag: [{ content: X3_PRINT_CSS }],
+    // Appends the colophon page to the DOM after load, before PDF capture.
+    addScriptTag: [{ content: buildColophonScript(url, convertedAt) }],
     gotoOptions: {
       waitUntil: "networkidle2",
       // Browser Run's documented cap for goto is 60s; use the full budget so

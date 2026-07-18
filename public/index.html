@@ -3,223 +3,249 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="light dark">
-<title>URL → XTC 変換</title>
+<title>XTC 変換 for Xteink X3</title>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #f6f6f4;
-    --card: #ffffff;
-    --text: #1c1c1a;
-    --muted: #6b6b66;
-    --line: #e2e2de;
-    --accent: #0a6e5c;
-    --accent-text: #ffffff;
-    --error: #b3392f;
-    --ok: #0a6e5c;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #161815;
-      --card: #1f221e;
-      --text: #ecece8;
-      --muted: #9a9a93;
-      --line: #33362f;
-      --accent: #4cc2a9;
-      --accent-text: #10241f;
-      --error: #e07a70;
-      --ok: #4cc2a9;
-    }
+    --bg: #f4f1ea;
+    --card: #fdfcf9;
+    --panel: #ece8dd;
+    --text: #1c1a17;
+    --muted: #8a857b;
+    --muted2: #6b665c;
+    --faint: #a39d90;
+    --disabled: #c4beb0;
+    --line: #ddd6c8;
+    --ink: #1c1a17;
+    --ink-text: #f4f1ea;
+    --error: #8a3d33;
+    --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   }
   * { box-sizing: border-box; }
   body {
     margin: 0;
     background: var(--bg);
     color: var(--text);
-    font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    font-family: "Zen Kaku Gothic New", system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
     line-height: 1.6;
     -webkit-font-smoothing: antialiased;
+    font-size: 16px;
   }
-  main {
-    max-width: 40rem;
-    margin: 0 auto;
-    padding: 1.25rem 1rem 3rem;
+  a { color: var(--text); }
+  a:hover { color: #555; }
+  main { max-width: 44rem; margin: 0 auto; padding: 28px 20px 48px; }
+  header.site { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .brand-name { font-size: 20px; font-weight: 700; letter-spacing: .06em; }
+  .brand-sub { font-family: var(--mono); font-size: 14px; color: var(--muted); letter-spacing: .18em; }
+  .lang { display: flex; gap: 2px; font-family: var(--mono); font-size: 14px; }
+  .lang button {
+    padding: 5px 10px; font: inherit; cursor: pointer; border-radius: 4px;
+    border: 1px solid transparent; background: none; color: var(--muted);
   }
-  h1 {
-    font-size: 1.15rem;
-    margin: 0.25rem 0 0.25rem;
-    letter-spacing: 0.02em;
+  .lang button[aria-pressed="true"] { background: var(--ink); color: var(--ink-text); }
+  .lang button[aria-pressed="false"] { border-color: #cfc9bd; }
+  section.convert { padding: 30px 0 30px; border-bottom: 1px solid var(--line); }
+  .intro { margin: 0 0 16px; color: var(--muted2); line-height: 1.8; }
+  .x3-note {
+    margin: 0 0 24px; padding: 14px 18px; background: var(--panel); border-radius: 4px;
+    font-size: 14px; color: var(--muted2); line-height: 1.9;
   }
-  .sub { color: var(--muted); font-size: 0.8rem; margin: 0 0 1.25rem; }
-  form {
-    display: flex;
-    flex-direction: column;
-    gap: 0.6rem;
+  .x3-note b { display: block; font-weight: 700; color: #4d4a42; margin-bottom: 2px; }
+  form .input-row {
+    display: flex; border: 1.5px solid var(--ink); background: var(--card);
+    border-radius: 4px; overflow: hidden;
   }
   input[type="url"] {
-    width: 100%;
-    padding: 0.75rem 0.85rem;
-    font-size: 1rem;
-    border: 1px solid var(--line);
-    border-radius: 10px;
-    background: var(--card);
-    color: var(--text);
+    flex: 1; min-width: 0; padding: 14px 16px; font: inherit; font-size: 16px;
+    border: 0; background: none; color: var(--text);
   }
-  input[type="url"]:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
+  input[type="url"]::placeholder { color: var(--faint); }
+  input[type="url"]:focus { outline: none; }
+  form .input-row:focus-within { outline: 2px solid var(--ink); outline-offset: 1px; }
   button.primary {
-    padding: 0.8rem;
-    font-size: 1rem;
-    font-weight: 600;
-    border: 0;
-    border-radius: 10px;
-    background: var(--accent);
-    color: var(--accent-text);
-    cursor: pointer;
+    padding: 14px 26px; font: inherit; font-size: 16px; font-weight: 700; letter-spacing: .1em;
+    border: 0; background: var(--ink); color: var(--ink-text); cursor: pointer; white-space: nowrap;
   }
-  button.primary:disabled { opacity: 0.55; cursor: default; }
-  #current {
-    margin-top: 1rem;
-    padding: 0.9rem 1rem;
-    border: 1px solid var(--line);
-    border-radius: 12px;
-    background: var(--card);
-    display: none;
-  }
+  button.primary:disabled { opacity: .55; cursor: default; }
+  .form-note { font-size: 14px; color: var(--muted); margin-top: 10px; }
+  #current { display: none; padding: 22px 0; border-bottom: 1px solid var(--line); }
   #current.show { display: block; }
+  .title-line { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .url-line {
-    font-size: 0.8rem;
-    color: var(--muted);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    font-family: var(--mono); font-size: 14px; color: var(--faint);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px;
   }
-  .title-line {
-    font-size: 0.9rem;
-    font-weight: 600;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .title-line + .url-line { font-size: 0.72rem; }
-  .status-line { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.35rem; }
+  .status-line { display: flex; align-items: center; gap: 12px; margin-top: 14px; flex-wrap: wrap; }
   .badge {
-    font-size: 0.75rem;
-    font-weight: 600;
-    padding: 0.1rem 0.55rem;
-    border-radius: 999px;
-    border: 1px solid var(--line);
-    color: var(--muted);
-    white-space: nowrap;
+    font-family: var(--mono); font-size: 14px; padding: 3px 10px; border-radius: 4px;
+    background: #e8e3d6; color: #4d4a42; white-space: nowrap;
   }
-  .badge.active { color: var(--accent); border-color: var(--accent); }
-  .badge.ok { color: var(--ok); border-color: var(--ok); }
-  .badge.err { color: var(--error); border-color: var(--error); }
+  .badge.err { background: none; border: 1px solid var(--error); color: var(--error); }
   .spinner {
-    width: 0.85rem; height: 0.85rem;
-    border: 2px solid var(--line);
-    border-top-color: var(--accent);
-    border-radius: 50%;
-    animation: spin 0.9s linear infinite;
-    flex: none;
+    width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--ink);
+    border-radius: 50%; animation: spin .9s linear infinite; flex: none;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
-  .error-text { color: var(--error); font-size: 0.85rem; margin-top: 0.35rem; word-break: break-all; }
+  .error-text { color: var(--error); font-size: 14px; margin-top: 8px; word-break: break-all; }
   a.dl {
-    display: inline-block;
-    margin-top: 0.5rem;
-    padding: 0.55rem 1rem;
-    border-radius: 10px;
-    background: var(--accent);
-    color: var(--accent-text);
-    font-weight: 600;
-    font-size: 0.9rem;
-    text-decoration: none;
+    display: inline-block; padding: 9px 20px; border-radius: 4px;
+    background: var(--ink); color: var(--ink-text); font-weight: 700; text-decoration: none;
   }
-  section.history { margin-top: 2rem; }
-  .history-head { display: flex; align-items: baseline; justify-content: space-between; }
-  .history-head h2 { font-size: 0.95rem; margin: 0; }
+  a.dl:hover { color: var(--ink-text); opacity: .88; }
+  section.history { padding-top: 26px; }
+  .history-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 6px; }
+  .history-head h2 { font-size: 18px; font-weight: 600; letter-spacing: .08em; margin: 0; }
   .history-head button {
-    border: 0; background: none; color: var(--muted);
-    font-size: 0.75rem; cursor: pointer; text-decoration: underline;
-    /* >=44px tap target without inflating the layout */
-    padding: 0.85rem 0.25rem; margin: -0.85rem -0.25rem;
+    border: 0; background: none; color: var(--muted); font: inherit; font-size: 14px;
+    cursor: pointer; text-decoration: underline; padding: 12px 4px; margin: -12px -4px;
   }
-  .note { color: var(--muted); font-size: 0.72rem; margin: 0.25rem 0 0.75rem; }
-  ul.jobs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
-  ul.jobs li {
-    padding: 0.7rem 0.85rem;
-    border: 1px solid var(--line);
-    border-radius: 12px;
-    background: var(--card);
-  }
-  .meta { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.2rem; }
-  .date { color: var(--muted); font-size: 0.72rem; }
+  ul.jobs { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; }
+  ul.jobs li { display: flex; align-items: center; gap: 14px; padding: 12px 0; border-top: 1px solid var(--line); }
+  ul.jobs li:last-child { border-bottom: 1px solid var(--line); }
+  ul.jobs .info { flex: 1; min-width: 0; }
+  ul.jobs .job-title { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  ul.jobs .job-title.dim { color: var(--faint); }
+  ul.jobs .date { font-family: var(--mono); font-size: 14px; color: var(--faint); }
   a.dl-small {
-    color: var(--accent); font-size: 0.8rem; font-weight: 600; text-decoration: none;
-    /* >=44px tap target without inflating the row */
-    padding: 0.85rem 0.5rem; margin: -0.85rem -0.5rem -0.85rem auto;
+    font-size: 14px; font-weight: 700; color: var(--ink); text-decoration: none;
+    border-bottom: 1px solid var(--ink); white-space: nowrap;
+    padding: 12px 6px; margin: -12px -6px; border-bottom-width: 1px;
   }
-  .empty { color: var(--muted); font-size: 0.85rem; }
-  footer.about { margin-top: 2.5rem; text-align: center; }
-  footer.about a { color: var(--muted); font-size: 0.75rem; }
+  .none-mark { font-size: 14px; color: var(--disabled); white-space: nowrap; }
+  .empty { color: var(--muted); font-size: 14px; margin-top: 12px; }
+  footer.site {
+    margin-top: 26px; padding-top: 16px; border-top: 1.5px solid var(--ink);
+    font-size: 14px; color: var(--muted); line-height: 1.8;
+  }
+  footer.site a { color: var(--muted2); }
 </style>
 </head>
 <body>
 <main>
-  <h1>URL → XTC 変換</h1>
-  <p class="sub">記事 URL を送ると Xteink X3 用の XTC ファイルを生成します。</p>
+  <header class="site">
+    <div>
+      <div class="brand-name" data-i18n="brand">XTC 変換</div>
+      <div class="brand-sub">FOR XTEINK X3</div>
+    </div>
+    <div class="lang" role="group" aria-label="Language">
+      <button type="button" id="lang-ja" aria-pressed="true">日本語</button>
+      <button type="button" id="lang-en" aria-pressed="false">EN</button>
+    </div>
+  </header>
 
-  <form id="form">
-    <input id="url" type="url" required placeholder="https://example.com/article"
-           inputmode="url" autocomplete="off" spellcheck="false">
-    <button id="submit" class="primary" type="submit">変換を開始</button>
-  </form>
+  <section class="convert">
+    <p class="intro" data-i18n="intro">記事の URL を入れるだけで、電子ペーパー端末 Xteink X3 用の XTC ファイルに変換します。登録は不要です。有料記事や会員限定ページは変換できません。</p>
+    <div class="x3-note">
+      <b data-i18n="x3_title">X3 用ってどういうこと？</b>
+      <span data-i18n="x3_body">記事を X3 の画面サイズ（66×99mm・528×792px）に合わせた PDF に組み直し、200dpi でレンダリングして 1-bit（ディザリングあり）の XTC に変換します。本文はすべて黒文字に強制し、ナビ・広告・Cookie バナーなどは自動で取り除くので、E-ink でもかすれず読めます。</span>
+    </div>
+    <form id="form">
+      <div class="input-row">
+        <input id="url" type="url" required placeholder="https://example.com/article" inputmode="url" autocomplete="off" spellcheck="false">
+        <button id="submit" class="primary" type="submit" data-i18n="convert">変換する</button>
+      </div>
+      <div class="form-note" data-i18n="form_note">変換には 1〜2 分ほどかかります。生成されたファイルは 24 時間後に自動削除されます。</div>
+    </form>
+  </section>
 
   <div id="current"></div>
 
   <section class="history">
     <div class="history-head">
-      <h2>履歴</h2>
-      <button id="clear" type="button">履歴を全削除</button>
+      <h2 data-i18n="history">履歴</h2>
+      <button id="clear" type="button" data-i18n="clear_all">すべて削除</button>
     </div>
-    <p class="note">ファイルはサーバー上に約 24 時間保存され、その後は自動削除されてダウンロードできなくなります。</p>
     <ul id="jobs" class="jobs"></ul>
-    <p id="empty" class="empty">まだ履歴はありません。</p>
+    <p id="empty" class="empty" style="display:none" data-i18n="empty">まだ履歴はありません。</p>
+    <footer class="site">
+      <span data-i18n="footer_note">送信された URL と生成ファイルはサーバーに 24 時間だけ保存されます。</span><br>
+      <span data-i18n="footer_note2">アカウント登録・トラッキングはありません。履歴はこのブラウザ内にのみ残ります。</span><br>
+      <a href="/about" data-i18n="about_link">このサービスについて（利用規約・連絡先）</a>
+    </footer>
   </section>
-
-  <footer class="about">
-    <a href="/about">このサービスについて（利用規約・連絡先）</a>
-  </footer>
 </main>
 
 <script>
 "use strict";
-// --- localStorage history -------------------------------------------------
+// --- i18n ------------------------------------------------------------------
+const I18N = {
+  ja: {
+    brand: "XTC 変換",
+    intro: "記事の URL を入れるだけで、電子ペーパー端末 Xteink X3 用の XTC ファイルに変換します。登録は不要です。有料記事や会員限定ページは変換できません。",
+    x3_title: "X3 用ってどういうこと？",
+    x3_body: "記事を X3 の画面サイズ（66×99mm・528×792px）に合わせた PDF に組み直し、200dpi でレンダリングして 1-bit（ディザリングあり）の XTC に変換します。本文はすべて黒文字に強制し、ナビ・広告・Cookie バナーなどは自動で取り除くので、E-ink でもかすれず読めます。",
+    convert: "変換する",
+    form_note: "変換には 1〜2 分ほどかかります。生成されたファイルは 24 時間後に自動削除されます。",
+    history: "履歴",
+    clear_all: "すべて削除",
+    empty: "まだ履歴はありません。",
+    footer_note: "送信された URL と生成ファイルはサーバーに 24 時間だけ保存されます。",
+    footer_note2: "アカウント登録・トラッキングはありません。履歴はこのブラウザ内にのみ残ります。",
+    about_link: "このサービスについて（利用規約・連絡先）",
+    dl: "XTC をダウンロード",
+    dl_small: "XTC ↓",
+    confirm_clear: "履歴をすべて削除しますか？（サーバー上のファイルは削除されません）",
+    session: "セッションが切れました。ページを再読み込みしてください。",
+    poll_fail: "状態の取得に失敗しました。ページを再読み込みしてください。",
+    no_server: "サーバーに接続できません。",
+    http_error: (s) => `エラー (HTTP ${s})`,
+    status: { queued: "待機中", rendering: "PDF 生成中", converting: "XTC 変換中", completed: "✓ 完了", failed: "失敗", expired: "期限切れ" },
+  },
+  en: {
+    brand: "XTC Converter",
+    intro: "Paste an article URL and get an XTC file for the Xteink X3 e-paper reader. No sign-up required. Paywalled and members-only pages cannot be converted.",
+    x3_title: "What does \u201cfor the X3\u201d mean?",
+    x3_body: "The article is re-laid-out as a PDF matching the X3 screen (66\u00d799mm \u00b7 528\u00d7792px), rendered at 200dpi, and converted to 1-bit dithered XTC. Body text is forced to solid black and navigation, ads and cookie banners are stripped, so it stays crisp on E-ink.",
+    convert: "Convert",
+    form_note: "Conversion takes 1\u20132 minutes. Files are deleted automatically after 24 hours.",
+    history: "History",
+    clear_all: "Clear all",
+    empty: "No history yet.",
+    footer_note: "Submitted URLs and generated files are kept on the server for 24 hours only.",
+    footer_note2: "No accounts, no tracking. History is stored only in this browser.",
+    about_link: "About this service (terms & contact)",
+    dl: "Download XTC",
+    dl_small: "XTC \u2193",
+    confirm_clear: "Delete all history? (Files on the server are not deleted.)",
+    session: "Session expired. Please reload the page.",
+    poll_fail: "Failed to fetch status. Please reload the page.",
+    no_server: "Could not reach the server.",
+    http_error: (s) => `Error (HTTP ${s})`,
+    status: { queued: "Queued", rendering: "Rendering PDF", converting: "Converting to XTC", completed: "\u2713 Done", failed: "Failed", expired: "Expired" },
+  },
+};
+const LANG_KEY = "xtc-lang";
+let lang = localStorage.getItem(LANG_KEY) === "en" ? "en" : "ja";
+const t = (key) => I18N[lang][key];
+
+function applyLang() {
+  document.documentElement.lang = lang;
+  document.querySelectorAll("[data-i18n]").forEach((el) => {
+    const v = t(el.dataset.i18n);
+    if (typeof v === "string") el.textContent = v;
+  });
+  $("lang-ja").setAttribute("aria-pressed", String(lang === "ja"));
+  $("lang-en").setAttribute("aria-pressed", String(lang === "en"));
+  renderHistory();
+  if (activeView) renderCurrent(activeView.job, activeView.note);
+}
+
+// --- localStorage history ----------------------------------------------------
 const STORE_KEY = "xtc-jobs";
 const MAX_ENTRIES = 50;
 const POLL_MS = 4000;
-
-const LABELS = {
-  queued: "待機中",
-  rendering: "PDF 生成中",
-  converting: "XTC 変換中",
-  completed: "完了",
-  failed: "失敗",
-  expired: "期限切れ",
-};
 const IN_FLIGHT = ["queued", "rendering", "converting"];
 
 function loadJobs() {
   try {
     const raw = JSON.parse(localStorage.getItem(STORE_KEY) ?? "[]");
     if (!Array.isArray(raw)) return [];
-    // Drop malformed entries so one bad record can't break the whole list.
     return raw.filter((j) => j && typeof j === "object"
       && typeof j.jobId === "string" && typeof j.url === "string"
       && typeof j.status === "string");
   } catch { return []; }
 }
 function saveJobs(jobs) {
-  // Newest first; drop the oldest beyond the cap.
   localStorage.setItem(STORE_KEY, JSON.stringify(jobs.slice(0, MAX_ENTRIES)));
 }
 function upsertJob(entry) {
@@ -231,36 +257,38 @@ function upsertJob(entry) {
   renderHistory();
 }
 
-// --- rendering ------------------------------------------------------------
+// --- rendering ---------------------------------------------------------------
 const $ = (id) => document.getElementById(id);
 const esc = (s) => s.replace(/[&<>"']/g, (c) => (
   { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
 ));
 
 function badge(status) {
-  const cls = status === "completed" ? "ok"
-    : status === "failed" || status === "expired" ? "err"
-    : "active";
-  const label = Object.hasOwn(LABELS, status)
-    ? LABELS[status]
-    : esc(String(status));
-  return `<span class="badge ${cls}">${label}</span>`;
-}
-
-// The page title (once known) becomes the display name; the URL stays
-// visible underneath so entries remain distinguishable.
-function jobTitle(j) {
-  return typeof j.title === "string" && j.title ? j.title : "";
+  const cls = status === "failed" || status === "expired" ? "badge err" : "badge";
+  const label = Object.hasOwn(t("status"), status) ? t("status")[status] : esc(String(status));
+  return `<span class="${cls}">${label}</span>`;
 }
 function nameLines(j) {
-  const title = jobTitle(j);
+  const title = typeof j.title === "string" && j.title ? j.title : "";
   return (title ? `<div class="title-line">${esc(title)}</div>` : "")
     + `<div class="url-line">${esc(j.url)}</div>`;
 }
 
+let activeView = null; // {job, note} of what #current shows, for re-render on language switch
+
+// note is an i18n key ("session") or {key, args} for parameterized messages
+// ("http_error"); it is kept untranslated in activeView so that a language
+// switch re-resolves it via applyLang() -> renderCurrent().
+function noteText(note) {
+  const { key, args } = typeof note === "string" ? { key: note, args: [] } : note;
+  const v = t(key);
+  return typeof v === "function" ? v(...args) : v;
+}
+
 function renderCurrent(job, note) {
   const el = $("current");
-  if (!job) { el.className = ""; return; }
+  activeView = job ? { job, note } : null;
+  if (!job) { el.className = ""; el.innerHTML = ""; return; }
   const busy = !note && IN_FLIGHT.includes(job.status);
   el.className = "show";
   el.innerHTML = `
@@ -268,21 +296,20 @@ function renderCurrent(job, note) {
     <div class="status-line">
       ${busy ? '<span class="spinner"></span>' : ""}
       ${badge(job.status)}
+      ${job.status === "completed" ? `<a class="dl" href="/jobs/${encodeURIComponent(job.jobId)}/download">${t("dl")}</a>` : ""}
     </div>
-    ${note ? `<div class="error-text">${esc(note)}</div>` : ""}
+    ${note ? `<div class="error-text">${esc(noteText(note))}</div>` : ""}
     ${job.status === "failed" && job.error ? `<div class="error-text">${esc(job.error)}</div>` : ""}
-    ${job.status === "completed" ? `<a class="dl" href="/jobs/${encodeURIComponent(job.jobId)}/download">XTC をダウンロード</a>` : ""}
   `;
 }
 
+// Completed entries older than the server-side retention are shown as expired
+// instead of offering a download that would 404.
 const EXPIRY_MS = 24 * 60 * 60 * 1000;
-
-// Completed entries older than the server-side R2 retention are shown as
-// expired instead of offering a download that would 404.
 function effectiveStatus(j) {
   if (j.status === "completed") {
-    const t = Date.parse(j.createdAt);
-    if (!Number.isNaN(t) && Date.now() - t > EXPIRY_MS) return "expired";
+    const time = Date.parse(j.createdAt);
+    if (!Number.isNaN(time) && Date.now() - time > EXPIRY_MS) return "expired";
   }
   return j.status;
 }
@@ -292,30 +319,31 @@ function renderHistory() {
   $("empty").style.display = jobs.length ? "none" : "";
   $("jobs").innerHTML = jobs.map((j) => {
     const status = effectiveStatus(j);
+    const title = typeof j.title === "string" && j.title ? j.title : j.url;
+    const done = status === "completed";
     return `
     <li>
-      ${nameLines(j)}
-      <div class="meta">
-        ${badge(status)}
-        <span class="date">${esc(formatDate(typeof j.createdAt === "string" ? j.createdAt : ""))}</span>
-        ${status === "completed"
-          ? `<a class="dl-small" data-job-id="${esc(j.jobId)}" href="/jobs/${encodeURIComponent(j.jobId)}/download">ダウンロード</a>`
-          : ""}
+      <div class="info">
+        <div class="job-title${done ? "" : " dim"}">${esc(title)}</div>
+        <div class="date">${esc(formatDate(typeof j.createdAt === "string" ? j.createdAt : ""))}${done ? "" : " · " + badgeText(status)}</div>
       </div>
+      ${done
+        ? `<a class="dl-small" data-job-id="${esc(j.jobId)}" href="/jobs/${encodeURIComponent(j.jobId)}/download">${t("dl_small")}</a>`
+        : `<span class="none-mark">—</span>`}
     </li>`;
   }).join("");
 }
-
+function badgeText(status) {
+  return Object.hasOwn(t("status"), status) ? t("status")[status] : esc(String(status));
+}
 function formatDate(iso) {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
   return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
-// --- job submission and polling -------------------------------------------
+// --- job submission and polling ------------------------------------------------
 const MAX_POLL_FAILURES = 5;
-const SESSION_MSG = "セッションが切れました。ページを再読み込みしてください。";
-const POLL_FAIL_MSG = "状態の取得に失敗しました。ページを再読み込みしてください。";
 
 let pollTimer = null;
 let pollGen = 0;      // generation token: bumping it cancels older poll loops
@@ -351,21 +379,23 @@ async function submit(event) {
       body: JSON.stringify({ url }),
     });
     if (sessionExpired(res)) {
-      renderCurrent({ url, jobId: "", status: "failed" }, SESSION_MSG);
+      renderCurrent({ url, jobId: "", status: "failed" }, "session");
       return;
     }
     const body = await res.json().catch(() => null);
     if (!res.ok || !body) {
-      renderCurrent({
-        url, jobId: "", status: "failed",
-        error: (body && body.error) || `エラー (HTTP ${res.status})`,
-      });
+      // Server-sent error text stays as-is on the job; the generic fallback
+      // goes through note as an i18n key so it survives a language switch.
+      renderCurrent(
+        { url, jobId: "", status: "failed", error: body && body.error },
+        body && body.error ? null : { key: "http_error", args: [res.status] },
+      );
       return;
     }
     startPolling({ jobId: body.jobId, url, createdAt: new Date().toISOString(), status: "queued" });
     upsertJob(activeJob);
   } catch {
-    renderCurrent({ url, jobId: "", status: "failed", error: "サーバーに接続できません。" });
+    renderCurrent({ url, jobId: "", status: "failed" }, "no_server");
   } finally {
     button.disabled = false;
   }
@@ -377,13 +407,12 @@ async function poll(job, gen) {
     const res = await fetch(`/jobs/${encodeURIComponent(job.jobId)}`);
     if (gen !== pollGen) return;
     if (sessionExpired(res)) {
-      renderCurrent(job, SESSION_MSG);
+      renderCurrent(job, "session");
       return;
     }
     if (res.status === 404) {
-      // 404 は真の不在・一過性エラー・照会前の初回ポールを区別できない。
-      // 猶予回数を使い切ったときだけ expired 終端にし、それまでは IN_FLIGHT を
-      // 維持したまま末尾の再スケジュールへフォールスルーして次回ポールを続ける。
+      // 404 can be a true absence, a transient error, or a first poll before
+      // the job is queryable; only treat it as terminal after the grace count.
       if (++poll404s >= MAX_POLL_FAILURES) {
         job.status = "expired";
         upsertJob(job); renderCurrent(job);
@@ -394,9 +423,8 @@ async function poll(job, gen) {
       try {
         body = await res.json();
       } catch {
-        // HTML (e.g. an Access login page) instead of JSON: not recoverable
-        // by retrying.
-        renderCurrent(job, SESSION_MSG);
+        // HTML (e.g. an Access login page) instead of JSON: not recoverable.
+        renderCurrent(job, "session");
         return;
       }
       pollFailures = 0;
@@ -408,14 +436,13 @@ async function poll(job, gen) {
       renderCurrent(job);
       if (!IN_FLIGHT.includes(job.status)) return; // completed / failed: stop
     } else if (++pollFailures >= MAX_POLL_FAILURES) {
-      renderCurrent(job, POLL_FAIL_MSG);
+      renderCurrent(job, "poll_fail");
       return;
     }
   } catch {
-    // Network hiccup: retry, but give up after repeated failures.
     if (gen !== pollGen) return;
     if (++pollFailures >= MAX_POLL_FAILURES) {
-      renderCurrent(job, POLL_FAIL_MSG);
+      renderCurrent(job, "poll_fail");
       return;
     }
   }
@@ -431,15 +458,13 @@ async function refreshStale() {
   const stale = loadJobs().filter((j) => IN_FLIGHT.includes(j.status));
   for (const [i, job] of stale.entries()) {
     if (i === 0) { startPolling(job); continue; }
-    // 404 は一過性でもあり得るため、poll と同じ猶予概念で連続404を数え、
-    // 全試行が 404 のときだけ expired に落とす（非404は下で break する）。
     for (let attempt = 0; attempt < MAX_POLL_FAILURES; attempt++) {
       if (attempt > 0) await sleep(POLL_MS);
       try {
         const res = await fetch(`/jobs/${encodeURIComponent(job.jobId)}`);
         if (res.status === 404) {
           if (attempt === MAX_POLL_FAILURES - 1) { job.status = "expired"; upsertJob(job); }
-          continue; // 猶予内: 次の試行へ
+          continue;
         }
         if (res.ok && !sessionExpired(res)) {
           const body = await res.json().catch(() => null);
@@ -450,14 +475,13 @@ async function refreshStale() {
             upsertJob(job);
           }
         }
-        break; // res.ok / session 切れ等は打ち切り
-      } catch { /* leave as-is */ break; }
+        break;
+      } catch { break; }
     }
   }
 }
 
-// Pause polling while the tab is hidden; resume (with a fresh generation,
-// so any straggling fetch from before the pause is ignored) when visible.
+// Pause polling while the tab is hidden; resume with a fresh generation.
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState !== "visible") {
     clearTimeout(pollTimer);
@@ -492,12 +516,15 @@ $("jobs").addEventListener("click", async (event) => {
 
 $("form").addEventListener("submit", submit);
 $("clear").addEventListener("click", () => {
-  if (confirm("履歴をすべて削除しますか？（サーバー上のファイルは削除されません）")) {
+  if (confirm(t("confirm_clear"))) {
     localStorage.removeItem(STORE_KEY);
     renderHistory();
   }
 });
-renderHistory();
+$("lang-ja").addEventListener("click", () => { lang = "ja"; localStorage.setItem(LANG_KEY, lang); applyLang(); });
+$("lang-en").addEventListener("click", () => { lang = "en"; localStorage.setItem(LANG_KEY, lang); applyLang(); });
+
+applyLang();
 refreshStale();
 </script>
 </body>

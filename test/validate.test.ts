@@ -1,16 +1,19 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DnsResolver } from "../src/validate";
 import { UrlValidationError, validatePublicUrl } from "../src/validate";
 
-// Default test resolver: hostname resolves to nothing (allowed). IP-literal
-// cases never reach DNS, so this keeps tests offline either way.
-const emptyResolver: DnsResolver = async () => [];
+// Default test resolver: hostname resolves to public IPs (allowed). A resolver
+// returning zero addresses from both queries is now rejected (fail closed), so
+// the default must answer with something public. IP-literal cases never reach
+// DNS, so this keeps tests offline either way.
+const publicResolver: DnsResolver = async (_host, type) =>
+  type === "A" ? ["93.184.216.34"] : ["2606:2800:220:1::1"];
 
-const expectRejected = async (input: string, resolver: DnsResolver = emptyResolver) => {
+const expectRejected = async (input: string, resolver: DnsResolver = publicResolver) => {
   await expect(validatePublicUrl(input, resolver)).rejects.toThrow(UrlValidationError);
 };
 
-const expectAllowed = async (input: string, resolver: DnsResolver = emptyResolver) => {
+const expectAllowed = async (input: string, resolver: DnsResolver = publicResolver) => {
   await expect(validatePublicUrl(input, resolver)).resolves.toBeInstanceOf(URL);
 };
 
@@ -208,24 +211,118 @@ describe("validatePublicUrl", () => {
       await expectAllowed("https://example.com/", resolver);
     });
 
-    it("allows the URL through when DoH fails (availability over strictness)", async () => {
+    it("allows the URL through when both DoH queries fail (availability over strictness)", async () => {
       const resolver: DnsResolver = async () => {
         throw new Error("DoH unreachable");
       };
       await expectAllowed("https://example.com/", resolver);
     });
 
+    it("rejects when A resolves to a private IP even if the AAAA query fails", async () => {
+      // Regression: Promise.all discarded the successful A answer when AAAA
+      // rejected (e.g. 429/5xx), letting a private-IP hostname bypass checks.
+      const resolver: DnsResolver = async (_host, type) => {
+        if (type === "A") {
+          return ["10.0.0.5"];
+        }
+        throw new Error("DoH 429");
+      };
+      await expectRejected("https://rebind.example.com/", resolver);
+    });
+
+    it("rejects when AAAA resolves to a private IP even if the A query fails", async () => {
+      const resolver: DnsResolver = async (_host, type) => {
+        if (type === "AAAA") {
+          return ["fd00::1"];
+        }
+        throw new Error("DoH 500");
+      };
+      await expectRejected("https://ula.example.com/", resolver);
+    });
+
+    it("allows public-only answers when the other query fails", async () => {
+      const resolver: DnsResolver = async (_host, type) => {
+        if (type === "A") {
+          return ["93.184.216.34"];
+        }
+        throw new Error("DoH 429");
+      };
+      await expectAllowed("https://example.com/", resolver);
+    });
+
+    it("rejects when both queries succeed but return no addresses", async () => {
+      // Cloudflare DoH flattens CNAMEs to final A/AAAA records, so a doubly
+      // empty (yet successful) answer means the name has no public address
+      // (e.g. a split-horizon internal name). Fail closed.
+      const resolver: DnsResolver = async () => [];
+      await expectRejected("https://internal-only.example.com/", resolver);
+    });
+
+    it("allows an empty answer when the other query fails (possible DoH degradation)", async () => {
+      const resolver: DnsResolver = async (_host, type) => {
+        if (type === "A") {
+          return [];
+        }
+        throw new Error("DoH 503");
+      };
+      await expectAllowed("https://example.com/", resolver);
+    });
+
     it("does not resolve IP literals", async () => {
-      const resolver = vi.fn(emptyResolver);
+      const resolver = vi.fn(publicResolver);
       await expectAllowed("http://1.1.1.1/", resolver);
       await expectRejected("http://127.0.0.1/", resolver);
       expect(resolver).not.toHaveBeenCalled();
     });
   });
 
+  describe("default DoH resolver (dohResolve, via stubbed fetch)", () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    type DohJson = { Status: number; Answer?: Array<{ type: number; data: string }> };
+
+    const stubDoh = (respond: (type: string | null) => DohJson) => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: URL | RequestInfo) => {
+          const type = new URL(String(input)).searchParams.get("type");
+          return { ok: true, json: async () => respond(type) };
+        }),
+      );
+    };
+
+    it("treats a non-zero DNS RCODE as a query failure, not an empty answer", async () => {
+      // SERVFAIL arrives as HTTP 200 + Status=2 + no Answer. Both queries
+      // failing this way must ride the availability path (allowed), not be
+      // mistaken for an authoritative NOERROR/NODATA (which is rejected).
+      stubDoh(() => ({ Status: 2 }));
+      await expect(validatePublicUrl("https://example.com/")).resolves.toBeInstanceOf(URL);
+    });
+
+    it("returns and range-checks Answer data when Status is 0", async () => {
+      stubDoh((type) =>
+        type === "A"
+          ? { Status: 0, Answer: [{ type: 1, data: "10.0.0.5" }] }
+          : { Status: 0, Answer: [] },
+      );
+      await expect(validatePublicUrl("https://rebind.example.com/")).rejects.toThrow(
+        UrlValidationError,
+      );
+    });
+
+    it("rejects an authoritative NOERROR answer with no records on both queries", async () => {
+      stubDoh(() => ({ Status: 0, Answer: [] }));
+      await expect(validatePublicUrl("https://internal-only.example.com/")).rejects.toThrow(
+        UrlValidationError,
+      );
+    });
+  });
+
   describe("return value", () => {
     it("returns the parsed URL untouched", async () => {
-      const url = await validatePublicUrl("https://example.com/a?b=c#d", emptyResolver);
+      const url = await validatePublicUrl("https://example.com/a?b=c#d", publicResolver);
       expect(url.href).toBe("https://example.com/a?b=c#d");
     });
   });

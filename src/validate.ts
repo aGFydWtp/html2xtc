@@ -8,7 +8,11 @@
  * - IPv6 addresses embedding an IPv4 address: IPv4-mapped (::ffff:0:0/96),
  *   IPv4-compatible (::/96), 6to4 (2002::/16), NAT64 (64:ff9b::/96).
  * - Non-literal hostnames are pre-resolved over DoH and the resolved IPs go
- *   through the same range checks.
+ *   through the same range checks. A partially failing DoH lookup never
+ *   discards the answers that did arrive; hosts for which both A and AAAA
+ *   queries succeed with zero addresses are rejected (fail closed). Only a
+ *   total DoH failure (both queries erroring) lets the URL pass unchecked
+ *   (availability over strictness; Browser Run re-resolves anyway).
  *
  * Known limitations (Phase 1, also listed in README):
  * - TOCTOU / DNS rebinding: the DoH answer here and the resolution Browser Run
@@ -71,15 +75,48 @@ export async function validatePublicUrl(
   }
 
   // Non-literal hostname: pre-resolve over DoH and check the answers.
-  let resolved: string[];
-  try {
-    const [a, aaaa] = await Promise.all([resolve(hostname, "A"), resolve(hostname, "AAAA")]);
-    resolved = [...a, ...aaaa];
-  } catch {
-    // Availability over strictness: a DoH outage must not take the whole API
-    // down, and Browser Run resolves the hostname itself anyway. Let it pass.
+  // allSettled, not all: an answer from a query that succeeded is never
+  // discarded — if the A query returns a private IP, a failing AAAA query
+  // must not let the URL bypass the range checks below.
+  const [aResult, aaaaResult] = await Promise.allSettled([
+    resolve(hostname, "A"),
+    resolve(hostname, "AAAA"),
+  ]);
+
+  if (aResult.status === "rejected" && aaaaResult.status === "rejected") {
+    // Availability over strictness: a full DoH outage must not take the whole
+    // API down, and Browser Run resolves the hostname itself anyway. Let it
+    // pass — but only when we got no answer at all.
     return url;
   }
+
+  const resolved = [
+    ...(aResult.status === "fulfilled" ? aResult.value : []),
+    ...(aaaaResult.status === "fulfilled" ? aaaaResult.value : []),
+  ];
+
+  if (
+    aResult.status === "fulfilled" &&
+    aaaaResult.status === "fulfilled" &&
+    resolved.length === 0
+  ) {
+    // Both queries answered NOERROR (dohResolve throws on HTTP errors and on
+    // any non-zero DNS RCODE, so SERVFAIL/REFUSED land in the rejected branch
+    // above) yet neither returned an address. Cloudflare DoH flattens CNAME
+    // chains down to the final A/AAAA records, so a legitimate host reachable
+    // over http/https never yields two empty NOERROR answers; this shape is
+    // how a split-horizon internal name looks from the outside. Fail closed.
+    throw new UrlValidationError(`hostname does not resolve to any IP: ${hostname}`);
+  }
+  // If exactly one query succeeded and it returned no addresses, we let the
+  // URL pass: the other query's failure may indicate a partial DoH problem
+  // (429/5xx), so an empty answer alone is not trustworthy evidence that the
+  // host has no public address. Same availability-over-strictness stance as
+  // the both-failed case above. Note this path is reproducible by an attacker
+  // who controls their domain's authoritative DNS (answer A empty, time out
+  // AAAA), so it is an accepted risk — but no worse than the both-failed
+  // pass-through above, which the same attacker can trigger just as easily.
+
   for (const ip of resolved) {
     if (isForbiddenIpString(ip)) {
       throw new UrlValidationError(`hostname resolves to a forbidden IP: ${hostname}`);
@@ -101,8 +138,17 @@ async function dohResolve(hostname: string, type: "A" | "AAAA"): Promise<string[
     throw new Error(`DoH lookup failed with status ${response.status}`);
   }
   const data = (await response.json()) as {
+    Status: number;
     Answer?: Array<{ type: number; data: string }>;
   };
+  // The DoH-JSON API reports upstream DNS failures (SERVFAIL, REFUSED, ...)
+  // as HTTP 200 with a non-zero RCODE in Status and an empty Answer. Treat
+  // those as query failures (throw -> rejected in allSettled), not as an
+  // authoritative "no records" answer, so transient DNS trouble rides the
+  // availability path instead of tripping the empty-answer rejection.
+  if (data.Status !== 0) {
+    throw new Error(`DoH lookup failed with DNS RCODE ${data.Status}`);
+  }
   const wantedType = type === "A" ? 1 : 28; // DNS RR type numbers
   return (data.Answer ?? [])
     .filter((answer) => answer.type === wantedType)

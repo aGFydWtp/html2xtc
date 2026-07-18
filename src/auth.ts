@@ -44,9 +44,13 @@ export const verifyAccessJwt: AccessJwtVerifier = async (
 /**
  * Authorizes a request. Passes when either
  *  (a) a valid Cloudflare Access JWT is presented (only when
- *      ACCESS_TEAM_DOMAIN and ACCESS_POLICY_AUD are configured), or
+ *      ACCESS_TEAM_DOMAIN and ACCESS_POLICY_AUD are both configured), or
  *  (b) the Bearer token matches the AUTH_TOKEN secret (when configured).
- * With neither mechanism configured (local dev), every request passes.
+ * Only when ACCESS_TEAM_DOMAIN, ACCESS_POLICY_AUD, and AUTH_TOKEN are ALL
+ * unset (local dev) does every request pass. A half-configured Access pair
+ * (only one of the two vars set — a typo or missing var) is treated as a
+ * misconfiguration, not as "Access off": Access JWTs are not accepted, and
+ * requests fail closed with 401 unless a valid AUTH_TOKEN Bearer is presented.
  *
  * Note: static assets under public/ are served before the Worker runs, so
  * this function never sees them; the UI relies on the edge-side Access app
@@ -62,8 +66,11 @@ export async function authorize(
   const accessConfigured = Boolean(
     env.ACCESS_TEAM_DOMAIN && env.ACCESS_POLICY_AUD,
   );
-  if (!accessConfigured && !env.AUTH_TOKEN) {
-    return null; // local dev: no auth mechanism configured
+  // Open (unauthenticated) only when NOTHING auth-related is configured.
+  // A half-configured Access pair must not silently disable auth; it falls
+  // through to the checks below and, without a valid Bearer token, gets 401.
+  if (!env.ACCESS_TEAM_DOMAIN && !env.ACCESS_POLICY_AUD && !env.AUTH_TOKEN) {
+    return null; // local dev: no auth mechanism configured at all
   }
 
   if (accessConfigured) {

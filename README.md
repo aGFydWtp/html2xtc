@@ -38,7 +38,7 @@ API（`/convert` `/jobs` `/download`）は次の **OR** で通す（`src/auth.ts
 - **Cloudflare Access JWT**: vars `ACCESS_TEAM_DOMAIN` と `ACCESS_POLICY_AUD` を両方設定したときのみ有効。`Cf-Access-Jwt-Assertion` ヘッダ（フォールバックで `CF_Authorization` クッキー）の JWT を jose で検証する。ブラウザは Access ログイン、CLI は Access service token（`CF-Access-Client-Id` / `CF-Access-Client-Secret` ヘッダ）で通る。
 - **Bearer トークン**: `AUTH_TOKEN` secret（`wrangler secret put AUTH_TOKEN`）を設定すると `Authorization: Bearer <token>` を検証（不一致は 401）。ローカル開発・Access を使わない構成向け。
 
-両方とも未設定の場合は認証なしで通す（ローカル開発用）。**本番デプロイでは Cloudflare Access で保護するか、AUTH_TOKEN の設定が必須。** なお Access をエッジで有効化すると、素の Bearer だけのリクエストはエッジで遮断されるため CLI は service token が必要（deploy-guide 参照）。
+認証なしで通すのは `ACCESS_TEAM_DOMAIN`・`ACCESS_POLICY_AUD`・`AUTH_TOKEN` の**3 つすべてが未設定**の場合のみ（ローカル開発用）。Access の 2 変数のうち片方だけ設定されている状態は誤設定（typo・設定漏れ）として扱い、素通しにはならない: Access JWT は受け付けず、`AUTH_TOKEN` が設定されていれば Bearer 認証のみ有効、なければ 401 を返す（フェイルクローズ）。**本番デプロイでは Cloudflare Access で保護するか、AUTH_TOKEN の設定が必須。** なお Access をエッジで有効化すると、素の Bearer だけのリクエストはエッジで遮断されるため CLI は service token が必要（deploy-guide 参照）。
 
 ## API
 
@@ -95,7 +95,7 @@ R2 上の XTC（`jobs/{jobId}/output.xtc`）を attachment で返す。未完了
 
 | ステータス | 意味 |
 |---|---|
-| 400 | body が JSON でない / `url` 欠落 / URL 検証エラー（スキーム・禁止 IP・DoH 解決結果が禁止レンジ） |
+| 400 | body が JSON でない / `url` 欠落 / URL 検証エラー（スキーム・禁止 IP・DoH 解決結果が禁止レンジまたは解決 IP 0 件） |
 | 401 | AUTH_TOKEN 設定時、Bearer トークン欠落・不一致 |
 | 405 | メソッド不一致（`Allow` ヘッダ付き） |
 | 422 | 生成 PDF がサイズ上限超過、または xtctool の変換失敗 |
@@ -125,11 +125,12 @@ R2 上の XTC を `application/octet-stream` + `Content-Length` + `Content-Dispo
 
 - http/https 以外のスキーム、localhost 系ホスト名を拒否。
 - IP リテラルの禁止レンジ: 0/8, 10/8, 100.64/10（CGNAT）, 127/8, 169.254/16, 172.16/12, 192.0.0/24, 192.168/16, 198.18/15, ::/128, ::1, fc00::/7, fe80::/10。IPv4 埋め込み IPv6（IPv4-mapped `::ffff:0:0/96`、IPv4-compatible `::/96`、6to4 `2002::/16`、NAT64 `64:ff9b::/96`）は埋め込み IPv4 を同じ判定にかける。
-- IP リテラル以外のホスト名は Cloudflare DoH（`cloudflare-dns.com/dns-query`）で A/AAAA を事前解決し、解決結果 IP を同じ禁止判定にかける。**DoH 障害時はブロックせず通す**（可用性優先。Browser Run 側でも解決されるため）。
+- IP リテラル以外のホスト名は Cloudflare DoH（`cloudflare-dns.com/dns-query`）で A/AAAA を事前解決し、解決結果 IP を同じ禁止判定にかける。A/AAAA は個別に判定し（`Promise.allSettled`）、**片方のクエリが失敗しても、成功した側の解決 IP は必ず禁止判定にかける**。DoH の HTTP エラーだけでなく DNS RCODE≠0（SERVFAIL・REFUSED 等）もクエリ失敗として扱う。両クエリとも NOERROR で成功したのに解決 IP が 0 件の場合（スプリットホライズンの内部名など。Cloudflare DoH は CNAME を最終 A/AAAA までフラット化するため、正当な公開ホストでは起きない）は**拒否**（フェイルクローズ）。**両クエリとも失敗した場合のみブロックせず通す**（可用性優先。Browser Run 側でも解決されるため）。片方だけ成功して 0 件のときも DoH 障害の可能性があるため通す。
 
 **既知の限界（Phase 1 では未対応、README とコードコメントに明記）:**
 
 - TOCTOU / DNS リバインディング: DoH の事前解決と Browser Run 側の実解決は別クエリのため、リバインディング DNS はすり抜けられる。
+- DoH 失敗時の素通し: 両クエリ失敗時、および片方成功（解決 0 件）＋片方失敗時は無検査で通す。この partial-failure 経路は自ドメインの権威 DNS を制御する攻撃者が意図的に再現できるが、両クエリ失敗時の素通しと同レベルの受容済みリスク（可用性優先）。
 - リダイレクト先の再検証: quickAction の API では制御できない（Phase 2 検討事項）。
 
 ## ローカル開発

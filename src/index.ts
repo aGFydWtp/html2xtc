@@ -6,7 +6,6 @@ import {
   mapInstanceStatus,
   needsPhaseProbe,
   outputXtcKey,
-  pdfContentDisposition,
   resolveMaxPdfBytes,
   xtcContentDisposition,
 } from "./jobs";
@@ -89,14 +88,6 @@ async function route(request: Request, env: Env): Promise<Response> {
       return methodNotAllowed("GET");
     }
     return handleJobDownload(jobDownload[1], env);
-  }
-
-  const jobPdf = pathname.match(/^\/jobs\/([^/]+)\/pdf$/);
-  if (jobPdf) {
-    if (request.method !== "GET") {
-      return methodNotAllowed("GET");
-    }
-    return handleJobPdf(jobPdf[1], env);
   }
 
   const download = pathname.match(/^\/download\/([^/]+)$/);
@@ -221,48 +212,6 @@ async function handleJobDownload(jobId: string, env: Env): Promise<Response> {
 }
 
 /**
- * Serves the intermediate PDF so the result can be eyeballed right after
- * conversion. The intermediate/ prefix expires after ~1 day (R2 lifecycle),
- * so for older jobs this 404s by design.
- */
-async function handleJobPdf(jobId: string, env: Env): Promise<Response> {
-  if (!UUID_PATTERN.test(jobId)) {
-    return Response.json({ error: "jobId must be a UUID" }, { status: 400 });
-  }
-
-  const object = await env.XTC_BUCKET.get(intermediatePdfKey(jobId));
-  if (object !== null) {
-    return new Response(object.body, {
-      headers: {
-        "Content-Type": "application/pdf",
-        "Content-Length": String(object.size),
-        "Content-Disposition": pdfContentDisposition(jobId),
-      },
-    });
-  }
-
-  // Same shape as handleJobDownload: with the PDF absent from R2, the
-  // Workflow status decides whether it is still on its way (409) or gone
-  // for good (404).
-  let instance: WorkflowInstance;
-  try {
-    instance = await env.CONVERT_WORKFLOW.get(jobId);
-  } catch {
-    return Response.json({ error: "not found" }, { status: 404 });
-  }
-
-  const status = await instance.status();
-  const decision = decideMissingDownload(await mapWithPhaseProbe(jobId, status, env));
-  if (decision.kind === "conflict") {
-    return Response.json(
-      { error: "PDF not generated yet", status: decision.status },
-      { status: 409 },
-    );
-  }
-  return Response.json({ error: "not found" }, { status: 404 });
-}
-
-/**
  * Maps an instance status to the API body; for the running family this
  * probes R2 for the intermediate PDF to tell rendering from converting.
  */
@@ -366,6 +315,10 @@ async function handleConvert(request: Request, env: Env): Promise<Response> {
     console.error(`[${jobId}] R2 put output.xtc failed`, error);
     return Response.json({ error: "storage error", jobId }, { status: 500 });
   }
+
+  // The sync path never reads the PDF back (conversion used the in-memory
+  // bytes), so once the XTC is stored the diagnostic copy can go too.
+  await deleteBestEffort(env, pdfKey);
 
   return Response.json({
     jobId,

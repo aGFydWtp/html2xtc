@@ -134,6 +134,14 @@
     font-size: 0.9rem;
     text-decoration: none;
   }
+  /* Secondary variant: outlined, for the PDF preview next to the download. */
+  a.dl.pdf {
+    background: none;
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    padding: calc(0.55rem - 1px) calc(1rem - 1px);
+  }
+  a.dl + a.dl { margin-left: 0.4rem; }
   section.history { margin-top: 2rem; }
   .history-head { display: flex; align-items: baseline; justify-content: space-between; }
   .history-head h2 { font-size: 0.95rem; margin: 0; }
@@ -266,6 +274,9 @@ function renderCurrent(job, note) {
     ${note ? `<div class="error-text">${esc(note)}</div>` : ""}
     ${job.status === "failed" && job.error ? `<div class="error-text">${esc(job.error)}</div>` : ""}
     ${job.status === "completed" ? `<a class="dl" href="/jobs/${encodeURIComponent(job.jobId)}/download">XTC をダウンロード</a>` : ""}
+    ${job.status === "completed" || job.status === "converting"
+      ? `<a class="dl pdf" href="/jobs/${encodeURIComponent(job.jobId)}/pdf" target="_blank" rel="noopener">PDF を見る</a>`
+      : ""}
   `;
 }
 

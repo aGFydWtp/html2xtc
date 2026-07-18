@@ -85,13 +85,55 @@ describe("authorize", () => {
       expect(verify).not.toHaveBeenCalled();
     });
 
-    it("stays inactive when only one of the two Access vars is set", async () => {
-      // Half-configured Access must not lock out local dev (no AUTH_TOKEN).
+    it("fails closed (401) when only one of the two Access vars is set and no AUTH_TOKEN", async () => {
+      // Half-configured Access is a misconfiguration (typo / missing var).
+      // It must NOT silently disable auth and let every request through.
+      for (const env of [
+        { ACCESS_TEAM_DOMAIN: TEAM },
+        { ACCESS_POLICY_AUD: AUD },
+      ]) {
+        const res = await authorize(req(), env, deny);
+        expect(res?.status).toBe(401);
+      }
+    });
+
+    it("does not accept an Access JWT when only one Access var is set", async () => {
+      const verify = vi.fn(allow);
+      const res = await authorize(
+        req({ "Cf-Access-Jwt-Assertion": "jwt-abc" }),
+        { ACCESS_TEAM_DOMAIN: TEAM },
+        verify,
+      );
+      expect(res?.status).toBe(401);
+      expect(verify).not.toHaveBeenCalled();
+    });
+
+    it("accepts a valid Bearer token when Access is half-configured and AUTH_TOKEN is set", async () => {
+      const env = { ACCESS_TEAM_DOMAIN: TEAM, ...bearerEnv };
       expect(
-        await authorize(req(), { ACCESS_TEAM_DOMAIN: TEAM }, deny),
+        await authorize(req({ Authorization: "Bearer secret-token" }), env, deny),
       ).toBeNull();
+    });
+
+    it("rejects a wrong Bearer token (401) when Access is half-configured and AUTH_TOKEN is set", async () => {
+      const env = { ACCESS_TEAM_DOMAIN: TEAM, ...bearerEnv };
+      const res = await authorize(
+        req({ Authorization: "Bearer wrong" }),
+        env,
+        deny,
+      );
+      expect(res?.status).toBe(401);
+    });
+
+    it("treats empty-string Access vars as unset (local dev pass-through)", async () => {
+      // A Wrangler misconfiguration can set vars to "" rather than leaving
+      // them undefined; both spellings mean "nothing configured" and stay open.
       expect(
-        await authorize(req(), { ACCESS_POLICY_AUD: AUD }, deny),
+        await authorize(
+          req(),
+          { ACCESS_TEAM_DOMAIN: "", ACCESS_POLICY_AUD: "" },
+          deny,
+        ),
       ).toBeNull();
     });
   });

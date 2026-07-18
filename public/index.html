@@ -137,7 +137,7 @@
     <p class="intro" data-i18n="intro">記事の URL を入れるだけで、電子ペーパー端末 Xteink X3 用の XTC ファイルに変換します。登録は不要です。有料記事や会員限定ページは変換できません。</p>
     <div class="x3-note">
       <b data-i18n="x3_title">X3 用ってどういうこと？</b>
-      <span data-i18n="x3_body">記事を X3 の画面サイズ（66×99mm・528×792px）に合わせた PDF に組み直し、200dpi でレンダリングして 1-bit（ディザリングあり）の XTC に変換します。本文はすべて黒文字に強制し、ナビ・広告・Cookie バナーなどは自動で取り除くので、E-ink でもかすれず読めます。</span>
+      <span data-i18n="x3_body">記事をX3の画面サイズ（66×99mm・528×792px）に合わせた印刷レイアウトに整え、200dpiでレンダリングしたうえで、1-bit（ディザリングあり）のXTCに変換します。E-ink上で文字がかすれにくいよう、本文の文字色を黒に調整します。また、印刷時に通常不要となるナビゲーション、広告、Cookie同意バナーなどの表示要素は、可能な範囲で非表示にします。</span>
     </div>
     <form id="form">
       <div class="input-row">
@@ -173,7 +173,7 @@ const I18N = {
     brand: "XTC 変換",
     intro: "記事の URL を入れるだけで、電子ペーパー端末 Xteink X3 用の XTC ファイルに変換します。登録は不要です。有料記事や会員限定ページは変換できません。",
     x3_title: "X3 用ってどういうこと？",
-    x3_body: "記事を X3 の画面サイズ（66×99mm・528×792px）に合わせた PDF に組み直し、200dpi でレンダリングして 1-bit（ディザリングあり）の XTC に変換します。本文はすべて黒文字に強制し、ナビ・広告・Cookie バナーなどは自動で取り除くので、E-ink でもかすれず読めます。",
+    x3_body: "記事をX3の画面サイズ（66×99mm・528×792px）に合わせた印刷レイアウトに整え、200dpiでレンダリングしたうえで、1-bit（ディザリングあり）のXTCに変換します。E-ink上で文字がかすれにくいよう、本文の文字色を黒に調整します。また、印刷時に通常不要となるナビゲーション、広告、Cookie同意バナーなどの表示要素は、可能な範囲で非表示にします。",
     convert: "変換する",
     form_note: "変換には 1〜2 分ほどかかります。生成されたファイルは 24 時間後に自動削除されます。",
     history: "履歴",
@@ -195,7 +195,7 @@ const I18N = {
     brand: "XTC Converter",
     intro: "Paste an article URL and get an XTC file for the Xteink X3 e-paper reader. No sign-up required. Paywalled and members-only pages cannot be converted.",
     x3_title: "What does \u201cfor the X3\u201d mean?",
-    x3_body: "The article is re-laid-out as a PDF matching the X3 screen (66\u00d799mm \u00b7 528\u00d7792px), rendered at 200dpi, and converted to 1-bit dithered XTC. Body text is forced to solid black and navigation, ads and cookie banners are stripped, so it stays crisp on E-ink.",
+    x3_body: "The article is arranged into a print layout matching the X3 screen (66\u00d799mm \u00b7 528\u00d7792px), rendered at 200dpi, and then converted to 1-bit dithered XTC. To keep text legible on E-ink, body text color is adjusted to black. Elements usually unneeded in print \u2014 navigation, ads, cookie consent banners and the like \u2014 are hidden where possible.",
     convert: "Convert",
     form_note: "Conversion takes 1\u20132 minutes. Files are deleted automatically after 24 hours.",
     history: "History",

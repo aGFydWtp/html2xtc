@@ -14,6 +14,7 @@
     --muted2: #6b665c;
     --line: #ddd6c8;
     --ink: #1c1a17;
+    --ink-text: #f4f1ea;
     --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   }
   * { box-sizing: border-box; }
@@ -32,7 +33,15 @@
   header.site { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   .brand-name { font-size: 20px; font-weight: 700; letter-spacing: .06em; }
   .brand-sub { font-family: var(--mono); font-size: 14px; color: var(--muted); letter-spacing: .18em; }
+  .head-right { display: flex; align-items: center; gap: 14px; }
   .back { font-size: 14px; color: var(--muted); }
+  .lang { display: flex; gap: 2px; font-family: var(--mono); font-size: 14px; }
+  .lang button {
+    padding: 5px 10px; font: inherit; cursor: pointer; border-radius: 4px;
+    border: 1px solid transparent; background: none; color: var(--muted);
+  }
+  .lang button[aria-pressed="true"] { background: var(--ink); color: var(--ink-text); }
+  .lang button[aria-pressed="false"] { border-color: #cfc9bd; }
   h1 { margin: 32px 0 6px; font-size: 22px; font-weight: 700; letter-spacing: .04em; }
   .sub { margin: 0 0 4px; font-size: 14px; color: var(--muted); }
   section { border-top: 1px solid var(--line); padding-top: 18px; margin-top: 22px; }
@@ -55,49 +64,139 @@
 <main>
   <header class="site">
     <div>
-      <div class="brand-name">XTC 変換</div>
+      <div class="brand-name" data-i18n="brand">XTC 変換</div>
       <div class="brand-sub">FOR XTEINK X3</div>
     </div>
-    <a class="back" href="./">← 変換ページに戻る</a>
+    <div class="head-right">
+      <a class="back" href="./" data-i18n="back">← 変換ページに戻る</a>
+      <div class="lang" role="group" aria-label="Language">
+        <button type="button" id="lang-ja" aria-pressed="true">日本語</button>
+        <button type="button" id="lang-en" aria-pressed="false">EN</button>
+      </div>
+    </div>
   </header>
 
-  <h1>このサービスについて</h1>
-  <p class="sub">概要・利用規約・クローラー情報・連絡先</p>
+  <h1 data-i18n="h1">このサービスについて</h1>
+  <p class="sub" data-i18n="sub">概要・利用規約・クローラー情報・プライバシー・連絡先</p>
 
   <section>
-    <h2>サービス概要</h2>
-    <p>指定された URL のページを印刷用 CSS を適用して PDF 化し、Xteink X3 向けの XTC ファイルに変換する、個人運営のサービスです。</p>
+    <h2 data-i18n="overview_h">サービス概要</h2>
+    <p data-i18n="overview_p">指定された URL のページを印刷用 CSS を適用して PDF 化し、Xteink X3 向けの XTC ファイルに変換する、個人運営のサービスです。</p>
   </section>
 
   <section>
-    <h2>利用規約</h2>
+    <h2 data-i18n="terms_h">利用規約</h2>
     <ul>
-      <li>本サービスは、個人が私生活上の読書・学習のために利用する場合に限って利用できます。業務、職務、事業、営業その他これらに類する目的での利用を禁止します。</li>
-      <li>利用者は、著作権者の許諾、適用されるライセンスまたは法令上の例外により、適法に複製・変換できるコンテンツのみを指定してください。</li>
-      <li>生成された XTC ファイルは、変換を行った利用者本人だけが利用できます。第三者への送信、公開、共有、譲渡、販売または再配布を禁止します。</li>
-      <li>有料記事、会員限定コンテンツその他アクセスが制限されたコンテンツについて、認証、購読制限、技術的保護手段等を回避して利用することを禁止します。</li>
-      <li>違法に公開されたコンテンツであることを知りながら変換すること、その他第三者の著作権その他の権利を侵害する利用を禁止します。</li>
-      <li>第三者サイトに過度な負荷を与える利用、大量または自動的な変換、本サービスの動作を妨害する行為を禁止します。</li>
-      <li>生成された XTC ファイルはサーバー上に約 24 時間保存され、その後自動的に削除されます。変換途中の PDF は XTC の生成後速やかに削除され、利用者には提供されません。</li>
-      <li>本サービスは現状有姿かつ無保証で提供され、予告なく内容の変更、利用制限または提供停止を行うことがあります。</li>
-      <li>本規約に違反する利用が確認された場合、成果物の削除や利用制限を行うことがあります。</li>
+      <li data-i18n="terms_1">本サービスは、個人が私生活上の読書・学習のために利用する場合に限って利用できます。業務、職務、事業、営業その他これらに類する目的での利用を禁止します。</li>
+      <li data-i18n="terms_2">利用者は、著作権者の許諾、適用されるライセンスまたは法令上の例外により、適法に複製・変換できるコンテンツのみを指定してください。</li>
+      <li data-i18n="terms_3">生成された XTC ファイルは、変換を行った利用者本人だけが利用できます。第三者への送信、公開、共有、譲渡、販売または再配布を禁止します。</li>
+      <li data-i18n="terms_4">有料記事、会員限定コンテンツその他アクセスが制限されたコンテンツについて、認証、購読制限、技術的保護手段等を回避して利用することを禁止します。</li>
+      <li data-i18n="terms_5">違法に公開されたコンテンツであることを知りながら変換すること、その他第三者の著作権その他の権利を侵害する利用を禁止します。</li>
+      <li data-i18n="terms_6">第三者サイトに過度な負荷を与える利用、大量または自動的な変換、本サービスの動作を妨害する行為を禁止します。</li>
+      <li data-i18n="terms_7">生成された XTC ファイルはサーバー上に約 24 時間保存され、その後自動的に削除されます。変換途中の PDF は XTC の生成後速やかに削除され、利用者には提供されません。</li>
+      <li data-i18n="terms_8">本サービスは現状有姿かつ無保証で提供され、予告なく内容の変更、利用制限または提供停止を行うことがあります。</li>
+      <li data-i18n="terms_9">本規約に違反する利用が確認された場合、成果物の削除や利用制限を行うことがあります。</li>
     </ul>
   </section>
 
   <section>
-    <h2>クローラー情報</h2>
-    <p>本サービスは変換時に、対象ページを User-Agent <code>xtc-converter/1.0 (+https://xtc.hr20k.com/about)</code> として取得します。アクセスされたくないサイト管理者の方は、この UA を拒否することでブロックできます。</p>
+    <h2 data-i18n="crawler_h">クローラー情報</h2>
+    <p><span data-i18n="crawler_p1">本サービスは変換時に、対象ページを User-Agent </span><code>xtc-converter/1.0 (+https://xtc.hr20k.com/about)</code><span data-i18n="crawler_p2"> として取得します。アクセスされたくないサイト管理者の方は、この UA を拒否することでブロックできます。</span></p>
   </section>
 
   <section>
-    <h2>連絡先</h2>
-    <p>ご意見・削除依頼などは <a href="mailto:haruki@conatt.com">haruki@conatt.com</a> までご連絡ください。</p>
+    <h2 data-i18n="privacy_h">プライバシー</h2>
+    <p data-i18n="privacy_p">アカウント登録やアクセス解析は行っていません。変換履歴は利用者のブラウザ内にのみ保存されます。なお、フォントの配信に Google Fonts を利用しているため、ページ表示時にブラウザから Google のサーバーへフォント取得のリクエストが送信されます。</p>
+  </section>
+
+  <section>
+    <h2 data-i18n="contact_h">連絡先</h2>
+    <p><span data-i18n="contact_p1">ご意見・削除依頼などは </span><a href="mailto:haruki@conatt.com">haruki@conatt.com</a><span data-i18n="contact_p2"> までご連絡ください。</span></p>
   </section>
 
   <footer class="site">
-    <a class="back-link" href="./">← 変換ページに戻る</a>
+    <a class="back-link" href="./" data-i18n="back">← 変換ページに戻る</a>
     <a class="gh" href="https://github.com/aGFydWtp/html2xtc" target="_blank" rel="noopener">GitHub ↗</a>
   </footer>
 </main>
+
+<script>
+"use strict";
+// --- i18n ------------------------------------------------------------------
+// Same mechanism and LANG_KEY as index.html, so the language choice carries
+// over between the two pages.
+const I18N = {
+  ja: {
+    brand: "XTC 変換",
+    back: "← 変換ページに戻る",
+    h1: "このサービスについて",
+    sub: "概要・利用規約・クローラー情報・プライバシー・連絡先",
+    overview_h: "サービス概要",
+    overview_p: "指定された URL のページを印刷用 CSS を適用して PDF 化し、Xteink X3 向けの XTC ファイルに変換する、個人運営のサービスです。",
+    terms_h: "利用規約",
+    terms_1: "本サービスは、個人が私生活上の読書・学習のために利用する場合に限って利用できます。業務、職務、事業、営業その他これらに類する目的での利用を禁止します。",
+    terms_2: "利用者は、著作権者の許諾、適用されるライセンスまたは法令上の例外により、適法に複製・変換できるコンテンツのみを指定してください。",
+    terms_3: "生成された XTC ファイルは、変換を行った利用者本人だけが利用できます。第三者への送信、公開、共有、譲渡、販売または再配布を禁止します。",
+    terms_4: "有料記事、会員限定コンテンツその他アクセスが制限されたコンテンツについて、認証、購読制限、技術的保護手段等を回避して利用することを禁止します。",
+    terms_5: "違法に公開されたコンテンツであることを知りながら変換すること、その他第三者の著作権その他の権利を侵害する利用を禁止します。",
+    terms_6: "第三者サイトに過度な負荷を与える利用、大量または自動的な変換、本サービスの動作を妨害する行為を禁止します。",
+    terms_7: "生成された XTC ファイルはサーバー上に約 24 時間保存され、その後自動的に削除されます。変換途中の PDF は XTC の生成後速やかに削除され、利用者には提供されません。",
+    terms_8: "本サービスは現状有姿かつ無保証で提供され、予告なく内容の変更、利用制限または提供停止を行うことがあります。",
+    terms_9: "本規約に違反する利用が確認された場合、成果物の削除や利用制限を行うことがあります。",
+    crawler_h: "クローラー情報",
+    crawler_p1: "本サービスは変換時に、対象ページを User-Agent ",
+    crawler_p2: " として取得します。アクセスされたくないサイト管理者の方は、この UA を拒否することでブロックできます。",
+    privacy_h: "プライバシー",
+    privacy_p: "アカウント登録やアクセス解析は行っていません。変換履歴は利用者のブラウザ内にのみ保存されます。なお、フォントの配信に Google Fonts を利用しているため、ページ表示時にブラウザから Google のサーバーへフォント取得のリクエストが送信されます。",
+    contact_h: "連絡先",
+    contact_p1: "ご意見・削除依頼などは ",
+    contact_p2: " までご連絡ください。",
+  },
+  en: {
+    brand: "XTC Converter",
+    back: "← Back to converter",
+    h1: "About this service",
+    sub: "Overview · Terms of use · Crawler info · Privacy · Contact",
+    overview_h: "Overview",
+    overview_p: "A personally run service that renders the page at a given URL to PDF with print CSS applied, then converts it into an XTC file for the Xteink X3.",
+    terms_h: "Terms of use",
+    terms_1: "This service may be used only by individuals for personal, private reading and study. Use for business, professional, commercial or other similar purposes is prohibited.",
+    terms_2: "Specify only content you may lawfully copy and convert, based on the rights holder's permission, an applicable license, or a statutory exception.",
+    terms_3: "Generated XTC files may be used only by the person who performed the conversion. Sending, publishing, sharing, transferring, selling or redistributing them to third parties is prohibited.",
+    terms_4: "Circumventing authentication, subscription restrictions, technical protection measures or the like to convert paid articles, members-only content or other access-restricted content is prohibited.",
+    terms_5: "Converting content you know to have been published unlawfully, and any other use that infringes third-party copyrights or other rights, is prohibited.",
+    terms_6: "Placing excessive load on third-party sites, bulk or automated conversion, and interfering with the operation of this service are prohibited.",
+    terms_7: "Generated XTC files are kept on the server for about 24 hours and then deleted automatically. Intermediate PDFs are deleted promptly after the XTC is generated and are not provided to users.",
+    terms_8: "This service is provided as-is and without warranty; its content may be changed, restricted or discontinued without notice.",
+    terms_9: "If use in violation of these terms is found, generated files may be deleted and use may be restricted.",
+    crawler_h: "Crawler info",
+    crawler_p1: "When converting, this service fetches the target page with the User-Agent ",
+    crawler_p2: ". Site administrators who do not want to be accessed can block it by denying this UA.",
+    privacy_h: "Privacy",
+    privacy_p: "There are no accounts and no analytics. Conversion history is stored only in your browser. Note that fonts are served from Google Fonts, so your browser sends font requests to Google's servers when the page loads.",
+    contact_h: "Contact",
+    contact_p1: "For feedback, removal requests and other inquiries, contact ",
+    contact_p2: ".",
+  },
+};
+const LANG_KEY = "xtc-lang";
+let lang = localStorage.getItem(LANG_KEY) === "en" ? "en" : "ja";
+const t = (key) => I18N[lang][key];
+const $ = (id) => document.getElementById(id);
+
+function applyLang() {
+  document.documentElement.lang = lang;
+  document.querySelectorAll("[data-i18n]").forEach((el) => {
+    const v = t(el.dataset.i18n);
+    if (typeof v === "string") el.textContent = v;
+  });
+  $("lang-ja").setAttribute("aria-pressed", String(lang === "ja"));
+  $("lang-en").setAttribute("aria-pressed", String(lang === "en"));
+}
+
+$("lang-ja").addEventListener("click", () => { lang = "ja"; localStorage.setItem(LANG_KEY, lang); applyLang(); });
+$("lang-en").addEventListener("click", () => { lang = "en"; localStorage.setItem(LANG_KEY, lang); applyLang(); });
+applyLang();
+</script>
 </body>
 </html>

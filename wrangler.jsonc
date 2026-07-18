@@ -39,6 +39,12 @@
 			{
 				"name": "XTC_CONVERTER",
 				"class_name": "XtcConverterContainer"
+			},
+			{
+				// Per-IP rate limiter for POST /convert and POST /jobs
+				// (src/ratelimiter.ts).
+				"name": "RATE_LIMITER",
+				"class_name": "RateLimiter"
 			}
 		]
 	},
@@ -48,6 +54,16 @@
 			// Container classes require new_sqlite_classes (new_classes is rejected).
 			"new_sqlite_classes": [
 				"XtcConverterContainer"
+			]
+		},
+		{
+			"tag": "v2",
+			// Not a container class, so new_classes would also be accepted, but
+			// new_sqlite_classes (SQLite backend) is what Cloudflare recommends
+			// for every new DO class; new_classes exists for the legacy KV
+			// backend only.
+			"new_sqlite_classes": [
+				"RateLimiter"
 			]
 		}
 	],

@@ -12,10 +12,12 @@ import {
 } from "./jobs";
 import { renderPdf } from "./pdf";
 import { storeXtcOutput } from "./pipeline";
+import { enforceRateLimit } from "./ratelimiter";
 import type { Env } from "./types";
 import { UrlValidationError, validatePublicUrl } from "./validate";
 
 export { XtcConverterContainer } from "./container";
+export { RateLimiter } from "./ratelimiter";
 export { ConvertWorkflow } from "./workflow";
 
 const UUID_PATTERN =
@@ -53,12 +55,22 @@ async function route(request: Request, env: Env): Promise<Response> {
     if (request.method !== "POST") {
       return methodNotAllowed("POST");
     }
+    // Per-IP limit on the endpoints that start a conversion (this one and
+    // POST /jobs below); the cheap GET endpoints stay unlimited.
+    const limited = await enforceRateLimit(request, env);
+    if (limited) {
+      return limited;
+    }
     return handleConvert(request, env);
   }
 
   if (pathname === "/jobs") {
     if (request.method !== "POST") {
       return methodNotAllowed("POST");
+    }
+    const limited = await enforceRateLimit(request, env);
+    if (limited) {
+      return limited;
     }
     return handleCreateJob(request, env);
   }

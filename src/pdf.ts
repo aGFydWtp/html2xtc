@@ -137,6 +137,21 @@ export const X3_PRINT_CSS = `
       margin-right: 0 !important;
     }
 
+    /* Stripping padding/margin above is not enough when a script pins an
+       explicit width on a wrapper: carousel JS writes inline styles like
+       width: 800px on its track div (verified on omocoro.jp: a slider-pro
+       carousel set width: 800px on the track and width: 200px per slide),
+       which re-triggers the same contents-width expansion — the whole print
+       layout grows ~10% past the paper and every line loses its last 1-2
+       characters, while blockquote borders run off the right edge. Clamp
+       with max-width rather than width: auto so deliberately narrow UI
+       bits (e.g. a 180px "read more" button div) keep their intended width
+       instead of being inflated to full page width. */
+    div,
+    section {
+      max-width: 100% !important;
+    }
+
     /* Keep replaced/embedded media inside the page. A fixed-width image or
        iframe would widen the print layout and clip the page at the right
        edge (same mechanism as the flex overflow handled above), and

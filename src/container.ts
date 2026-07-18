@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 haruki
+
 import { Container, getContainer } from "@cloudflare/containers";
 import { resolveMaxPdfBytes } from "./jobs";
 import type { Env } from "./types";

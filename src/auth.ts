@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 haruki
+
 import { createRemoteJWKSet, jwtVerify } from "jose";
 
 /** The subset of Env that authorization reads (narrow for testability). */

@@ -51,15 +51,63 @@ export const X3_PRINT_CSS = `
       min-width: 0 !important;
     }
 
-    header,
-    nav,
-    footer,
-    aside,
-    [role="navigation"],
-    [class*="sidebar"],
-    [class*="advert"],
-    [class*="cookie"],
-    [class*="share"] {
+    /* Hide page chrome (nav, sidebars, ads, cookie banners, share widgets).
+       Match whole class tokens ([class~=]) or specific multi-word UI
+       compounds only. The previous [class*="sidebar"/"advert"/"cookie"/
+       "share"] substring selectors deleted article content silently:
+       .share-your-story and .shareholder-* are body sections, .cookie-recipe
+       is the recipe itself on cooking sites, and wrappers like
+       .no-sidebar-layout or .article-share-and-info can contain the whole
+       article. A silently missing body is worse on the X3 than a leftover
+       widget, so ambiguous names (.advertorial, .sidebar-widget,
+       .share-links, bare "ad") are deliberately NOT matched. Two structural
+       guards against blank-PDF misfires: every selector is prefixed with
+       "body " so a layout-modifier class on <body>/<html> itself can never
+       hide the whole document, and layout-flag tokens like "sidebar-left"/
+       "sidebar-right" are not matched at all — CMSes emit them on <body> or
+       top-level wrappers to describe where the sidebar goes (real sidebars
+       are covered by aside / [class~="sidebar"] / their inner widgets).
+       Accepted trade-offs: some sidebar/share variants survive as leftover
+       chunks, and compound matches can still hit flag-style classes on
+       inner wrappers (e.g. .has-social-share). The "i" attribute-selector
+       flag (supported by Chromium) catches camelCase library classes such
+       as CookieConsent / shareTools. The trailing id/class selectors are
+       vendor-specific consent/share widgets (OneTrust, Cookiebot, Osano,
+       Google Funding Choices, CookieYes, Complianz, AddThis, Jetpack);
+       their ids/classes are unique to those vendors so there is no misfire
+       risk, and hiding them matters because position:fixed banners are
+       repeated on every printed page by Chromium. */
+    body header,
+    body nav,
+    body footer,
+    body aside,
+    body [role="navigation"],
+    body [class~="sidebar"],
+    body [class~="advert"],
+    body [class~="advertisement"],
+    body [class~="ad-container"],
+    body [class*="cookie-banner" i],
+    body [class*="cookie-consent" i],
+    body [class*="cookieconsent" i],
+    body [class*="cookie-notice" i],
+    body [class*="cookie-popup" i],
+    body [id*="cookie-banner" i],
+    body [id*="cookieconsent" i],
+    body [class~="share"],
+    body [class*="share-button"],
+    body [class*="social-share"],
+    body [class*="share-bar"],
+    body [class*="share-icons"],
+    body [class*="share-tools"],
+    body [class*="sharetools" i],
+    body #onetrust-banner-sdk,
+    body #CybotCookiebotDialog,
+    body .cc-window,
+    body .fc-consent-root,
+    body #cookie-law-info-bar,
+    body .cmplz-cookiebanner,
+    body .addthis_toolbox,
+    body .sharedaddy {
       display: none !important;
     }
 

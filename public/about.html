@@ -33,7 +33,7 @@
   header.site { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   .brand-name { font-size: 20px; font-weight: 700; letter-spacing: .06em; }
   .brand-sub { font-family: var(--mono); font-size: 14px; color: var(--muted); letter-spacing: .18em; }
-  .head-right { display: flex; align-items: center; gap: 14px; }
+  .back-row { margin-top: 8px; }
   .back { font-size: 14px; color: var(--muted); }
   .lang { display: flex; gap: 2px; font-family: var(--mono); font-size: 14px; }
   .lang button {
@@ -67,17 +67,15 @@
       <div class="brand-name" data-i18n="brand">XTC 変換</div>
       <div class="brand-sub">FOR XTEINK X3</div>
     </div>
-    <div class="head-right">
-      <a class="back" href="./" data-i18n="back">← 変換ページに戻る</a>
-      <div class="lang" role="group" aria-label="Language">
-        <button type="button" id="lang-ja" aria-pressed="true">日本語</button>
-        <button type="button" id="lang-en" aria-pressed="false">EN</button>
-      </div>
+    <div class="lang" role="group" aria-label="Language">
+      <button type="button" id="lang-ja" aria-pressed="true">日本語</button>
+      <button type="button" id="lang-en" aria-pressed="false">EN</button>
     </div>
   </header>
 
   <h1 data-i18n="h1">このサービスについて</h1>
   <p class="sub" data-i18n="sub">概要・利用規約・クローラー情報・プライバシー・連絡先</p>
+  <div class="back-row"><a class="back" href="./" data-i18n="back">← 変換ページに戻る</a></div>
 
   <section>
     <h2 data-i18n="overview_h">サービス概要</h2>

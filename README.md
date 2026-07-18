@@ -27,7 +27,7 @@ Worker
 
 ## WebUI
 
-`public/index.html`（依存なしの 1 ページ、スマホファースト）を Workers static assets として `/` で配信する。URL を入力すると `POST /jobs` → 数秒間隔のポーリングで進捗（待機中 → PDF 生成中 → XTC 変換中）を表示し、完了するとダウンロードリンクが出る。履歴はブラウザの localStorage に保存（最大 50 件。サーバー上のファイルは約 30 日で自動削除される旨を表示）。
+`public/index.html`（依存なしの 1 ページ、スマホファースト）を Workers static assets として `/` で配信する。URL を入力すると `POST /jobs` → 数秒間隔のポーリングで進捗（待機中 → PDF 生成中 → XTC 変換中）を表示し、完了するとダウンロードリンクが出る。履歴はブラウザの localStorage に保存（最大 50 件。サーバー上のファイルは約 24 時間で自動削除される旨を表示）。サービス概要・利用規約・クローラー情報・連絡先は `/about`（`public/about.html`、静的配信）に掲示し、フッターからリンクする。
 
 静的アセットの配信は Worker を通らないため、UI の保護はエッジ側の **Cloudflare Access**（workers.dev のワンクリック有効化）が前提。設定手順は claudedocs/deploy-guide.md の「Phase 4」を参照。
 
@@ -80,11 +80,11 @@ API（`/convert` `/jobs` `/download`）は次の **OR** で通す（`src/auth.ts
 - `status`: `queued` → `rendering` → `converting` → `completed` | `failed`
 - `completed` 時は `downloadUrl`（`/jobs/{jobId}/download`）付き、`failed` 時は `error`（メッセージ）付き。
 - `rendering`/`converting` の区別は R2 上の中間 PDF（`intermediate/{jobId}/source.pdf`）の有無から導出する（Workflows の status() は実行中ステップ名を返さないため）。
-- jobId が UUID 形式でなければ 400、不明・保持期限切れ（30 日）なら 404。
+- jobId が UUID 形式でなければ 400、不明・Workflows インスタンスの保持期限切れ（プラットフォーム固定 30 日）なら 404。なお成果物 XTC 自体は R2 lifecycle により約 24 時間で削除される（ダウンロード側で 404）。
 
 ### GET /jobs/{jobId}/download
 
-R2 上の XTC（`jobs/{jobId}/output.xtc`）を attachment で返す。未完了なら 409 + `{status}`、不明 jobId・成果物期限切れ・失敗ジョブなら 404。
+R2 上の XTC（`jobs/{jobId}/output.xtc`）を attachment で返す。未完了なら 409 + `{status}`、不明 jobId・成果物期限切れ（約 24 時間）・失敗ジョブなら 404。
 
 ### POST /convert（短ページ用・非推奨。/jobs 推奨）
 
@@ -131,6 +131,7 @@ R2 上の XTC を `application/octet-stream` + `Content-Length` + `Content-Dispo
 `src/validate.ts`。
 
 - http/https 以外のスキーム、localhost 系ホスト名を拒否。
+- 自サービスのホスト（`xtc.hr20k.com`、および `*.workers.dev` 全体。デプロイホスト `url-to-xtc.<subdomain>.workers.dev` を含む）も拒否し、自分自身への再帰変換を防ぐ。
 - IP リテラルの禁止レンジ: 0/8, 10/8, 100.64/10（CGNAT）, 127/8, 169.254/16, 172.16/12, 192.0.0/24, 192.168/16, 198.18/15, ::/128, ::1, fc00::/7, fe80::/10。IPv4 埋め込み IPv6（IPv4-mapped `::ffff:0:0/96`、IPv4-compatible `::/96`、6to4 `2002::/16`、NAT64 `64:ff9b::/96`）は埋め込み IPv4 を同じ判定にかける。
 - IP リテラル以外のホスト名は Cloudflare DoH（`cloudflare-dns.com/dns-query`）で A/AAAA を事前解決し、解決結果 IP を同じ禁止判定にかける。A/AAAA は個別に判定し（`Promise.allSettled`）、**片方のクエリが失敗しても、成功した側の解決 IP は必ず禁止判定にかける**。DoH の HTTP エラーだけでなく DNS RCODE≠0（SERVFAIL・REFUSED 等）もクエリ失敗として扱う。両クエリとも NOERROR で成功したのに解決 IP が 0 件の場合（スプリットホライズンの内部名など。Cloudflare DoH は CNAME を最終 A/AAAA までフラット化するため、正当な公開ホストでは起きない）は**拒否**（フェイルクローズ）。**両クエリとも失敗した場合のみブロックせず通す**（可用性優先。Browser Run 側でも解決されるため）。片方だけ成功して 0 件のときも DoH 障害の可能性があるため通す。
 
@@ -139,6 +140,10 @@ R2 上の XTC を `application/octet-stream` + `Content-Length` + `Content-Dispo
 - TOCTOU / DNS リバインディング: DoH の事前解決と Browser Run 側の実解決は別クエリのため、リバインディング DNS はすり抜けられる。
 - DoH 失敗時の素通し: 両クエリ失敗時、および片方成功（解決 0 件）＋片方失敗時は無検査で通す。この partial-failure 経路は自ドメインの権威 DNS を制御する攻撃者が意図的に再現できるが、両クエリ失敗時の素通しと同レベルの受容済みリスク（可用性優先）。
 - リダイレクト先の再検証: quickAction の API では制御できない（Phase 2 検討事項）。
+
+## 名乗る User-Agent
+
+Browser Run での対象ページ取得時は `xtc-converter/1.0 (+https://xtc.hr20k.com/about)` を名乗る（`src/pdf.ts` の `RENDER_USER_AGENT`）。Googlebot 方式の `+URL` 慣習で、サイト管理者はアクセスログの UA からこのサービスを識別して UA 単位でブロックでき、URL 先の `/about` で利用規約・連絡先を確認できる。
 
 ## ローカル開発
 
@@ -173,6 +178,7 @@ npx wrangler deploy
 ```
 public/
   index.html     スマホ向け WebUI（vanilla 1 ページ、Workers static assets で配信）
+  about.html     サービス概要・利用規約・クローラー情報・連絡先（/about、静的配信）
 src/
   index.ts       ルーティング・エラーハンドリング
   auth.ts        認証（Access JWT または Bearer AUTH_TOKEN の OR）

@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>このサービスについて | URL → XTC 変換</title>
+<style>
+  :root {
+    --bg: #f6f6f4;
+    --card: #ffffff;
+    --text: #1c1c1a;
+    --muted: #6b6b66;
+    --line: #e2e2de;
+    --accent: #0a6e5c;
+    --accent-text: #ffffff;
+    --error: #b3392f;
+    --ok: #0a6e5c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161815;
+      --card: #1f221e;
+      --text: #ecece8;
+      --muted: #9a9a93;
+      --line: #33362f;
+      --accent: #4cc2a9;
+      --accent-text: #10241f;
+      --error: #e07a70;
+      --ok: #4cc2a9;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  main {
+    max-width: 40rem;
+    margin: 0 auto;
+    padding: 1.25rem 1rem 3rem;
+  }
+  h1 {
+    font-size: 1.15rem;
+    margin: 0.25rem 0 0.25rem;
+    letter-spacing: 0.02em;
+  }
+  .sub { color: var(--muted); font-size: 0.8rem; margin: 0 0 1.25rem; }
+  section {
+    margin-top: 1rem;
+    padding: 0.9rem 1rem;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--card);
+  }
+  section h2 { font-size: 0.95rem; margin: 0 0 0.5rem; }
+  section p { font-size: 0.85rem; margin: 0.5rem 0 0; }
+  section ul { font-size: 0.85rem; margin: 0.5rem 0 0; padding-left: 1.25rem; }
+  section li { margin-top: 0.25rem; }
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.9em;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 0 0.25em;
+  }
+  a { color: var(--accent); }
+  .back { margin-top: 1.5rem; font-size: 0.85rem; }
+  .back a { color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>このサービスについて</h1>
+  <p class="sub">URL → XTC 変換の概要・利用規約・クローラー情報・連絡先</p>
+
+  <section>
+    <h2>サービス概要</h2>
+    <p>指定された URL のページを印刷用 CSS を適用して PDF 化し、Xteink X3 向けの XTC ファイルに変換する、個人運営のサービスです。</p>
+  </section>
+
+  <section>
+    <h2>利用規約</h2>
+    <ul>
+      <li>変換対象コンテンツの著作権その他の権利処理は、利用者自身の責任で行ってください。</li>
+      <li>権利侵害にあたる利用、違法なコンテンツの変換、および第三者サイトへの負荷行為（大量アクセスなど）を禁止します。</li>
+      <li>本サービスは無保証で提供され、予告なく停止・変更されることがあります。</li>
+      <li>変換結果のファイルはサーバー上に約 24 時間保存され、その後自動削除されます。</li>
+      <li>規約違反が確認された場合、利用を制限することがあります。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>クローラー情報</h2>
+    <p>本サービスは変換時に、対象ページを User-Agent <code>xtc-converter/1.0 (+https://xtc.hr20k.com/about)</code> として取得します。アクセスされたくないサイト管理者の方は、この UA を拒否することでブロックできます。</p>
+  </section>
+
+  <section>
+    <h2>連絡先</h2>
+    <p>（公開前に運営者が設定）</p>
+  </section>
+
+  <p class="back"><a href="/">← 変換ページに戻る</a></p>
+</main>
+</body>
+</html>

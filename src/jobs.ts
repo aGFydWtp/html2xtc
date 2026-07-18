@@ -11,7 +11,7 @@ import type { Env } from "./types";
 /**
  * R2 key for the intermediate PDF. Lives under its own prefix (not jobs/)
  * because R2 lifecycle rules match on prefix only: intermediate/ expires
- * after 1 day, jobs/ after 30 days (see claudedocs/deploy-guide.md).
+ * after 1 day, jobs/ after 24h as well (see claudedocs/deploy-guide.md).
  */
 export function intermediatePdfKey(jobId: string): string {
   return `intermediate/${jobId}/source.pdf`;

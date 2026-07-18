@@ -30,7 +30,14 @@ export class UrlValidationError extends Error {
 
 export type DnsResolver = (hostname: string, type: "A" | "AAAA") => Promise<string[]>;
 
-const FORBIDDEN_HOSTNAMES = new Set(["localhost", "metadata.google.internal"]);
+// "xtc.hr20k.com" is this service's own custom domain: letting the renderer
+// fetch it would recurse the converter into itself (self-request loops, and a
+// probe of our own Access-protected UI/API from inside the trust boundary).
+const FORBIDDEN_HOSTNAMES = new Set([
+  "localhost",
+  "metadata.google.internal",
+  "xtc.hr20k.com",
+]);
 
 export async function validatePublicUrl(
   input: string,
@@ -54,7 +61,17 @@ export async function validatePublicUrl(
     throw new UrlValidationError("invalid URL");
   }
 
-  if (FORBIDDEN_HOSTNAMES.has(hostname) || hostname.endsWith(".localhost")) {
+  // ".workers.dev" (suffix match, like ".localhost" below) covers this
+  // service's own deploy host: the wrangler name is "url-to-xtc" but the
+  // account subdomain in "url-to-xtc.<subdomain>.workers.dev" is not known
+  // statically, so the whole suffix is rejected. Blocking every workers.dev
+  // host is an accepted over-match — a legitimate need to convert someone
+  // else's workers.dev page is hard to imagine for this service.
+  if (
+    FORBIDDEN_HOSTNAMES.has(hostname) ||
+    hostname.endsWith(".localhost") ||
+    hostname.endsWith(".workers.dev")
+  ) {
     throw new UrlValidationError(`forbidden hostname: ${hostname}`);
   }
 

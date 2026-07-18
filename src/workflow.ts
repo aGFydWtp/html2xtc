@@ -60,72 +60,76 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
       },
     );
 
-    const { xtcKey, title } = await step.do(
-      "convert-xtc",
-      {
-        retries: { limit: 2, delay: "30 seconds", backoff: "constant" },
-        // Explicit: the default step timeout (10 minutes per attempt) is too
-        // tight for a conversion that may itself take up to 10 minutes.
-        timeout: "12 minutes",
-      },
-      async () => {
-        const source = await this.env.XTC_BUCKET.get(pdfKey);
-        if (source === null) {
-          // Only possible if the intermediate expired mid-job (1-day
-          // lifecycle) or was deleted; re-rendering is out of scope here.
-          throw new NonRetryableError("intermediate PDF is missing");
-        }
-        let response: Response;
+    try {
+      const { xtcKey, title } = await step.do(
+        "convert-xtc",
+        {
+          retries: { limit: 2, delay: "30 seconds", backoff: "constant" },
+          // Explicit: the default step timeout (10 minutes per attempt) is too
+          // tight for a conversion that may itself take up to 10 minutes.
+          timeout: "12 minutes",
+        },
+        async () => {
+          const source = await this.env.XTC_BUCKET.get(pdfKey);
+          if (source === null) {
+            // Only possible if the intermediate expired mid-job (1-day
+            // lifecycle) or was deleted; re-rendering is out of scope here.
+            throw new NonRetryableError("intermediate PDF is missing");
+          }
+          let response: Response;
+          try {
+            response = await convertInContainer(
+              this.env,
+              jobId,
+              await source.arrayBuffer(),
+              CONVERTER_FETCH_TIMEOUT_MS,
+            );
+          } catch (error) {
+            if (error instanceof DOMException && error.name === "TimeoutError") {
+              // Hitting the full 630s budget means the document is too large
+              // for xtctool's 600s limit; retrying would burn another ~10.5
+              // minutes of container time for the same outcome.
+              throw new NonRetryableError(
+                "XTC conversion timed out; the document is too large",
+              );
+            }
+            throw error; // network/container failures stay retryable
+          }
+          if (!response.ok) {
+            console.error(
+              `[${jobId}] converter returned ${response.status}: ${await response.text()}`,
+            );
+            // A container 413 means the PDF cleared the render-step size check
+            // but the container still rejected it as oversized; retrying would
+            // hit the same limit, so fail non-retryably with a size message.
+            if (response.status === 413) {
+              throw new NonRetryableError(
+                `rendered PDF exceeds the ${resolveMaxPdfBytes(this.env)} byte limit; try a shorter page`,
+              );
+            }
+            throw new Error("XTC conversion failed");
+          }
+          const { title } = await storeXtcOutput(this.env, jobId, response);
+          return { xtcKey: outputXtcKey(jobId), title };
+        },
+      );
+
+      // Exposed through instance.status().output once the run completes;
+      // GET /jobs/:id surfaces the title from here.
+      return { xtcKey, title };
+    } finally {
+      // Runs on success and on terminal failure (retries exhausted or
+      // NonRetryableError) alike. Deliberately NOT inside the convert step:
+      // deleting there would starve that step's own retries of their input.
+      // Best-effort — if the delete itself fails, the R2 lifecycle rule on
+      // intermediate/ still removes the object within ~a day.
+      await step.do("delete-intermediate-pdf", async () => {
         try {
-          response = await convertInContainer(
-            this.env,
-            jobId,
-            await source.arrayBuffer(),
-            CONVERTER_FETCH_TIMEOUT_MS,
-          );
+          await this.env.XTC_BUCKET.delete(pdfKey);
         } catch (error) {
-          if (error instanceof DOMException && error.name === "TimeoutError") {
-            // Hitting the full 630s budget means the document is too large
-            // for xtctool's 600s limit; retrying would burn another ~10.5
-            // minutes of container time for the same outcome.
-            throw new NonRetryableError(
-              "XTC conversion timed out; the document is too large",
-            );
-          }
-          throw error; // network/container failures stay retryable
+          console.error(`[${jobId}] best-effort delete of ${pdfKey} failed`, error);
         }
-        if (!response.ok) {
-          console.error(
-            `[${jobId}] converter returned ${response.status}: ${await response.text()}`,
-          );
-          // A container 413 means the PDF cleared the render-step size check
-          // but the container still rejected it as oversized; retrying would
-          // hit the same limit, so fail non-retryably with a size message.
-          if (response.status === 413) {
-            throw new NonRetryableError(
-              `rendered PDF exceeds the ${resolveMaxPdfBytes(this.env)} byte limit; try a shorter page`,
-            );
-          }
-          throw new Error("XTC conversion failed");
-        }
-        const { title } = await storeXtcOutput(this.env, jobId, response);
-        return { xtcKey: outputXtcKey(jobId), title };
-      },
-    );
-
-    // The convert step above is the intermediate PDF's only consumer, so it
-    // is deleted as soon as the XTC is stored. Best-effort: on failure the
-    // R2 lifecycle rule on intermediate/ still removes it within ~a day.
-    await step.do("delete-intermediate-pdf", async () => {
-      try {
-        await this.env.XTC_BUCKET.delete(pdfKey);
-      } catch (error) {
-        console.error(`[${jobId}] best-effort delete of ${pdfKey} failed`, error);
-      }
-    });
-
-    // Exposed through instance.status().output once the run completes;
-    // GET /jobs/:id surfaces the title from here.
-    return { xtcKey, title };
+      });
+    }
   }
 }

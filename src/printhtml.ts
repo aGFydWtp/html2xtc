@@ -3,6 +3,7 @@
 
 import { parseHTML } from "linkedom";
 import type { ExtractedArticle } from "./extract";
+import { PRINT_FONT_CSS_URL } from "./pdf";
 
 /**
  * Print-HTML assembly for extract mode: sanitizes the Readability output and
@@ -181,6 +182,16 @@ export function buildPrintHtml(
   const base = document.createElement("base");
   base.setAttribute("href", sourceUrl);
   document.head.appendChild(base);
+
+  // Body font (BIZ UDPGothic) as a real <link> in the head — unlike the
+  // full-page path, where the font only starts loading when the print CSS is
+  // injected after page load, here the stylesheet takes part in the initial
+  // load, so the renderer's networkidle2 wait covers the font files too.
+  // (The @import in X3_PRINT_CSS also fires, but hits the browser cache.)
+  const fontLink = document.createElement("link");
+  fontLink.setAttribute("rel", "stylesheet");
+  fontLink.setAttribute("href", PRINT_FONT_CSS_URL);
+  document.head.appendChild(fontLink);
 
   // Same "(無題)" fallback as the full-page colophon script.
   const title = article.title ?? "(無題)";

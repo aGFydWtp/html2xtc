@@ -3,10 +3,33 @@
 
 import type { Env } from "./types";
 
+/**
+ * Google Fonts stylesheet for BIZ UDPGothic (SIL OFL), the preferred body
+ * font: a UD (universal design) gothic tuned for legibility at small sizes,
+ * which suits 10pt text on the X3's 1-bit e-paper. The CSS defines @font-face
+ * rules split into many unicode-range subsets, so the browser downloads only
+ * the few woff2 slices a given page actually uses — this is why the CSS is
+ * referenced by URL instead of being inlined (inlining all JP subsets would
+ * bloat the injected style by ~100 KB while still fetching from
+ * fonts.gstatic.com). display=swap keeps text readable via the fallback
+ * stack whenever the fetch is slow or blocked.
+ */
+export const PRINT_FONT_CSS_URL =
+  "https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&display=swap";
+
 // Print CSS for the Xteink X3 page geometry (66mm x 99mm at 4mm margins).
-// Japanese text renders with the preinstalled Noto CJK fonts on Browser Run,
-// so no web-font injection is needed.
+// Body text prefers BIZ UDPGothic (web font, PRINT_FONT_CSS_URL above); the
+// Noto CJK fonts preinstalled on Browser Run stay in the stack so a blocked
+// or slow font fetch degrades to exactly the previous rendering, never to
+// tofu or an unstyled fallback.
 export const X3_PRINT_CSS = `
+  /* Must stay the first rule in this stylesheet (CSS drops later @imports).
+     Injected via addStyleTag after page load on the full-page path, so a
+     target page's CSP may block it — an accepted degradation, like the
+     colophon script below. The extract path additionally links this CSS in
+     its own document head (src/printhtml.ts), where no foreign CSP exists. */
+  @import url("${PRINT_FONT_CSS_URL}");
+
   @page {
     size: 66mm 99mm;
     margin: 4mm;
@@ -23,6 +46,7 @@ export const X3_PRINT_CSS = `
 
     body {
       font-family:
+        "BIZ UDPGothic",
         "Noto Sans JP",
         "Hiragino Sans",
         sans-serif !important;
@@ -412,6 +436,13 @@ export function renderPdf(env: Env, url: string): Promise<Response> {
     // Appends the colophon page to the DOM after load, before PDF capture.
     addScriptTag: [{ content: buildColophonScript(url, convertedAt) }],
     gotoOptions: PDF_GOTO_OPTIONS,
+    // The BIZ UDPGothic @import in X3_PRINT_CSS only starts loading when the
+    // style is injected — after goto, so networkidle2 never waits for it.
+    // Give the font CSS + woff2 subsets a fixed grace period before capture;
+    // display=swap bounds the worst case at "fallback Noto", never missing
+    // text. (The extract path skips this: its font <link> is part of the
+    // document head and is already covered by networkidle2.)
+    waitForTimeout: 3_000,
     pdfOptions: PDF_OPTIONS,
   });
 }

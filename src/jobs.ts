@@ -20,6 +20,15 @@ export function intermediatePdfKey(jobId: string): string {
   return `intermediate/${jobId}/source.pdf`;
 }
 
+/**
+ * R2 key for the extracted-article HTML handed from the extract-content step
+ * to render-pdf (extract mode only). Shares the intermediate/ prefix with the
+ * PDF so the same 1-day R2 lifecycle rule covers it.
+ */
+export function articleHtmlKey(jobId: string): string {
+  return `intermediate/${jobId}/article.html`;
+}
+
 /** R2 key for the finished XTC artifact. */
 export function outputXtcKey(jobId: string): string {
   return `jobs/${jobId}/output.xtc`;
@@ -206,4 +215,21 @@ export function resolveMaxPdfBytes(env: Pick<Env, "MAX_PDF_BYTES">): number {
   return Number.isFinite(configured) && configured > 0
     ? configured
     : DEFAULT_MAX_PDF_BYTES;
+}
+
+const DEFAULT_EXTRACT_MIN_CHARS = 300;
+
+/**
+ * Minimum body length for extract mode to accept a Readability result; the
+ * EXTRACT_MIN_CHARS var overrides the default 300. Measured in characters
+ * after whitespace removal, not words, so CJK articles (dense, few spaces)
+ * are judged on the same scale as Latin-script ones.
+ */
+export function resolveExtractMinChars(
+  env: Pick<Env, "EXTRACT_MIN_CHARS">,
+): number {
+  const configured = Number(env.EXTRACT_MIN_CHARS);
+  return Number.isFinite(configured) && configured > 0
+    ? configured
+    : DEFAULT_EXTRACT_MIN_CHARS;
 }

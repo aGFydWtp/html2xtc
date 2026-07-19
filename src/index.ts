@@ -2,6 +2,7 @@
 // Copyright (C) 2026 aGFydWtp
 
 import { convertInContainer } from "./container";
+import { prepareRenderInput } from "./extract";
 import {
   decideMissingDownload,
   intermediatePdfKey,
@@ -11,10 +12,10 @@ import {
   resolveMaxPdfBytes,
   xtcContentDisposition,
 } from "./jobs";
-import { renderPdf } from "./pdf";
+import { renderPdf, renderPdfFromHtml } from "./pdf";
 import { storeXtcOutput } from "./pipeline";
 import { enforceRateLimit } from "./ratelimiter";
-import type { Env } from "./types";
+import type { ConvertMode, Env } from "./types";
 import { UrlValidationError, validatePublicUrl } from "./validate";
 
 export { XtcConverterContainer } from "./container";
@@ -102,23 +103,38 @@ function methodNotAllowed(allow: string): Response {
   );
 }
 
+interface ConvertRequest {
+  target: URL;
+  mode: ConvertMode;
+}
+
 /**
- * Parses the {url} request body and runs SSRF validation.
- * Returns the validated URL, or the error Response to send as-is.
+ * Parses the {url, mode} request body and runs SSRF validation. mode is
+ * optional and defaults to "full" (the pre-extract behavior). Returns the
+ * validated request, or the error Response to send as-is.
  */
-async function readTargetUrl(request: Request): Promise<URL | Response> {
-  let url: string | undefined;
+async function readConvertRequest(
+  request: Request,
+): Promise<ConvertRequest | Response> {
+  let url: unknown;
+  let mode: unknown;
   try {
-    ({ url } = await request.json<{ url?: string }>());
+    ({ url, mode } = await request.json<{ url?: unknown; mode?: unknown }>());
   } catch {
     return Response.json({ error: "request body must be JSON" }, { status: 400 });
   }
   if (typeof url !== "string" || url.length === 0) {
     return Response.json({ error: "url is required" }, { status: 400 });
   }
+  if (mode !== undefined && mode !== "full" && mode !== "extract") {
+    return Response.json(
+      { error: 'mode must be "full" or "extract"' },
+      { status: 400 },
+    );
+  }
 
   try {
-    return await validatePublicUrl(url);
+    return { target: await validatePublicUrl(url), mode: mode ?? "full" };
   } catch (error) {
     if (error instanceof UrlValidationError) {
       return Response.json({ error: error.message }, { status: 400 });
@@ -128,16 +144,17 @@ async function readTargetUrl(request: Request): Promise<URL | Response> {
 }
 
 async function handleCreateJob(request: Request, env: Env): Promise<Response> {
-  const target = await readTargetUrl(request);
-  if (target instanceof Response) {
-    return target;
+  const parsed = await readConvertRequest(request);
+  if (parsed instanceof Response) {
+    return parsed;
   }
+  const { target, mode } = parsed;
 
   const jobId = crypto.randomUUID();
   try {
     await env.CONVERT_WORKFLOW.create({
       id: jobId,
-      params: { url: target.toString() },
+      params: { url: target.toString(), mode },
       // The submitted URL lives in params, so instance state must not outlive
       // the ~24h promised to users (default retention is 30 days on Paid).
       // Errored instances carry the URL too, hence the same errorRetention.
@@ -228,16 +245,27 @@ async function mapWithPhaseProbe(
 }
 
 async function handleConvert(request: Request, env: Env): Promise<Response> {
-  const target = await readTargetUrl(request);
-  if (target instanceof Response) {
-    return target;
+  const parsed = await readConvertRequest(request);
+  if (parsed instanceof Response) {
+    return parsed;
   }
+  const { target, mode } = parsed;
 
   const jobId = crypto.randomUUID();
 
   let pdfResponse: Response;
   try {
-    pdfResponse = await renderPdf(env, target.toString());
+    if (mode === "extract") {
+      // prepareRenderInput degrades internally (fetch → browser → full);
+      // only the PDF render itself can still throw here.
+      const input = await prepareRenderInput(env, target, jobId);
+      pdfResponse =
+        input.kind === "html"
+          ? await renderPdfFromHtml(env, input.html)
+          : await renderPdf(env, input.url);
+    } else {
+      pdfResponse = await renderPdf(env, target.toString());
+    }
   } catch (error) {
     console.error(`[${jobId}] Browser Run request failed`, error);
     return Response.json({ error: "PDF generation failed", jobId }, { status: 502 });

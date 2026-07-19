@@ -5,8 +5,14 @@ import { WorkflowEntrypoint } from "cloudflare:workers";
 import type { WorkflowEvent, WorkflowStep } from "cloudflare:workers";
 import { NonRetryableError } from "cloudflare:workflows";
 import { convertInContainer } from "./container";
-import { intermediatePdfKey, outputXtcKey, resolveMaxPdfBytes } from "./jobs";
-import { renderPdf } from "./pdf";
+import { prepareRenderInput } from "./extract";
+import {
+  articleHtmlKey,
+  intermediatePdfKey,
+  outputXtcKey,
+  resolveMaxPdfBytes,
+} from "./jobs";
+import { renderPdf, renderPdfFromHtml } from "./pdf";
 import { storeXtcOutput } from "./pipeline";
 import type { ConvertJobParams, Env } from "./types";
 
@@ -16,8 +22,9 @@ import type { ConvertJobParams, Env } from "./types";
 const CONVERTER_FETCH_TIMEOUT_MS = 630_000;
 
 /**
- * Three-step conversion pipeline behind POST /jobs (render-pdf → convert-xtc
- * → delete-intermediate-pdf). The instance ID doubles as
+ * Conversion pipeline behind POST /jobs (extract mode only: extract-content
+ * → then always render-pdf → convert-xtc → delete-intermediate-pdf). The
+ * instance ID doubles as
  * the public jobId, and the R2 keys are derived from it, so no extra job
  * store is needed (see claudedocs/phase2-findings.md).
  *
@@ -29,6 +36,53 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
   async run(event: WorkflowEvent<ConvertJobParams>, step: WorkflowStep) {
     const jobId = event.instanceId;
     const { url } = event.payload;
+    // Params created before extract mode existed carry no mode field.
+    const mode = event.payload.mode ?? "full";
+
+    // Extract mode inserts one step ahead of render-pdf. The step itself
+    // never throws for extraction problems — prepareRenderInput degrades
+    // internally, and a null articleKey just means "render the URL as
+    // always" — so a broken extraction can never fail a job that full mode
+    // would have completed. The extracted HTML travels through R2, not the
+    // step return value (step outputs are capped at 1 MiB).
+    let articleKey: string | null = null;
+    if (mode === "extract") {
+      ({ articleKey } = await step.do(
+        "extract-content",
+        {
+          retries: { limit: 1, delay: "5 seconds", backoff: "constant" },
+          // Worst case: source fetch (15s) + DoH re-validation per redirect
+          // hop + content-action goto (60s), plus margin for R2 I/O.
+          timeout: "3 minutes",
+        },
+        async () => {
+          const input = await prepareRenderInput(
+            this.env,
+            new URL(url),
+            jobId,
+          );
+          if (input.kind === "url") {
+            return { articleKey: null };
+          }
+          const key = articleHtmlKey(jobId);
+          try {
+            await this.env.XTC_BUCKET.put(key, input.html, {
+              httpMetadata: { contentType: "text/html; charset=utf-8" },
+            });
+          } catch (error) {
+            // Same invariant as prepareRenderInput itself: extract mode must
+            // never fail a job that full mode would complete. A transient R2
+            // failure here costs only the extraction, not the conversion.
+            console.error(
+              `[${jobId}] R2 put ${key} failed; falling back to full render`,
+              error,
+            );
+            return { articleKey: null };
+          }
+          return { articleKey: key };
+        },
+      ));
+    }
 
     const { pdfKey } = await step.do(
       "render-pdf",
@@ -39,7 +93,23 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
         timeout: "7 minutes",
       },
       async () => {
-        const response = await renderPdf(this.env, url);
+        // Extract mode reads the prepared article HTML back from R2; a
+        // missing object (expired mid-job) degrades to the full render
+        // rather than failing — same always-produce-output stance as the
+        // extract step itself.
+        const article =
+          articleKey !== null
+            ? await this.env.XTC_BUCKET.get(articleKey)
+            : null;
+        if (articleKey !== null && article === null) {
+          console.error(
+            `[${jobId}] article HTML missing from R2; falling back to full render`,
+          );
+        }
+        const response =
+          article !== null
+            ? await renderPdfFromHtml(this.env, await article.text())
+            : await renderPdf(this.env, url);
         if (!response.ok) {
           // Upstream detail goes to logs only; the thrown message surfaces
           // to the client via instance.status().error on final failure.
@@ -128,10 +198,14 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
       // Best-effort — if the delete itself fails, the R2 lifecycle rule on
       // intermediate/ still removes the object within ~a day.
       await step.do("delete-intermediate-pdf", async () => {
-        try {
-          await this.env.XTC_BUCKET.delete(pdfKey);
-        } catch (error) {
-          console.error(`[${jobId}] best-effort delete of ${pdfKey} failed`, error);
+        const keys =
+          articleKey !== null ? [pdfKey, articleKey] : [pdfKey];
+        for (const key of keys) {
+          try {
+            await this.env.XTC_BUCKET.delete(key);
+          } catch (error) {
+            console.error(`[${jobId}] best-effort delete of ${key} failed`, error);
+          }
         }
       });
     }

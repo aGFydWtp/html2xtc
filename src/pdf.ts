@@ -385,6 +385,24 @@ export function buildColophonScript(url: string, convertedAt: string): string {
 })();`;
 }
 
+// Options shared by both render paths (full URL and extract-mode HTML).
+const PDF_GOTO_OPTIONS = {
+  // networkidle2 also applies to html-sourced renders: it waits for the
+  // article's (absolute-URL) images to finish loading before capture.
+  waitUntil: "networkidle2",
+  // Browser Run's documented cap for goto is 60s; use the full budget so
+  // heavy pages still load for async (/jobs) conversions.
+  timeout: 60_000,
+} as const;
+
+const PDF_OPTIONS = {
+  preferCSSPageSize: true,
+  printBackground: false,
+  displayHeaderFooter: false,
+  // Browser Run's documented cap for pdf generation is 5 minutes.
+  timeout: 300_000,
+} as const;
+
 export function renderPdf(env: Env, url: string): Promise<Response> {
   const convertedAt = formatJstTimestamp(new Date());
   return env.BROWSER.quickAction("pdf", {
@@ -393,18 +411,26 @@ export function renderPdf(env: Env, url: string): Promise<Response> {
     addStyleTag: [{ content: X3_PRINT_CSS }],
     // Appends the colophon page to the DOM after load, before PDF capture.
     addScriptTag: [{ content: buildColophonScript(url, convertedAt) }],
-    gotoOptions: {
-      waitUntil: "networkidle2",
-      // Browser Run's documented cap for goto is 60s; use the full budget so
-      // heavy pages still load for async (/jobs) conversions.
-      timeout: 60_000,
-    },
-    pdfOptions: {
-      preferCSSPageSize: true,
-      printBackground: false,
-      displayHeaderFooter: false,
-      // Browser Run's documented cap for pdf generation is 5 minutes.
-      timeout: 300_000,
-    },
+    gotoOptions: PDF_GOTO_OPTIONS,
+    pdfOptions: PDF_OPTIONS,
+  });
+}
+
+/**
+ * Renders a PDF from a self-contained HTML document (extract mode, see
+ * src/printhtml.ts). No addScriptTag here: the colophon is already part of
+ * the document, built server-side — which also means no page CSP can ever
+ * block it, unlike the injected script on the full-page path.
+ */
+export function renderPdfFromHtml(env: Env, html: string): Promise<Response> {
+  return env.BROWSER.quickAction("pdf", {
+    html,
+    // The browser still fetches the article's images from their origin;
+    // announce the same UA as the full-page path so site operators see a
+    // single identity for this service.
+    userAgent: RENDER_USER_AGENT,
+    addStyleTag: [{ content: X3_PRINT_CSS }],
+    gotoOptions: PDF_GOTO_OPTIONS,
+    pdfOptions: PDF_OPTIONS,
   });
 }

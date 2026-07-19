@@ -106,6 +106,27 @@
     background: var(--ink); color: var(--ink-text); font-weight: 700; text-decoration: none;
   }
   a.dl:hover { color: var(--ink-text); opacity: .88; }
+  button.preview-btn {
+    padding: 9px 20px; border-radius: 4px; font: inherit; font-weight: 700; cursor: pointer;
+    border: 1.5px solid var(--ink); background: none; color: var(--ink);
+  }
+  button.preview-btn:hover { opacity: .7; }
+  button.preview-btn:disabled { border-color: var(--disabled); color: var(--disabled); cursor: default; opacity: 1; }
+  .preview-panel { margin-top: 16px; }
+  .preview-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .preview-bar button {
+    padding: 6px 14px; font: inherit; font-size: 14px; cursor: pointer;
+    border: 1px solid var(--ink); border-radius: 4px; background: var(--card); color: var(--text);
+  }
+  .preview-bar button:disabled { border-color: var(--line); color: var(--disabled); cursor: default; }
+  .preview-page { font-family: var(--mono); font-size: 14px; color: var(--muted2); }
+  .preview-bar .preview-close { margin-left: auto; }
+  .error-text + .preview-bar { margin-top: 10px; }
+  #preview-canvas {
+    display: block; margin-top: 12px; max-width: 100%; height: auto;
+    border: 1px solid var(--line); background: var(--card);
+  }
+  .preview-loading { font-family: var(--mono); font-size: 14px; color: var(--muted); margin-top: 10px; }
   section.history { padding-top: 26px; }
   .history-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 6px; }
   .history-head h2 { font-size: 18px; font-weight: 600; letter-spacing: .08em; margin: 0; }
@@ -208,6 +229,15 @@ const I18N = {
     copyright_line: "© 2026 aGFydWtp",
     dl: "XTC をダウンロード",
     dl_small: "XTC ↓",
+    preview: "プレビュー",
+    preview_prev: "前へ",
+    preview_next: "次へ",
+    preview_close: "閉じる",
+    preview_retry: "再試行",
+    preview_loading: "読み込み中…",
+    preview_page: (n, total) => `${n} / ${total} ページ`,
+    preview_expired: "保存期限が切れているため、プレビューできません。",
+    preview_parse_fail: "XTC ファイルを解析できませんでした。",
     confirm_clear: "履歴をすべて削除しますか？（サーバー上のファイルは削除されません）",
     poll_fail: "状態の取得に失敗しました。ページを再読み込みしてください。",
     no_server: "サーバーに接続できません。",
@@ -232,6 +262,15 @@ const I18N = {
     copyright_line: "© 2026 aGFydWtp",
     dl: "Download XTC",
     dl_small: "XTC \u2193",
+    preview: "Preview",
+    preview_prev: "Prev",
+    preview_next: "Next",
+    preview_close: "Close",
+    preview_retry: "Retry",
+    preview_loading: "Loading\u2026",
+    preview_page: (n, total) => `Page ${n} / ${total}`,
+    preview_expired: "The file has expired and can no longer be previewed.",
+    preview_parse_fail: "Could not parse the XTC file.",
     confirm_clear: "Delete all history? (Files on the server are not deleted.)",
     poll_fail: "Failed to fetch status. Please reload the page.",
     no_server: "Could not reach the server.",
@@ -252,7 +291,7 @@ function applyLang() {
   $("lang-ja").setAttribute("aria-pressed", String(lang === "ja"));
   $("lang-en").setAttribute("aria-pressed", String(lang === "en"));
   renderHistory();
-  if (activeView) renderCurrent(activeView.job, activeView.note);
+  rerenderCurrent();
 }
 
 // --- localStorage history ----------------------------------------------------
@@ -313,19 +352,28 @@ function noteText(note) {
 function renderCurrent(job, note) {
   const el = $("current");
   activeView = job ? { job, note } : null;
-  if (!job) { el.className = ""; el.innerHTML = ""; return; }
+  if (!job) { el.className = ""; el.innerHTML = ""; previewState = null; return; }
+  if (previewState && previewState.jobId !== job.jobId) previewState = null;
   const busy = !note && IN_FLIGHT.includes(job.status);
+  const previewLocked = previewBroken.has(job.jobId)
+    || (previewState && (previewState.note || previewState.loading));
   el.className = "show";
   el.innerHTML = `
     ${nameLines(job)}
     <div class="status-line">
       ${busy ? '<span class="spinner"></span>' : ""}
       ${badge(job.status)}
-      ${job.status === "completed" ? `<a class="dl" href="/jobs/${encodeURIComponent(job.jobId)}/download">${t("dl")}</a>` : ""}
+      ${job.status === "completed" ? `<a class="dl" href="/jobs/${encodeURIComponent(job.jobId)}/download">${t("dl")}</a>
+      <button type="button" class="preview-btn" data-act="preview-open"${previewLocked ? " disabled" : ""}>${t("preview")}</button>` : ""}
     </div>
     ${note ? `<div class="error-text">${esc(noteText(note))}</div>` : ""}
     ${job.status === "failed" && job.error ? `<div class="error-text">${esc(job.error)}</div>` : ""}
+    ${previewHtml(job)}
   `;
+  drawPreview();
+}
+function rerenderCurrent() {
+  if (activeView) renderCurrent(activeView.job, activeView.note);
 }
 
 // Completed entries older than the server-side retention are shown as expired
@@ -366,6 +414,174 @@ function formatDate(iso) {
   if (Number.isNaN(d.getTime())) return "";
   return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
+
+// --- XTC preview -------------------------------------------------------------
+// Decodes the xtctool container: 48-byte header, 16-byte/page index at
+// indexOffset (absolute), then uncompressed 1-bit XTG frames (22-byte header,
+// MSB-first rows, bit 1 = white). All fields little-endian.
+const XTC_MAGIC = 0x00435458;
+const XTG_MAGIC = 0x00475458;
+const XTC_VERSION = 0x0100;
+const XTC_HEADER_SIZE = 48;
+const XTC_INDEX_ENTRY_SIZE = 16;
+const XTG_HEADER_SIZE = 22;
+const MAX_FRAME_DIM = 4096;
+const MAX_FRAME_PIXELS = 32000000;
+
+function readU64(dv, off) {
+  const v = dv.getBigUint64(off, true);
+  if (v > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error("u64 out of range");
+  return Number(v);
+}
+function parseXtc(buf) {
+  const dv = new DataView(buf);
+  if (buf.byteLength < XTC_HEADER_SIZE || dv.getUint32(0, true) !== XTC_MAGIC) throw new Error("bad magic");
+  if (dv.getUint16(4, true) !== XTC_VERSION) throw new Error("unsupported version");
+  const pageCount = dv.getUint16(6, true);
+  if (!pageCount) throw new Error("no pages");
+  const indexOffset = readU64(dv, 24);
+  if (indexOffset + pageCount * XTC_INDEX_ENTRY_SIZE > buf.byteLength) throw new Error("index out of range");
+  const pages = [];
+  for (let i = 0; i < pageCount; i++) {
+    const base = indexOffset + i * XTC_INDEX_ENTRY_SIZE;
+    pages.push({ offset: readU64(dv, base), size: dv.getUint32(base + 8, true) });
+  }
+  return { dv, pages };
+}
+function decodeFrame(dv, entry) {
+  const off = entry.offset;
+  if (off + XTG_HEADER_SIZE > dv.byteLength || off + entry.size > dv.byteLength) throw new Error("frame out of range");
+  if (dv.getUint32(off, true) !== XTG_MAGIC) throw new Error("unsupported frame");
+  const width = dv.getUint16(off + 4, true);
+  const height = dv.getUint16(off + 6, true);
+  if (!width || !height) throw new Error("empty frame");
+  if (width > MAX_FRAME_DIM || height > MAX_FRAME_DIM || width * height > MAX_FRAME_PIXELS) throw new Error("frame too large");
+  if (dv.getUint8(off + 8) !== 0 || dv.getUint8(off + 9) !== 0) throw new Error("unsupported encoding");
+  const dataSize = dv.getUint32(off + 10, true);
+  const bytesPerRow = Math.ceil(width / 8);
+  if (dataSize < bytesPerRow * height || off + XTG_HEADER_SIZE + dataSize > dv.byteLength) throw new Error("bitmap out of range");
+  const image = new ImageData(width, height);
+  const px = image.data;
+  for (let y = 0; y < height; y++) {
+    const row = off + XTG_HEADER_SIZE + y * bytesPerRow;
+    for (let x = 0; x < width; x++) {
+      const v = (dv.getUint8(row + (x >> 3)) >> (7 - (x & 7))) & 1 ? 255 : 0;
+      const p = (y * width + x) * 4;
+      px[p] = px[p + 1] = px[p + 2] = v;
+      px[p + 3] = 255;
+    }
+  }
+  return image;
+}
+
+const PREVIEW_CACHE_MAX = 5;
+const previewCache = new Map(); // jobId -> {dv, pages}; only the shown page is decoded
+const previewBroken = new Set(); // jobIds whose XTC failed to parse (permanent for the session)
+let previewState = null; // {jobId, page} | {jobId, loading} | {jobId, note}
+
+function previewHtml(job) {
+  if (!previewState || previewState.jobId !== job.jobId) return "";
+  if (previewState.note) {
+    // Parse failures and expiry are not retryable; transient fetch errors are.
+    const key = typeof previewState.note === "string" ? previewState.note : previewState.note.key;
+    const retryable = key !== "preview_parse_fail" && key !== "preview_expired";
+    return `
+    <div class="preview-panel">
+      <div class="error-text">${esc(noteText(previewState.note))}</div>
+      <div class="preview-bar">
+        ${retryable ? `<button type="button" data-act="preview-retry">${t("preview_retry")}</button>` : ""}
+        <button type="button" data-act="preview-close">${t("preview_close")}</button>
+      </div>
+    </div>`;
+  }
+  if (previewState.loading) return `<div class="preview-loading">${t("preview_loading")}</div>`;
+  const cached = previewCache.get(job.jobId);
+  if (!cached) return "";
+  const page = previewState.page;
+  return `
+    <div class="preview-panel">
+      <div class="preview-bar">
+        <button type="button" data-act="preview-prev"${page === 0 ? " disabled" : ""}>${t("preview_prev")}</button>
+        <span class="preview-page">${t("preview_page")(page + 1, cached.pages.length)}</span>
+        <button type="button" data-act="preview-next"${page === cached.pages.length - 1 ? " disabled" : ""}>${t("preview_next")}</button>
+        <button type="button" class="preview-close" data-act="preview-close">${t("preview_close")}</button>
+      </div>
+      <canvas id="preview-canvas"></canvas>
+    </div>`;
+}
+function drawPreview() {
+  const canvas = $("preview-canvas");
+  if (!canvas) return;
+  const cached = previewCache.get(previewState.jobId);
+  if (!cached) return;
+  try {
+    const image = decodeFrame(cached.dv, cached.pages[previewState.page]);
+    canvas.width = image.width;
+    canvas.height = image.height;
+    canvas.getContext("2d").putImageData(image, 0, 0);
+  } catch {
+    previewFail(previewState.jobId, "preview_parse_fail");
+  }
+}
+function previewFail(jobId, note) {
+  if (!previewState || previewState.jobId !== jobId) return;
+  if (note === "preview_parse_fail") previewBroken.add(jobId);
+  previewState = { jobId, note };
+  rerenderCurrent();
+}
+async function openPreview(job) {
+  const jobId = job.jobId;
+  if (previewBroken.has(jobId)) return;
+  if (previewState && previewState.jobId === jobId && previewState.loading) return; // fetch in flight
+  if (!previewCache.has(jobId)) {
+    previewState = { jobId, loading: true };
+    rerenderCurrent();
+    let res;
+    try {
+      res = await fetch(`/jobs/${encodeURIComponent(jobId)}/download`);
+    } catch { return previewFail(jobId, "no_server"); }
+    if (!previewState || previewState.jobId !== jobId) return;
+    if (res.status === 404) {
+      // Mirror the history download handler: flip the stored entry to expired.
+      const jobs = loadJobs();
+      const j = jobs.find((x) => x.jobId === jobId);
+      if (j) { j.status = "expired"; saveJobs(jobs); renderHistory(); }
+      job.status = "expired";
+      return previewFail(jobId, "preview_expired");
+    }
+    if (!res.ok) {
+      return previewFail(jobId, { key: "http_error", args: [res.status] });
+    }
+    let buf;
+    try { buf = await res.arrayBuffer(); } catch { return previewFail(jobId, "no_server"); }
+    if (!previewState || previewState.jobId !== jobId) return;
+    try {
+      if (previewCache.size >= PREVIEW_CACHE_MAX) previewCache.delete(previewCache.keys().next().value);
+      previewCache.set(jobId, parseXtc(buf));
+    } catch { return previewFail(jobId, "preview_parse_fail"); }
+  }
+  previewState = { jobId, page: 0 };
+  rerenderCurrent();
+}
+function movePreview(delta) {
+  if (!previewState || !previewCache.has(previewState.jobId)) return;
+  const next = previewState.page + delta;
+  if (next < 0 || next >= previewCache.get(previewState.jobId).pages.length) return;
+  previewState.page = next;
+  rerenderCurrent();
+}
+
+$("current").addEventListener("click", (event) => {
+  const btn = event.target.closest("[data-act]");
+  if (!btn || !activeView) return;
+  switch (btn.dataset.act) {
+    case "preview-open":
+    case "preview-retry": openPreview(activeView.job).catch(() => {}); break;
+    case "preview-close": previewState = null; rerenderCurrent(); break;
+    case "preview-prev": movePreview(-1); break;
+    case "preview-next": movePreview(1); break;
+  }
+});
 
 // --- job submission and polling ------------------------------------------------
 const MAX_POLL_FAILURES = 5;

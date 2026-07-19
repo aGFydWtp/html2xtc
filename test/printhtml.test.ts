@@ -100,11 +100,6 @@ describe("buildPrintHtml", () => {
     expect(html).toContain('lang="ja"');
     expect(html).toContain('<meta charset="utf-8">');
     expect(html).toContain(`<base href="${BASE}">`);
-    // Body font: extract mode carries the BIZ UDPGothic stylesheet in its
-    // own head so the render's networkidle2 wait covers the font files.
-    expect(html).toContain(
-      '<link href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&display=swap" rel="stylesheet">',
-    );
     expect(html).toContain("<title>記事タイトル</title>");
     expect(html).toContain("<h1>記事タイトル</h1>");
     expect(html).toContain("本文です。");
@@ -149,15 +144,14 @@ describe("buildPrintHtml", () => {
     expect(html).not.toContain("<img src=x");
   });
 
-  it("embeds inline font css as a <style> and drops the font <link>", () => {
-    const fontCss =
-      "@font-face{font-family:'BIZ UDPGothic';font-weight:400;" +
-      "src:url(data:font/woff2;base64,AQIDBA==) format('woff2');}";
-    const html = buildPrintHtml(article(), BASE, CONVERTED_AT, fontCss);
-    expect(html).toContain("data:font/woff2;base64,AQIDBA==");
-    expect(html).toContain("<style>");
-    // No render-time font fetch remains when the font is inlined.
+  it("carries no font reference at all (fonts travel via addStyleTag)", () => {
+    // Browser Run's html mode ignores document-level data: @font-face, so a
+    // font <link>/<style> here would either be dead weight or a duplicate
+    // fetch racing the addStyleTag-injected CSS.
+    const html = buildPrintHtml(article(), BASE, CONVERTED_AT);
     expect(html).not.toContain("fonts.googleapis.com");
+    expect(html).not.toContain("@font-face");
+    expect(html).not.toContain("<link");
   });
 });
 

@@ -55,9 +55,16 @@ export interface SourceHtml {
   finalUrl: URL;
 }
 
-/** What the caller should render: prepared HTML, or the URL (full mode). */
+/**
+ * What the caller should render: prepared HTML (plus the inlined @font-face
+ * CSS to inject via addStyleTag, when font subsetting succeeded), or the URL
+ * (full mode). fontCss travels separately from the HTML because Browser Run's
+ * html mode does not apply data: @font-face rules from a document <style> —
+ * only addStyleTag-injected CSS reaches the renderer (measured; see the font
+ * investigation notes and the custom-fonts docs).
+ */
 export type RenderInput =
-  | { kind: "html"; html: string }
+  | { kind: "html"; html: string; fontCss: string | null }
   | { kind: "url"; url: string };
 
 /** Injection point for tests, mirroring validate.ts's DnsResolver pattern. */
@@ -380,8 +387,10 @@ export async function prepareRenderInput(
 
 /**
  * Assembles the print document for a successfully extracted article: font
- * subsetting + inlining first (fail-soft to null = <link> fallback inside
- * buildPrintHtml), then the HTML itself.
+ * subsetting + inlining first (fail-soft to null: renderPdfFromHtml then
+ * injects the @import variant of the print CSS, degrading to Noto like the
+ * full path), then the HTML itself. fontCss is returned alongside the HTML —
+ * NOT embedded in it — so the render can inject it via addStyleTag.
  */
 async function buildPrintInput(
   article: ExtractedArticle,
@@ -397,6 +406,7 @@ async function buildPrintInput(
   );
   return {
     kind: "html",
-    html: buildPrintHtml(article, sourceUrl, convertedAt, fontCss),
+    html: buildPrintHtml(article, sourceUrl, convertedAt),
+    fontCss,
   };
 }

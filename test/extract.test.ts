@@ -176,8 +176,11 @@ describe("prepareRenderInput", () => {
       expect(input.html).toContain("本文の段落です");
       // Base URL must be the post-redirect URL, not the submitted one.
       expect(input.html).toContain('href="https://example.com/article-final"');
-      // Font fail-soft: the document keeps the <link> fallback.
-      expect(input.html).toContain("fonts.googleapis.com");
+      // Font fail-soft: no inline CSS; the render will inject the @import
+      // variant of the print CSS instead. The document itself never carries
+      // a font reference.
+      expect(input.fontCss).toBeNull();
+      expect(input.html).not.toContain("fonts.googleapis.com");
     }
     expect(quickAction).not.toHaveBeenCalled();
   });
@@ -204,7 +207,11 @@ describe("prepareRenderInput", () => {
     );
     expect(input.kind).toBe("html");
     if (input.kind === "html") {
-      expect(input.html).toContain("data:font/woff2;base64,AQIDBA==");
+      // The inlined font rides NEXT TO the HTML (injected via addStyleTag at
+      // render time), never inside it: Browser Run's html mode ignores
+      // document-level data: @font-face.
+      expect(input.fontCss).toContain("data:font/woff2;base64,AQIDBA==");
+      expect(input.html).not.toContain("data:font/woff2");
       expect(input.html).not.toContain("fonts.googleapis.com");
     }
   });

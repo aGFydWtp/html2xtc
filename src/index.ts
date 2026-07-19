@@ -261,7 +261,7 @@ async function handleConvert(request: Request, env: Env): Promise<Response> {
       const input = await prepareRenderInput(env, target, jobId);
       pdfResponse =
         input.kind === "html"
-          ? await renderPdfFromHtml(env, input.html)
+          ? await renderPdfFromHtml(env, input.html, input.fontCss)
           : await renderPdf(env, input.url);
     } else {
       pdfResponse = await renderPdf(env, target.toString());

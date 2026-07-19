@@ -21,19 +21,12 @@ export const X3_PRINT_CSS = `
       color: black !important;
     }
 
-    /* 10pt on the root pins every rem unit to the X3 body size, so
-       rem-sized titles/headings scale down while keeping their intended
-       ratio (e.g. a 2.25rem title prints at 22.5pt). */
-    html {
-      font-size: 10pt !important;
-    }
-
     body {
       font-family:
         "Noto Sans JP",
         "Hiragino Sans",
         sans-serif !important;
-      font-size: 1rem !important;
+      font-size: 10pt !important;
       line-height: 1.55 !important;
     }
 
@@ -41,16 +34,19 @@ export const X3_PRINT_CSS = `
        above only works through inheritance, so a site rule that targets a
        container (e.g. synodos.jp's .content { font-size: 1.13rem } = ~18px)
        or an inline style bypasses it and the whole article prints oversized.
-       h1-h6 are deliberately NOT listed so headings keep the site's sizing
-       (now rem-relative to the 10pt root above). */
+       Absolute 10pt on each element, NOT html { font-size: 10pt } + 1rem:
+       rem is a shared layout unit (padding/width/gap), so resizing the root
+       would rescale every rem dimension — sites on the
+       html { font-size: 62.5% } convention would inflate ~1.33x and re-cause
+       the overflow clipping handled below. h1-h6 are deliberately NOT listed
+       so headings/titles keep the site's sizing. Trade-off: intentional
+       non-heading size differences (lead paragraphs, notes) flatten to 10pt;
+       a stable body size wins on a 58mm page. header/footer/nav/aside are
+       omitted because the hide rules below display:none them anyway. */
     div,
     section,
     article,
     main,
-    aside,
-    header,
-    footer,
-    nav,
     p,
     li,
     dd,
@@ -63,7 +59,7 @@ export const X3_PRINT_CSS = `
     address,
     summary,
     pre {
-      font-size: 1rem !important;
+      font-size: 10pt !important;
     }
 
     /* Restore the semantically-smaller elements the normalization above
@@ -363,7 +359,7 @@ export function buildColophonScript(url: string, convertedAt: string): string {
       var line = doc.createElement("div");
       line.textContent = text;
       // font-size on each line, not just the box: X3_PRINT_CSS normalizes
-      // div font-size to 1rem !important, which would beat the box's
+      // div font-size to 10pt !important, which would beat the box's
       // inherited 8pt; the inline !important here wins the cascade.
       setStyles(line, { "margin": "0", "padding": "0", "font-size": "8pt" });
       if (styles) setStyles(line, styles);

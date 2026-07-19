@@ -92,10 +92,15 @@ export function sanitizeContent(
         name === "sizes"
       ) {
         el.removeAttribute(name);
+        continue;
+      }
+      // Bare href/src AND namespace-prefixed variants (xlink:href on
+      // <svg><image> etc.) — a prefixed URL attribute must not bypass the
+      // scheme check or keep pointing at a relative/internal target.
+      if (/(?:^|:)(?:href|src)$/i.test(name)) {
+        resolveUrlAttribute(el, name, baseUrl);
       }
     }
-    resolveUrlAttribute(el, "src", baseUrl);
-    resolveUrlAttribute(el, "href", baseUrl);
   }
 
   const wanted = normalizeHeadingText(title);
@@ -118,14 +123,15 @@ function normalizeHeadingText(text: string | null | undefined): string {
 }
 
 /**
- * Resolves a relative src/href against the page URL and drops the attribute
+ * Resolves a URL-carrying attribute (href/src, including namespace-prefixed
+ * forms like xlink:href) against the page URL and drops the attribute
  * entirely when the result is not a plain http(s) URL (javascript:, data:,
  * malformed, ...). A missing image beats a scriptable URL in a document we
  * author ourselves.
  */
 function resolveUrlAttribute(
   el: AttrElement,
-  name: "src" | "href",
+  name: string,
   baseUrl: string,
 ): void {
   const value = el.getAttribute(name);

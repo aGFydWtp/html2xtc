@@ -65,9 +65,20 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
             return { articleKey: null };
           }
           const key = articleHtmlKey(jobId);
-          await this.env.XTC_BUCKET.put(key, input.html, {
-            httpMetadata: { contentType: "text/html; charset=utf-8" },
-          });
+          try {
+            await this.env.XTC_BUCKET.put(key, input.html, {
+              httpMetadata: { contentType: "text/html; charset=utf-8" },
+            });
+          } catch (error) {
+            // Same invariant as prepareRenderInput itself: extract mode must
+            // never fail a job that full mode would complete. A transient R2
+            // failure here costs only the extraction, not the conversion.
+            console.error(
+              `[${jobId}] R2 put ${key} failed; falling back to full render`,
+              error,
+            );
+            return { articleKey: null };
+          }
           return { articleKey: key };
         },
       ));

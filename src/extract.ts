@@ -342,6 +342,8 @@ export async function prepareRenderInput(
   const fetched = await fetchSource(target, jobId);
   if (fetched !== null) {
     const article = extractArticle(fetched.html, fetched.finalUrl.toString());
+    const chars =
+      article === null ? 0 : article.textContent.replace(/\s+/g, "").length;
     if (isExtractSufficient(article, env)) {
       console.log(`[${jobId}] extract path: fetch`);
       return {
@@ -353,6 +355,11 @@ export async function prepareRenderInput(
         ),
       };
     }
+    // Fetch worked but Readability found too little; record why the browser
+    // stage is being paid for (threshold tuning relies on these numbers).
+    console.log(
+      `[${jobId}] fetch extraction insufficient (${chars} chars < ${resolveExtractMinChars(env)}); trying browser render`,
+    );
   }
 
   const rendered = await fetchRenderedHtml(env, target.toString(), jobId);

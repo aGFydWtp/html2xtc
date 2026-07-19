@@ -59,6 +59,24 @@ describe("sanitizeContent", () => {
     expect(out).not.toContain("data:");
   });
 
+  it("resolves namespace-prefixed URL attributes (xlink:href)", () => {
+    const out = sanitizeContent(
+      '<svg><image xlink:href="/img/pic.png"></image></svg>',
+      BASE,
+    );
+    expect(out).toContain('xlink:href="https://example.com/img/pic.png"');
+  });
+
+  it("drops dangerous schemes behind namespace prefixes too", () => {
+    const out = sanitizeContent(
+      '<svg><a xlink:href="javascript:alert(1)">x</a>' +
+        '<image xlink:href="data:text/html,hi"></image></svg>',
+      BASE,
+    );
+    expect(out).not.toContain("javascript:");
+    expect(out).not.toContain("data:");
+  });
+
   it("drops a leading heading that duplicates the title", () => {
     const out = sanitizeContent(
       "<h1>記事 タイトル</h1><p>本文</p>",

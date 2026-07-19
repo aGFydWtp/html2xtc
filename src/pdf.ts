@@ -18,16 +18,37 @@ export const PRINT_FONT_CSS_URL =
   "https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&display=swap";
 
 // Print CSS for the Xteink X3 page geometry (66mm x 99mm at 4mm margins).
-// Body text prefers BIZ UDPGothic (web font, PRINT_FONT_CSS_URL above); the
-// Noto CJK fonts preinstalled on Browser Run stay in the stack so a blocked
-// or slow font fetch degrades to exactly the previous rendering, never to
-// tofu or an unstyled fallback.
+// Body text prefers BIZ UDPGothic (web font, PRINT_FONT_CSS_URL above).
+// NOTE: Browser Run ships NO Japanese font — when the web font is not
+// applied, CJK text falls back to WenQuanYi Zen Hei (a Chinese font with
+// Chinese-style glyphs for 学/編 etc.), which is why the web font matters.
+// "Noto Sans JP" / "Hiragino Sans" in the stack do not exist in that
+// environment; they are kept because they are harmless there and pick the
+// right face if the runtime image ever gains them (or for local previews).
 //
 // Shared rule block (everything except the web-font @import): the extract
-// path injects the rules WITHOUT the @import because its print HTML already
-// carries the font inlined as base64 (src/fonts.ts) — re-importing here
-// would trigger a pointless network fetch of the same family at render time.
+// path injects these rules together with the inlined @font-face CSS
+// (renderPdfFromHtml), so re-importing the same family here would only add
+// a pointless network fetch at render time.
 const X3_PRINT_RULES = `
+  /* The body font-family is declared at TOP LEVEL — outside @media print —
+     deliberately, and it must stay there. Chromium loads web fonts lazily:
+     a @font-face only loads once some element uses its family under the
+     CURRENT media. Inside @media print, nothing references "BIZ UDPGothic"
+     during the normal (screen) rendering, the face stays "unloaded", and
+     Chromium's print path does NOT wait for font loads — it captures with
+     the fallback. Verified with minimal probes: identical font payloads
+     failed with this rule inside @media print and succeeded outside,
+     regardless of injection route, payload size or waits (see the font
+     investigation notes). test/pdf.test.ts pins this placement. */
+  body {
+    font-family:
+      "BIZ UDPGothic",
+      "Noto Sans JP",
+      "Hiragino Sans",
+      sans-serif !important;
+  }
+
   @page {
     size: 66mm 99mm;
     margin: 4mm;
@@ -43,11 +64,6 @@ const X3_PRINT_RULES = `
     }
 
     body {
-      font-family:
-        "BIZ UDPGothic",
-        "Noto Sans JP",
-        "Hiragino Sans",
-        sans-serif !important;
       font-size: 10pt !important;
       line-height: 1.55 !important;
     }
@@ -453,10 +469,12 @@ export function renderPdf(env: Env, url: string): Promise<Response> {
     gotoOptions: PDF_GOTO_OPTIONS,
     // The BIZ UDPGothic @import in X3_PRINT_CSS only starts loading when the
     // style is injected — after goto, so networkidle2 never waits for it.
-    // Give the font CSS + woff2 subsets a fixed grace period before capture;
-    // display=swap bounds the worst case at "fallback Noto", never missing
-    // text. (The extract path skips this: its font <link> is part of the
-    // document head and is already covered by networkidle2.)
+    // Because the font-family rule sits outside @media print, the screen
+    // layout uses the family right away and the lazy loader fires at
+    // injection time; this fixed grace period gives the CSS + woff2 subsets
+    // a chance to finish before capture (probabilistic, not guaranteed).
+    // display=swap bounds the worst case at the fallback font — on Browser
+    // Run that is WenQuanYi Zen Hei, since no Japanese font is installed.
     waitForTimeout: 3_000,
     pdfOptions: PDF_OPTIONS,
   });
@@ -479,21 +497,25 @@ export function renderPdfFromHtml(
     // announce the same UA as the full-page path so site operators see a
     // single identity for this service.
     userAgent: RENDER_USER_AGENT,
-    // fontCss (inlined data: @font-face rules, src/fonts.ts) MUST come in
-    // via addStyleTag: Browser Run's html mode does not apply data:
-    // @font-face from a document <style> (measured — output stayed
-    // bit-identical to the Noto fallback), and the custom-fonts docs support
-    // exactly this injection path. Order matters: the faces first, then the
-    // rules that reference the family. On font fail-soft (null) inject the
-    // @import variant instead — probabilistic like the full path, worst
-    // case Noto, but never a second fetch racing an inlined font.
+    // fontCss (inlined data: @font-face rules, src/fonts.ts) rides in via
+    // addStyleTag — the injection path the custom-fonts docs document for
+    // quick actions. Order matters: the faces first, then the rules that
+    // reference the family. What actually makes the font take effect is the
+    // font-family rule sitting OUTSIDE @media print (see X3_PRINT_RULES):
+    // an earlier claim that "html mode ignores document-level data:
+    // @font-face" was a misattribution — those probes had the family inside
+    // @media print, so the lazy loader never fired. On font fail-soft
+    // (null) inject the @import variant instead — probabilistic like the
+    // full path, worst case the WenQuanYi fallback, but never a second
+    // fetch racing an inlined font.
     addStyleTag:
       fontCss !== null
         ? [{ content: fontCss }, { content: X3_PRINT_CSS_NO_FONT_IMPORT }]
         : [{ content: X3_PRINT_CSS }],
     gotoOptions: PDF_GOTO_OPTIONS,
-    // Even a data: font needs decode + swap before capture; a short fixed
-    // wait covers it (the full path uses 3s because it also downloads).
+    // Probes show data: faces apply even without a wait once the family is
+    // used at screen time; keep a short safety margin for cold-instance
+    // decode of multi-hundred-KB subsets (cheap, and harmless per probes).
     waitForTimeout: 1_500,
     pdfOptions: PDF_OPTIONS,
   });

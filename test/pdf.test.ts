@@ -69,12 +69,33 @@ describe("X3_PRINT_CSS", () => {
     expect(PRINT_FONT_CSS_URL).toContain("display=swap");
   });
 
-  it("prefers BIZ UDPGothic with the Noto CJK fallback stack", () => {
-    // Order matters: web font first, then the fonts preinstalled on
-    // Browser Run so a failed fetch degrades to the previous rendering.
+  it("prefers BIZ UDPGothic with the fallback stack", () => {
+    // Web font first. The named fallbacks do NOT exist on Browser Run (its
+    // only CJK face is WenQuanYi Zen Hei); they are harmless there and only
+    // matter for local previews or a future runtime image.
     expect(X3_PRINT_CSS).toMatch(
       /font-family:\s*"BIZ UDPGothic",\s*"Noto Sans JP",\s*"Hiragino Sans",\s*sans-serif !important/,
     );
+  });
+
+  it("declares the body font-family OUTSIDE the @media print block", () => {
+    // Regression pin for the root cause of the font-not-applied bug:
+    // Chromium only lazy-loads a web font when some element uses its family
+    // under the CURRENT media. With font-family inside @media print, the
+    // face stays unloaded during screen rendering, and the print path
+    // captures with the fallback instead of waiting for the load. The rule
+    // must therefore precede @media print at the stylesheet top level.
+    for (const raw of [X3_PRINT_CSS, X3_PRINT_CSS_NO_FONT_IMPORT]) {
+      // Comments mention both terms; only the actual rules matter.
+      const css = raw.replace(/\/\*[\s\S]*?\*\//g, "");
+      const familyIndex = css.indexOf("font-family:");
+      const printIndex = css.indexOf("@media print");
+      expect(familyIndex).toBeGreaterThan(-1);
+      expect(printIndex).toBeGreaterThan(-1);
+      expect(familyIndex).toBeLessThan(printIndex);
+      // ...and no font-family may sneak back inside the print block.
+      expect(css.slice(printIndex)).not.toContain("font-family");
+    }
   });
 });
 

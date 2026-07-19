@@ -58,10 +58,11 @@ export interface SourceHtml {
 /**
  * What the caller should render: prepared HTML (plus the inlined @font-face
  * CSS to inject via addStyleTag, when font subsetting succeeded), or the URL
- * (full mode). fontCss travels separately from the HTML because Browser Run's
- * html mode does not apply data: @font-face rules from a document <style> —
- * only addStyleTag-injected CSS reaches the renderer (measured; see the font
- * investigation notes and the custom-fonts docs).
+ * (full mode). fontCss travels separately from the HTML: addStyleTag is the
+ * injection path the custom-fonts docs document for quick actions, and
+ * keeping the ~300KB of base64 out of the document keeps article.html small.
+ * (What makes the font actually apply is the top-level font-family rule in
+ * X3_PRINT_RULES — see pdf.ts.)
  */
 export type RenderInput =
   | { kind: "html"; html: string; fontCss: string | null }

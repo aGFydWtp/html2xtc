@@ -183,12 +183,12 @@ export function printableText(
  * formatJstTimestamp (pdf.ts), same as the full-page colophon.
  *
  * The document deliberately carries NO font reference (no <link>, no
- * <style> @font-face): Browser Run's html mode does not apply data:
- * @font-face rules placed in the document (measured — the capture stayed
- * bit-identical to the Noto output while the same CSS worked in local
- * Chromium), and the docs support custom fonts via the quickAction
- * addStyleTag parameter only. The inlined font CSS therefore travels next
- * to the HTML (RenderInput.fontCss) and renderPdfFromHtml injects it.
+ * <style> @font-face): the inlined font CSS travels next to the HTML
+ * (RenderInput.fontCss) and renderPdfFromHtml injects it via addStyleTag —
+ * the custom-font path the quick-action docs document — so a reference here
+ * would be either dead weight or a duplicate fetch racing the injected
+ * faces. (What makes the font apply at all is the top-level font-family
+ * rule in X3_PRINT_RULES, outside @media print — see pdf.ts.)
  *
  * The <title> is always present: the Container reads the PDF title metadata
  * into X-Xtc-Title, which becomes the download filename (pipeline.ts).

@@ -104,6 +104,17 @@ describe("sanitizeContent", () => {
     expect(out).not.toContain("1x1.gif");
   });
 
+  it("does not mistake a real file name containing a placeholder word", () => {
+    // "pixel" appears only as part of a larger name — a substring heuristic
+    // would wrongly swap this real image for the data-src value.
+    const out = sanitizeContent(
+      '<img src="/img/pixel-art-collection.png" data-src="/lazy/other.jpg">',
+      BASE,
+    );
+    expect(out).toContain('src="https://example.com/img/pixel-art-collection.png"');
+    expect(out).not.toContain("other.jpg");
+  });
+
   it("picks a candidate covering 528px when only a srcset exists", () => {
     const out = sanitizeContent(
       '<img data-srcset="/a-300.jpg 300w, /a-600.jpg 600w, /a-1200.jpg 1200w">',

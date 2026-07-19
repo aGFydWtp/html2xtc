@@ -116,8 +116,10 @@ export function sanitizeContent(
   }
 
   // Before the attribute loop, so a promoted src goes through the same URL
-  // resolution / scheme check as an authored one. <source> needs no handling:
-  // it is in STRIP_SELECTOR, so a <picture> is reduced to its <img> here.
+  // resolution / scheme check as an authored one. Known limitation: <source>
+  // is in STRIP_SELECTOR, so a <picture> whose real URLs live ONLY on its
+  // <source> elements cannot be rescued — the surviving <img> is normalized
+  // from whatever src/srcset/data-* it carries itself, nothing more.
   for (const img of [...body.querySelectorAll("img")]) {
     normalizeLazyImage(img);
   }
@@ -251,17 +253,68 @@ function isPlaceholderSrc(src: string | null): boolean {
   if (/^(?:data|about|blob):/i.test(value)) {
     return true;
   }
-  return /(?:^|\/)[^/?#]*(?:1x1|blank|spacer|placeholder|transparent|pixel|dummy)[^/?#]*\.(?:gif|png|svg)(?:[?#]|$)/i.test(
-    value,
-  );
+  return isPlaceholderFileName(value);
+}
+
+/**
+ * Words a placeholder/spacer file name may consist of; used by
+ * isPlaceholderFileName, which requires the WHOLE name to be made of these.
+ */
+const PLACEHOLDER_FILE_WORDS = new Set([
+  "blank",
+  "spacer",
+  "placeholder",
+  "transparent",
+  "pixel",
+  "dummy",
+]);
+
+/**
+ * File-name heuristic for spacer images, strict on purpose: the entire stem
+ * (split on - _ .) must be made of placeholder words
+ * (PLACEHOLDER_FILE_WORDS), WxH dimension tokens (1x1, 300x200) or bare
+ * numbers — so "blank.gif", "1x1.gif" and "placeholder-300x200.png" qualify.
+ * Any other word disqualifies the name: a substring match would flag a
+ * legitimate image like "pixel-art-collection.png", this does not. At least
+ * one placeholder word or dimension token is required, so a purely numeric
+ * name ("300.png") does not qualify either.
+ */
+function isPlaceholderFileName(value: string): boolean {
+  const path = value.split(/[?#]/, 1)[0] ?? "";
+  const file = path.split("/").pop() ?? "";
+  const match = /^(.+)\.(?:gif|png|svg)$/i.exec(file);
+  if (match === null) {
+    return false;
+  }
+  let qualifying = false;
+  for (const token of match[1].split(/[-_.]+/)) {
+    if (token.length === 0) {
+      continue;
+    }
+    if (
+      PLACEHOLDER_FILE_WORDS.has(token.toLowerCase()) ||
+      /^\d+x\d+$/i.test(token)
+    ) {
+      qualifying = true;
+      continue;
+    }
+    if (/^\d+$/.test(token)) {
+      continue; // numbers alone neither qualify nor disqualify
+    }
+    return false; // any real word means a real image name
+  }
+  return qualifying;
 }
 
 /**
  * Picks one URL out of a srcset-shaped value, aimed at TARGET_IMAGE_WIDTH:
  * the smallest width descriptor that still covers it, else the largest
  * available; for density descriptors the lowest density (1x). Candidates are
- * split on commas — good enough for real-world srcsets; a data: URL with a
- * comma inside would be dropped later by the scheme check anyway.
+ * split on bare commas, which mis-splits URLs that themselves contain a
+ * comma: rare for http(s) URLs in real-world srcsets (worst case a malformed
+ * candidate that resolveUrlAttribute later discards or resolves uselessly),
+ * and for data: URLs — where commas are structural — whatever fragment gets
+ * promoted is dropped by the scheme check.
  */
 function pickFromSrcset(srcset: string | null): string | null {
   if (srcset === null) {

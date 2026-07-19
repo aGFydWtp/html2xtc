@@ -90,6 +90,9 @@ describe("renderPdf (full-page path)", () => {
 });
 
 describe("LAZY_IMAGE_SCRIPT", () => {
+  // The script's runtime (Browser Rendering's Chromium) cannot be reproduced
+  // locally, so these tests deliberately stop at syntax parsing and content
+  // pins; the actual lazy-load behavior is verified on a deployed Worker.
   it("is syntactically valid standalone JavaScript", () => {
     expect(() => new Function(LAZY_IMAGE_SCRIPT)).not.toThrow();
   });

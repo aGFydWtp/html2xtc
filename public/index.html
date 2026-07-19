@@ -159,10 +159,14 @@
   }
   .more-btn:hover { background: var(--panel); color: var(--text); }
   .job-menu {
-    position: fixed; margin: 0; padding: 6px; min-width: 180px;
+    position: fixed; display: none; margin: 0; padding: 6px; min-width: 180px;
     border: 1px solid var(--line); border-radius: 4px; background: var(--card);
     box-shadow: 0 4px 16px rgba(28, 26, 23, .16);
   }
+  /* Keep these two rules separate: an unknown :popover-open in a selector
+     list would drop the whole list on pre-Popover-API browsers. */
+  .job-menu:popover-open { display: block; }
+  .job-menu.open { display: block; }
   .job-menu button {
     display: block; width: 100%; text-align: left; padding: 8px 12px;
     font: inherit; font-size: 14px; border: 0; border-radius: 3px;
@@ -232,12 +236,12 @@
   </section>
 </main>
 
-<dialog id="preview-dialog" class="preview-dialog">
+<dialog id="preview-dialog" class="preview-dialog" aria-labelledby="preview-dialog-title">
   <div class="pd-inner" id="preview-dialog-inner"></div>
 </dialog>
-<div id="job-menu" class="job-menu" popover>
-  <button type="button" id="menu-dl" data-i18n="menu_dl">XTC ダウンロード</button>
-  <button type="button" id="menu-preview" data-i18n="menu_preview">XTC プレビュー</button>
+<div id="job-menu" class="job-menu" role="menu" popover>
+  <button type="button" id="menu-dl" role="menuitem" data-i18n="menu_dl">XTC ダウンロード</button>
+  <button type="button" id="menu-preview" role="menuitem" data-i18n="menu_preview">XTC プレビュー</button>
 </div>
 
 <script>
@@ -433,7 +437,7 @@ function renderHistory() {
         <div class="job-title${done ? "" : " dim"}">${esc(title)}</div>
         <div class="date">${esc(formatDate(typeof j.createdAt === "string" ? j.createdAt : ""))}${done ? "" : " · " + badgeText(status)}</div>
       </div>
-      <button type="button" class="more-btn" data-menu-job="${esc(j.jobId)}" aria-haspopup="menu" aria-label="${t("menu_label")}">${MORE_ICON}</button>
+      <button type="button" class="more-btn" data-menu-job="${esc(j.jobId)}" aria-haspopup="true" aria-label="${t("menu_label")}">${MORE_ICON}</button>
     </li>`;
   }).join("");
 }
@@ -513,6 +517,8 @@ let previewState = null; // {jobId, page} | {jobId, loading} | {jobId, note}
 function renderPreviewDialog() {
   const dlg = $("preview-dialog");
   if (!previewState) { if (dlg.open) dlg.close(); return; }
+  const focusedEl = document.activeElement;
+  const focusedAct = focusedEl && dlg.contains(focusedEl) ? focusedEl.dataset.act : null;
   let body;
   if (previewState.note) {
     // Parse failures and expiry are not retryable; transient fetch errors are.
@@ -537,11 +543,24 @@ function renderPreviewDialog() {
   }
   $("preview-dialog-inner").innerHTML = `
     <div class="pd-head">
-      <span class="pd-title">${t("preview")}</span>
+      <span class="pd-title" id="preview-dialog-title">${t("preview")}</span>
       <button type="button" class="pd-x" data-act="preview-close" aria-label="${t("preview_close")}">✕</button>
     </div>
     ${body}`;
   drawPreview();
+  focusPreviewDialog(focusedAct);
+}
+// Rebuilding innerHTML drops focus onto the inert page behind the modal; put it
+// back on the same control, its nav pair when that one became disabled, or the
+// first enabled button (the ✕) otherwise.
+function focusPreviewDialog(act) {
+  const dlg = $("preview-dialog");
+  let target = act ? dlg.querySelector(`[data-act="${act}"]:enabled`) : null;
+  if (!target && act) {
+    const pair = { "preview-next": "preview-prev", "preview-prev": "preview-next" }[act];
+    if (pair) target = dlg.querySelector(`[data-act="${pair}"]:enabled`);
+  }
+  (target ?? dlg.querySelector("button:enabled")).focus();
 }
 function drawPreview() {
   const canvas = $("preview-canvas");
@@ -626,27 +645,38 @@ $("preview-dialog").addEventListener("click", (event) => {
   }
 });
 $("preview-dialog").addEventListener("close", () => { previewState = null; });
-// Rebuilding the dialog's innerHTML drops focus to <body>, so the dialog's own
-// Escape-to-close no longer fires; close it explicitly instead.
-document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && $("preview-dialog").open) $("preview-dialog").close();
-});
 
 // --- history action menu (one popover shared by all rows) --------------------
 const MORE_ICON = '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5.5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="18.5" r="1.7"/></svg>';
+const MENU_TOGGLE_MS = 300; // a close then a ⋮ click on the same job within this window is a toggle
+// Browsers without the Popover API (Chrome <114, Safari <17, Firefox <125) get
+// a class-based fallback: same fixed-position menu, closed by our own
+// outside-click/Escape listeners instead of light dismiss.
+const POPOVER_OK = typeof HTMLElement.prototype.showPopover === "function";
 let menuJobId = null;    // job the open menu refers to
 let menuClosedAt = 0;    // light dismiss fires before the ⋮ click, so remember
 let menuClosedJob = null; // the last close to make a second ⋮ click a toggle
 
+function jobMenuOpen() {
+  return POPOVER_OK ? $("job-menu").matches(":popover-open") : $("job-menu").classList.contains("open");
+}
+function hideJobMenu() {
+  const menu = $("job-menu");
+  if (POPOVER_OK) { if (menu.matches(":popover-open")) menu.hidePopover(); return; } // toggle event resets menuJobId
+  menu.classList.remove("open");
+  menuJobId = null;
+}
 function openJobMenu(btn, jobId) {
-  if (menuClosedJob === jobId && Date.now() - menuClosedAt < 300) { menuClosedJob = null; return; }
+  if (jobMenuOpen() && menuJobId === jobId) { hideJobMenu(); return; } // fallback toggle (no light dismiss)
+  if (menuClosedJob === jobId && Date.now() - menuClosedAt < MENU_TOGGLE_MS) { menuClosedJob = null; return; }
   const menu = $("job-menu");
   const j = loadJobs().find((x) => x.jobId === jobId);
   const done = !!j && effectiveStatus(j) === "completed";
   menuJobId = jobId;
   $("menu-dl").disabled = !done;
   $("menu-preview").disabled = !done || previewBroken.has(jobId);
-  menu.showPopover();
+  if (POPOVER_OK) menu.showPopover(); else menu.classList.add("open");
+  // both paths apply display synchronously, so offsetWidth/offsetHeight are measurable here
   const r = btn.getBoundingClientRect();
   menu.style.left = `${Math.max(8, Math.min(r.right - menu.offsetWidth, window.innerWidth - menu.offsetWidth - 8))}px`;
   menu.style.top = `${Math.min(r.bottom + 4, window.innerHeight - menu.offsetHeight - 8)}px`;
@@ -659,11 +689,19 @@ $("jobs").addEventListener("click", (event) => {
 $("job-menu").addEventListener("toggle", (event) => {
   if (event.newState === "closed") { menuClosedAt = Date.now(); menuClosedJob = menuJobId; menuJobId = null; }
 });
+if (!POPOVER_OK) {
+  document.addEventListener("click", (event) => {
+    if (!jobMenuOpen()) return;
+    if (event.target.closest("#job-menu") || event.target.closest(".more-btn")) return;
+    hideJobMenu();
+  });
+  document.addEventListener("keydown", (event) => { if (event.key === "Escape") hideJobMenu(); });
+}
 // Confirm the job still exists before navigating, so an expired artifact flips
 // the entry to "expired" instead of showing raw 404 JSON.
 $("menu-dl").addEventListener("click", async () => {
   const jobId = menuJobId;
-  $("job-menu").hidePopover();
+  hideJobMenu();
   if (!jobId) return;
   try {
     const res = await fetch(`/jobs/${encodeURIComponent(jobId)}`);
@@ -673,7 +711,7 @@ $("menu-dl").addEventListener("click", async () => {
 });
 $("menu-preview").addEventListener("click", () => {
   const jobId = menuJobId;
-  $("job-menu").hidePopover();
+  hideJobMenu();
   if (jobId) openPreview(jobId).catch(() => {});
 });
 

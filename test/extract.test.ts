@@ -6,6 +6,7 @@ import {
   prepareRenderInput,
 } from "../src/extract";
 import type { SourceHtml } from "../src/extract";
+import type { FontFetcher } from "../src/fonts";
 
 const JOB_ID = "0f6ff35e-3f8a-4f2e-9c8e-1a2b3c4d5e6f";
 
@@ -156,16 +157,56 @@ describe("prepareRenderInput", () => {
   });
   const sourceFail = async () => null;
 
+  // Keeps tests off the network; the font inliner must fail-soft to <link>.
+  const fontFetchFail: FontFetcher = async () => {
+    throw new Error("no network in tests");
+  };
+
   it("uses the plain-fetch path without touching the browser", async () => {
     const { env, quickAction } = browserEnv({ success: false });
-    const input = await prepareRenderInput(env, target, JOB_ID, sourceOk);
+    const input = await prepareRenderInput(
+      env,
+      target,
+      JOB_ID,
+      sourceOk,
+      fontFetchFail,
+    );
     expect(input.kind).toBe("html");
     if (input.kind === "html") {
       expect(input.html).toContain("本文の段落です");
       // Base URL must be the post-redirect URL, not the submitted one.
       expect(input.html).toContain('href="https://example.com/article-final"');
+      // Font fail-soft: the document keeps the <link> fallback.
+      expect(input.html).toContain("fonts.googleapis.com");
     }
     expect(quickAction).not.toHaveBeenCalled();
+  });
+
+  it("inlines the font subset when the font fetch succeeds", async () => {
+    const fontCssFixture = `@font-face {
+  font-family: 'BIZ UDPGothic';
+  font-style: normal;
+  font-weight: 400;
+  src: url(https://fonts.gstatic.com/l/font?kit=k4) format('woff2');
+  unicode-range: U+3042;
+}`;
+    const fontFetchOk: FontFetcher = async (url) =>
+      url.startsWith("https://fonts.googleapis.com/")
+        ? new Response(fontCssFixture, { status: 200 })
+        : new Response(new Uint8Array([1, 2, 3, 4]).buffer, { status: 200 });
+    const { env } = browserEnv({ success: false });
+    const input = await prepareRenderInput(
+      env,
+      target,
+      JOB_ID,
+      sourceOk,
+      fontFetchOk,
+    );
+    expect(input.kind).toBe("html");
+    if (input.kind === "html") {
+      expect(input.html).toContain("data:font/woff2;base64,AQIDBA==");
+      expect(input.html).not.toContain("fonts.googleapis.com");
+    }
   });
 
   it("falls back to the browser when the fetched page has no article", async () => {
@@ -174,14 +215,26 @@ describe("prepareRenderInput", () => {
       result: ARTICLE_HTML,
       meta: { status: 200, title: "" },
     });
-    const input = await prepareRenderInput(env, target, JOB_ID, sourceShell);
+    const input = await prepareRenderInput(
+      env,
+      target,
+      JOB_ID,
+      sourceShell,
+      fontFetchFail,
+    );
     expect(input.kind).toBe("html");
     expect(quickAction).toHaveBeenCalledTimes(1);
   });
 
   it("degrades to full mode when both paths fail", async () => {
     const { env } = browserEnv({ success: false });
-    const input = await prepareRenderInput(env, target, JOB_ID, sourceFail);
+    const input = await prepareRenderInput(
+      env,
+      target,
+      JOB_ID,
+      sourceFail,
+      fontFetchFail,
+    );
     expect(input).toEqual({ kind: "url", url: target.toString() });
   });
 
@@ -191,7 +244,13 @@ describe("prepareRenderInput", () => {
       result: SHELL_HTML,
       meta: { status: 200, title: "SPA" },
     });
-    const input = await prepareRenderInput(env, target, JOB_ID, sourceFail);
+    const input = await prepareRenderInput(
+      env,
+      target,
+      JOB_ID,
+      sourceFail,
+      fontFetchFail,
+    );
     expect(input).toEqual({ kind: "url", url: target.toString() });
   });
 });

@@ -152,10 +152,41 @@ function resolveUrlAttribute(
 }
 
 /**
+ * All text the print document will render, for the font subsetter
+ * (src/fonts.ts): article body, title, source line and every colophon line
+ * (static labels included). Over-inclusion is harmless — a few extra glyphs
+ * in the subset — while a missing glyph would render in the fallback font.
+ * Must stay in sync with what buildPrintHtml() actually emits.
+ */
+export function printableText(
+  article: ExtractedArticle,
+  sourceUrl: string,
+  convertedAt: string,
+): string {
+  return [
+    article.title ?? "(無題)",
+    article.siteName ?? "",
+    article.byline ?? "",
+    hostnameOf(sourceUrl),
+    sourceUrl,
+    convertedAt,
+    "タイトル: サイト名: 著者: URL: 変換日時: · ",
+    "個人的利用のために作成。再配布禁止。",
+    "Created for personal use. Redistribution prohibited.",
+    article.textContent,
+  ].join("");
+}
+
+/**
  * Builds the complete print document for an extracted article. `sourceUrl`
  * must be the URL the HTML was actually fetched from (after redirects) so
  * relative references resolve correctly; `convertedAt` comes from
  * formatJstTimestamp (pdf.ts), same as the full-page colophon.
+ *
+ * `fontCss` is the inlined @font-face CSS from buildInlineFontCss
+ * (src/fonts.ts); it is embedded as a <style> so the render needs no font
+ * network access. When null (font fetch fail-soft), the document falls back
+ * to the previous <link> reference — probabilistic, worst case Noto.
  *
  * The <title> is always present: the Container reads the PDF title metadata
  * into X-Xtc-Title, which becomes the download filename (pipeline.ts).
@@ -164,6 +195,7 @@ export function buildPrintHtml(
   article: ExtractedArticle,
   sourceUrl: string,
   convertedAt: string,
+  fontCss: string | null = null,
 ): string {
   const { document } = parseHTML(
     "<!doctype html><html><head></head><body></body></html>",
@@ -183,15 +215,24 @@ export function buildPrintHtml(
   base.setAttribute("href", sourceUrl);
   document.head.appendChild(base);
 
-  // Body font (BIZ UDPGothic) as a real <link> in the head — unlike the
-  // full-page path, where the font only starts loading when the print CSS is
-  // injected after page load, here the stylesheet takes part in the initial
-  // load, so the renderer's networkidle2 wait covers the font files too.
-  // (The @import in X3_PRINT_CSS also fires, but hits the browser cache.)
-  const fontLink = document.createElement("link");
-  fontLink.setAttribute("rel", "stylesheet");
-  fontLink.setAttribute("href", PRINT_FONT_CSS_URL);
-  document.head.appendChild(fontLink);
+  if (fontCss !== null) {
+    // Body font (BIZ UDPGothic) inlined as base64 @font-face rules: the
+    // render needs no font network access, so the capture can never race a
+    // font download. linkedom serializes <style> children verbatim (exactly
+    // what CSS needs — no entity escaping), and the content is our own
+    // generated CSS with base64/URL-safe payloads only.
+    const fontStyle = document.createElement("style");
+    fontStyle.textContent = fontCss;
+    document.head.appendChild(fontStyle);
+  } else {
+    // Fail-soft: the previous <link> reference. Known to be probabilistic —
+    // the capture usually wins the race against the font download and falls
+    // back to Noto — but it costs nothing and occasionally succeeds.
+    const fontLink = document.createElement("link");
+    fontLink.setAttribute("rel", "stylesheet");
+    fontLink.setAttribute("href", PRINT_FONT_CSS_URL);
+    document.head.appendChild(fontLink);
+  }
 
   // Same "(無題)" fallback as the full-page colophon script.
   const title = article.title ?? "(無題)";

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildPrintHtml, sanitizeContent } from "../src/printhtml";
+import { buildPrintHtml, printableText, sanitizeContent } from "../src/printhtml";
 import type { ExtractedArticle } from "../src/extract";
 
 const BASE = "https://example.com/dir/page";
@@ -147,5 +147,41 @@ describe("buildPrintHtml", () => {
       CONVERTED_AT,
     );
     expect(html).not.toContain("<img src=x");
+  });
+
+  it("embeds inline font css as a <style> and drops the font <link>", () => {
+    const fontCss =
+      "@font-face{font-family:'BIZ UDPGothic';font-weight:400;" +
+      "src:url(data:font/woff2;base64,AQIDBA==) format('woff2');}";
+    const html = buildPrintHtml(article(), BASE, CONVERTED_AT, fontCss);
+    expect(html).toContain("data:font/woff2;base64,AQIDBA==");
+    expect(html).toContain("<style>");
+    // No render-time font fetch remains when the font is inlined.
+    expect(html).not.toContain("fonts.googleapis.com");
+  });
+});
+
+describe("printableText", () => {
+  it("covers title, metadata, colophon labels and the body text", () => {
+    const text = printableText(article(), BASE, CONVERTED_AT);
+    for (const piece of [
+      "記事タイトル",
+      "サンプルサイト",
+      "山田太郎",
+      "example.com",
+      BASE,
+      CONVERTED_AT,
+      "変換日時",
+      "個人的利用のために作成。再配布禁止。",
+      "Created for personal use. Redistribution prohibited.",
+      "本文です。",
+    ]) {
+      expect(text).toContain(piece);
+    }
+  });
+
+  it("uses the (無題) fallback so its glyphs are always subsetted", () => {
+    const text = printableText(article({ title: undefined }), BASE, CONVERTED_AT);
+    expect(text).toContain("(無題)");
   });
 });

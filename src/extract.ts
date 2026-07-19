@@ -3,9 +3,11 @@
 
 import { Readability } from "@mozilla/readability";
 import { parseHTML } from "linkedom";
+import { buildInlineFontCss } from "./fonts";
+import type { FontFetcher } from "./fonts";
 import { resolveExtractMinChars } from "./jobs";
 import { formatJstTimestamp, RENDER_USER_AGENT } from "./pdf";
-import { buildPrintHtml } from "./printhtml";
+import { buildPrintHtml, printableText } from "./printhtml";
 import type { Env } from "./types";
 import { validatePublicUrl } from "./validate";
 
@@ -338,6 +340,7 @@ export async function prepareRenderInput(
   target: URL,
   jobId: string,
   fetchSource: SourceHtmlFetcher = fetchSourceHtml,
+  fontFetch: FontFetcher = fetch,
 ): Promise<RenderInput> {
   const fetched = await fetchSource(target, jobId);
   if (fetched !== null) {
@@ -346,14 +349,12 @@ export async function prepareRenderInput(
       article === null ? 0 : article.textContent.replace(/\s+/g, "").length;
     if (isExtractSufficient(article, env)) {
       console.log(`[${jobId}] extract path: fetch`);
-      return {
-        kind: "html",
-        html: buildPrintHtml(
-          article,
-          fetched.finalUrl.toString(),
-          formatJstTimestamp(new Date()),
-        ),
-      };
+      return buildPrintInput(
+        article,
+        fetched.finalUrl.toString(),
+        jobId,
+        fontFetch,
+      );
     }
     // Fetch worked but Readability found too little; record why the browser
     // stage is being paid for (threshold tuning relies on these numbers).
@@ -369,17 +370,33 @@ export async function prepareRenderInput(
     const article = extractArticle(rendered, target.toString());
     if (isExtractSufficient(article, env)) {
       console.log(`[${jobId}] extract path: browser`);
-      return {
-        kind: "html",
-        html: buildPrintHtml(
-          article,
-          target.toString(),
-          formatJstTimestamp(new Date()),
-        ),
-      };
+      return buildPrintInput(article, target.toString(), jobId, fontFetch);
     }
   }
 
   console.log(`[${jobId}] extract path: fallback-full`);
   return { kind: "url", url: target.toString() };
+}
+
+/**
+ * Assembles the print document for a successfully extracted article: font
+ * subsetting + inlining first (fail-soft to null = <link> fallback inside
+ * buildPrintHtml), then the HTML itself.
+ */
+async function buildPrintInput(
+  article: ExtractedArticle,
+  sourceUrl: string,
+  jobId: string,
+  fontFetch: FontFetcher,
+): Promise<RenderInput> {
+  const convertedAt = formatJstTimestamp(new Date());
+  const fontCss = await buildInlineFontCss(
+    printableText(article, sourceUrl, convertedAt),
+    jobId,
+    fontFetch,
+  );
+  return {
+    kind: "html",
+    html: buildPrintHtml(article, sourceUrl, convertedAt, fontCss),
+  };
 }

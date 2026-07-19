@@ -145,9 +145,9 @@ describe("buildPrintHtml", () => {
   });
 
   it("carries no font reference at all (fonts travel via addStyleTag)", () => {
-    // Browser Run's html mode ignores document-level data: @font-face, so a
+    // The inlined font CSS is injected at render time via addStyleTag; a
     // font <link>/<style> here would either be dead weight or a duplicate
-    // fetch racing the addStyleTag-injected CSS.
+    // fetch racing the injected faces.
     const html = buildPrintHtml(article(), BASE, CONVERTED_AT);
     expect(html).not.toContain("fonts.googleapis.com");
     expect(html).not.toContain("@font-face");

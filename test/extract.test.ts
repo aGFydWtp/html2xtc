@@ -207,9 +207,8 @@ describe("prepareRenderInput", () => {
     );
     expect(input.kind).toBe("html");
     if (input.kind === "html") {
-      // The inlined font rides NEXT TO the HTML (injected via addStyleTag at
-      // render time), never inside it: Browser Run's html mode ignores
-      // document-level data: @font-face.
+      // The inlined font rides NEXT TO the HTML (injected via addStyleTag —
+      // the docs-supported custom-font path), never inside it.
       expect(input.fontCss).toContain("data:font/woff2;base64,AQIDBA==");
       expect(input.html).not.toContain("data:font/woff2");
       expect(input.html).not.toContain("fonts.googleapis.com");

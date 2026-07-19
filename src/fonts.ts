@@ -10,7 +10,10 @@
  * for 500ms" condition passes while the serial CSS→woff2 fetch is still in
  * flight), and the page UA ("xtc-converter/1.0") makes fonts.googleapis.com
  * serve a single ~4.4MB full TTF instead of subsets. Result: BIZ UDPGothic
- * was never applied; every capture showed the Noto swap fallback.
+ * was never applied; every capture showed the swap fallback — which on
+ * Browser Run is WenQuanYi Zen Hei (Chinese glyphs), as the environment has
+ * no Japanese font. (The other half of the fix is the top-level font-family
+ * rule in pdf.ts: inside @media print the lazy font loader never fires.)
  *
  * Fix: the Worker fetches the font at document-build time and embeds it as
  * base64 data: URLs, removing the render-time network dependency entirely.
@@ -127,10 +130,10 @@ export async function buildInlineFontCss(
     );
     return css;
   } catch (error) {
-    // Fail-soft: a missing web font is an accepted degradation (Noto
-    // fallback), a failed conversion is not — same stance as the colophon
-    // script and the extraction pipeline itself.
-    console.error(`[${jobId}] font: fail-soft to <link>`, error);
+    // Fail-soft: a missing web font is an accepted degradation (fallback
+    // rendering — WenQuanYi Zen Hei on Browser Run), a failed conversion is
+    // not — same stance as the colophon script and the extraction pipeline.
+    console.error(`[${jobId}] font: fail-soft to remote-font fallback`, error);
     return null;
   }
 }

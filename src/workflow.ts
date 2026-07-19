@@ -84,9 +84,9 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
             return { articleKey: null, fontsKey: null };
           }
           // The inlined font CSS rides a second key: it is injected via
-          // addStyleTag at render time, not embedded in the HTML (Browser
-          // Run's html mode ignores document-level data: @font-face).
-          // Losing it costs only the font, not the extraction.
+          // addStyleTag at render time (the docs-supported custom-font path
+          // for quick actions) rather than embedded in the HTML. Losing it
+          // costs only the font, not the extraction.
           let storedFontsKey: string | null = null;
           if (input.fontCss !== null) {
             const fKey = fontsCssKey(jobId);

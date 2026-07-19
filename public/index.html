@@ -112,19 +112,31 @@
   }
   button.preview-btn:hover { opacity: .7; }
   button.preview-btn:disabled { border-color: var(--disabled); color: var(--disabled); cursor: default; opacity: 1; }
-  .preview-panel { margin-top: 16px; }
+  dialog.preview-dialog {
+    padding: 0; border: 1.5px solid var(--ink); border-radius: 4px;
+    background: var(--card); color: var(--text);
+    width: min(560px, calc(100vw - 32px));
+  }
+  dialog.preview-dialog::backdrop { background: rgba(28, 26, 23, .5); }
+  .pd-inner { padding: 14px 16px 16px; }
+  .pd-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .pd-title { font-weight: 700; letter-spacing: .06em; }
+  .pd-x {
+    border: 0; background: none; font: inherit; font-size: 18px; line-height: 1;
+    cursor: pointer; color: var(--muted2); padding: 8px; margin: -8px; border-radius: 4px;
+  }
+  .pd-x:hover { color: var(--text); }
   .preview-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .pd-inner .preview-bar { margin-top: 12px; }
   .preview-bar button {
     padding: 6px 14px; font: inherit; font-size: 14px; cursor: pointer;
     border: 1px solid var(--ink); border-radius: 4px; background: var(--card); color: var(--text);
   }
   .preview-bar button:disabled { border-color: var(--line); color: var(--disabled); cursor: default; }
   .preview-page { font-family: var(--mono); font-size: 14px; color: var(--muted2); }
-  .preview-bar .preview-close { margin-left: auto; }
-  .error-text + .preview-bar { margin-top: 10px; }
   #preview-canvas {
-    display: block; margin-top: 12px; max-width: 100%; height: auto;
-    border: 1px solid var(--line); background: var(--card);
+    display: block; margin: 12px auto 0; max-width: 100%; max-height: calc(100vh - 220px);
+    width: auto; height: auto; border: 1px solid var(--line); background: var(--card);
   }
   .preview-loading { font-family: var(--mono); font-size: 14px; color: var(--muted); margin-top: 10px; }
   section.history { padding-top: 26px; }
@@ -141,12 +153,23 @@
   ul.jobs .job-title { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   ul.jobs .job-title.dim { color: var(--faint); }
   ul.jobs .date { font-family: var(--mono); font-size: 14px; color: var(--faint); }
-  a.dl-small {
-    font-size: 14px; font-weight: 700; color: var(--ink); text-decoration: none;
-    border-bottom: 1px solid var(--ink); white-space: nowrap;
-    padding: 12px 6px; margin: -12px -6px; border-bottom-width: 1px;
+  .more-btn {
+    border: 0; background: none; color: var(--muted2); cursor: pointer;
+    display: flex; align-items: center; padding: 10px; margin: -10px -6px; border-radius: 4px;
   }
-  .none-mark { font-size: 14px; color: var(--disabled); white-space: nowrap; }
+  .more-btn:hover { background: var(--panel); color: var(--text); }
+  .job-menu {
+    position: fixed; margin: 0; padding: 6px; min-width: 180px;
+    border: 1px solid var(--line); border-radius: 4px; background: var(--card);
+    box-shadow: 0 4px 16px rgba(28, 26, 23, .16);
+  }
+  .job-menu button {
+    display: block; width: 100%; text-align: left; padding: 8px 12px;
+    font: inherit; font-size: 14px; border: 0; border-radius: 3px;
+    background: none; color: var(--text); cursor: pointer; white-space: nowrap;
+  }
+  .job-menu button:hover:not(:disabled) { background: var(--panel); }
+  .job-menu button:disabled { color: var(--disabled); cursor: default; }
   .empty { color: var(--muted); font-size: 14px; margin-top: 12px; }
   footer.site {
     margin-top: 26px; padding-top: 16px; border-top: 1.5px solid var(--ink);
@@ -209,6 +232,14 @@
   </section>
 </main>
 
+<dialog id="preview-dialog" class="preview-dialog">
+  <div class="pd-inner" id="preview-dialog-inner"></div>
+</dialog>
+<div id="job-menu" class="job-menu" popover>
+  <button type="button" id="menu-dl" data-i18n="menu_dl">XTC ダウンロード</button>
+  <button type="button" id="menu-preview" data-i18n="menu_preview">XTC プレビュー</button>
+</div>
+
 <script>
 "use strict";
 // --- i18n ------------------------------------------------------------------
@@ -230,7 +261,9 @@ const I18N = {
     about_link: "このサービスについて",
     copyright_line: "© 2026 aGFydWtp",
     dl: "XTC をダウンロード",
-    dl_small: "XTC ↓",
+    menu_label: "操作メニュー",
+    menu_dl: "XTC ダウンロード",
+    menu_preview: "XTC プレビュー",
     preview: "プレビュー",
     preview_prev: "前へ",
     preview_next: "次へ",
@@ -263,7 +296,9 @@ const I18N = {
     about_link: "About this service",
     copyright_line: "© 2026 aGFydWtp",
     dl: "Download XTC",
-    dl_small: "XTC \u2193",
+    menu_label: "Actions",
+    menu_dl: "Download XTC",
+    menu_preview: "Preview XTC",
     preview: "Preview",
     preview_prev: "Prev",
     preview_next: "Next",
@@ -294,6 +329,7 @@ function applyLang() {
   $("lang-en").setAttribute("aria-pressed", String(lang === "en"));
   renderHistory();
   rerenderCurrent();
+  renderPreviewDialog();
 }
 
 // --- localStorage history ----------------------------------------------------
@@ -354,11 +390,8 @@ function noteText(note) {
 function renderCurrent(job, note) {
   const el = $("current");
   activeView = job ? { job, note } : null;
-  if (!job) { el.className = ""; el.innerHTML = ""; previewState = null; return; }
-  if (previewState && previewState.jobId !== job.jobId) previewState = null;
+  if (!job) { el.className = ""; el.innerHTML = ""; return; }
   const busy = !note && IN_FLIGHT.includes(job.status);
-  const previewLocked = previewBroken.has(job.jobId)
-    || (previewState && (previewState.note || previewState.loading));
   el.className = "show";
   el.innerHTML = `
     ${nameLines(job)}
@@ -366,13 +399,11 @@ function renderCurrent(job, note) {
       ${busy ? '<span class="spinner"></span>' : ""}
       ${badge(job.status)}
       ${job.status === "completed" ? `<a class="dl" href="/jobs/${encodeURIComponent(job.jobId)}/download">${t("dl")}</a>
-      <button type="button" class="preview-btn" data-act="preview-open"${previewLocked ? " disabled" : ""}>${t("preview")}</button>` : ""}
+      <button type="button" class="preview-btn" data-act="preview-open"${previewBroken.has(job.jobId) ? " disabled" : ""}>${t("preview")}</button>` : ""}
     </div>
     ${note ? `<div class="error-text">${esc(noteText(note))}</div>` : ""}
     ${job.status === "failed" && job.error ? `<div class="error-text">${esc(job.error)}</div>` : ""}
-    ${previewHtml(job)}
   `;
-  drawPreview();
 }
 function rerenderCurrent() {
   if (activeView) renderCurrent(activeView.job, activeView.note);
@@ -402,9 +433,7 @@ function renderHistory() {
         <div class="job-title${done ? "" : " dim"}">${esc(title)}</div>
         <div class="date">${esc(formatDate(typeof j.createdAt === "string" ? j.createdAt : ""))}${done ? "" : " · " + badgeText(status)}</div>
       </div>
-      ${done
-        ? `<a class="dl-small" data-job-id="${esc(j.jobId)}" href="/jobs/${encodeURIComponent(j.jobId)}/download">${t("dl_small")}</a>`
-        : `<span class="none-mark">—</span>`}
+      <button type="button" class="more-btn" data-menu-job="${esc(j.jobId)}" aria-haspopup="menu" aria-label="${t("menu_label")}">${MORE_ICON}</button>
     </li>`;
   }).join("");
 }
@@ -481,35 +510,38 @@ const previewCache = new Map(); // jobId -> {dv, pages}; only the shown page is 
 const previewBroken = new Set(); // jobIds whose XTC failed to parse (permanent for the session)
 let previewState = null; // {jobId, page} | {jobId, loading} | {jobId, note}
 
-function previewHtml(job) {
-  if (!previewState || previewState.jobId !== job.jobId) return "";
+function renderPreviewDialog() {
+  const dlg = $("preview-dialog");
+  if (!previewState) { if (dlg.open) dlg.close(); return; }
+  let body;
   if (previewState.note) {
     // Parse failures and expiry are not retryable; transient fetch errors are.
     const key = typeof previewState.note === "string" ? previewState.note : previewState.note.key;
     const retryable = key !== "preview_parse_fail" && key !== "preview_expired";
-    return `
-    <div class="preview-panel">
+    body = `
       <div class="error-text">${esc(noteText(previewState.note))}</div>
-      <div class="preview-bar">
-        ${retryable ? `<button type="button" data-act="preview-retry">${t("preview_retry")}</button>` : ""}
-        <button type="button" data-act="preview-close">${t("preview_close")}</button>
-      </div>
-    </div>`;
-  }
-  if (previewState.loading) return `<div class="preview-loading">${t("preview_loading")}</div>`;
-  const cached = previewCache.get(job.jobId);
-  if (!cached) return "";
-  const page = previewState.page;
-  return `
-    <div class="preview-panel">
+      ${retryable ? `<div class="preview-bar"><button type="button" data-act="preview-retry">${t("preview_retry")}</button></div>` : ""}`;
+  } else if (previewState.loading) {
+    body = `<div class="preview-loading">${t("preview_loading")}</div>`;
+  } else {
+    const cached = previewCache.get(previewState.jobId);
+    if (!cached) return;
+    const page = previewState.page;
+    body = `
       <div class="preview-bar">
         <button type="button" data-act="preview-prev"${page === 0 ? " disabled" : ""}>${t("preview_prev")}</button>
         <span class="preview-page">${t("preview_page")(page + 1, cached.pages.length)}</span>
         <button type="button" data-act="preview-next"${page === cached.pages.length - 1 ? " disabled" : ""}>${t("preview_next")}</button>
-        <button type="button" class="preview-close" data-act="preview-close">${t("preview_close")}</button>
       </div>
-      <canvas id="preview-canvas"></canvas>
-    </div>`;
+      <canvas id="preview-canvas"></canvas>`;
+  }
+  $("preview-dialog-inner").innerHTML = `
+    <div class="pd-head">
+      <span class="pd-title">${t("preview")}</span>
+      <button type="button" class="pd-x" data-act="preview-close" aria-label="${t("preview_close")}">✕</button>
+    </div>
+    ${body}`;
+  drawPreview();
 }
 function drawPreview() {
   const canvas = $("preview-canvas");
@@ -527,28 +559,32 @@ function drawPreview() {
 }
 function previewFail(jobId, note) {
   if (!previewState || previewState.jobId !== jobId) return;
-  if (note === "preview_parse_fail") previewBroken.add(jobId);
+  if (note === "preview_parse_fail") { previewBroken.add(jobId); rerenderCurrent(); }
   previewState = { jobId, note };
-  rerenderCurrent();
+  renderPreviewDialog();
 }
-async function openPreview(job) {
-  const jobId = job.jobId;
+// Flip a job to expired everywhere it is shown (stored history + #current).
+function markJobExpired(jobId) {
+  const jobs = loadJobs();
+  const j = jobs.find((x) => x.jobId === jobId);
+  if (j) { j.status = "expired"; saveJobs(jobs); renderHistory(); }
+  if (activeView && activeView.job.jobId === jobId) { activeView.job.status = "expired"; rerenderCurrent(); }
+}
+async function openPreview(jobId) {
   if (previewBroken.has(jobId)) return;
   if (previewState && previewState.jobId === jobId && previewState.loading) return; // fetch in flight
+  const dlg = $("preview-dialog");
+  if (!dlg.open) dlg.showModal();
   if (!previewCache.has(jobId)) {
     previewState = { jobId, loading: true };
-    rerenderCurrent();
+    renderPreviewDialog();
     let res;
     try {
       res = await fetch(`/jobs/${encodeURIComponent(jobId)}/download`);
     } catch { return previewFail(jobId, "no_server"); }
-    if (!previewState || previewState.jobId !== jobId) return;
+    if (!previewState || previewState.jobId !== jobId) return; // dialog closed meanwhile
     if (res.status === 404) {
-      // Mirror the history download handler: flip the stored entry to expired.
-      const jobs = loadJobs();
-      const j = jobs.find((x) => x.jobId === jobId);
-      if (j) { j.status = "expired"; saveJobs(jobs); renderHistory(); }
-      job.status = "expired";
+      markJobExpired(jobId);
       return previewFail(jobId, "preview_expired");
     }
     if (!res.ok) {
@@ -563,26 +599,82 @@ async function openPreview(job) {
     } catch { return previewFail(jobId, "preview_parse_fail"); }
   }
   previewState = { jobId, page: 0 };
-  rerenderCurrent();
+  renderPreviewDialog();
 }
 function movePreview(delta) {
   if (!previewState || !previewCache.has(previewState.jobId)) return;
   const next = previewState.page + delta;
   if (next < 0 || next >= previewCache.get(previewState.jobId).pages.length) return;
   previewState.page = next;
-  rerenderCurrent();
+  renderPreviewDialog();
 }
 
 $("current").addEventListener("click", (event) => {
+  if (!activeView || !event.target.closest('[data-act="preview-open"]')) return;
+  openPreview(activeView.job.jobId).catch(() => {});
+});
+$("preview-dialog").addEventListener("click", (event) => {
+  const dlg = $("preview-dialog");
+  if (event.target === dlg) { dlg.close(); return; } // click on the ::backdrop area
   const btn = event.target.closest("[data-act]");
-  if (!btn || !activeView) return;
+  if (!btn) return;
   switch (btn.dataset.act) {
-    case "preview-open":
-    case "preview-retry": openPreview(activeView.job).catch(() => {}); break;
-    case "preview-close": previewState = null; rerenderCurrent(); break;
+    case "preview-retry": if (previewState) openPreview(previewState.jobId).catch(() => {}); break;
+    case "preview-close": dlg.close(); break;
     case "preview-prev": movePreview(-1); break;
     case "preview-next": movePreview(1); break;
   }
+});
+$("preview-dialog").addEventListener("close", () => { previewState = null; });
+// Rebuilding the dialog's innerHTML drops focus to <body>, so the dialog's own
+// Escape-to-close no longer fires; close it explicitly instead.
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && $("preview-dialog").open) $("preview-dialog").close();
+});
+
+// --- history action menu (one popover shared by all rows) --------------------
+const MORE_ICON = '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5.5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="18.5" r="1.7"/></svg>';
+let menuJobId = null;    // job the open menu refers to
+let menuClosedAt = 0;    // light dismiss fires before the ⋮ click, so remember
+let menuClosedJob = null; // the last close to make a second ⋮ click a toggle
+
+function openJobMenu(btn, jobId) {
+  if (menuClosedJob === jobId && Date.now() - menuClosedAt < 300) { menuClosedJob = null; return; }
+  const menu = $("job-menu");
+  const j = loadJobs().find((x) => x.jobId === jobId);
+  const done = !!j && effectiveStatus(j) === "completed";
+  menuJobId = jobId;
+  $("menu-dl").disabled = !done;
+  $("menu-preview").disabled = !done || previewBroken.has(jobId);
+  menu.showPopover();
+  const r = btn.getBoundingClientRect();
+  menu.style.left = `${Math.max(8, Math.min(r.right - menu.offsetWidth, window.innerWidth - menu.offsetWidth - 8))}px`;
+  menu.style.top = `${Math.min(r.bottom + 4, window.innerHeight - menu.offsetHeight - 8)}px`;
+}
+
+$("jobs").addEventListener("click", (event) => {
+  const btn = event.target.closest(".more-btn");
+  if (btn) openJobMenu(btn, btn.dataset.menuJob);
+});
+$("job-menu").addEventListener("toggle", (event) => {
+  if (event.newState === "closed") { menuClosedAt = Date.now(); menuClosedJob = menuJobId; menuJobId = null; }
+});
+// Confirm the job still exists before navigating, so an expired artifact flips
+// the entry to "expired" instead of showing raw 404 JSON.
+$("menu-dl").addEventListener("click", async () => {
+  const jobId = menuJobId;
+  $("job-menu").hidePopover();
+  if (!jobId) return;
+  try {
+    const res = await fetch(`/jobs/${encodeURIComponent(jobId)}`);
+    if (res.status === 404) { markJobExpired(jobId); return; }
+  } catch { /* fall through and attempt the download anyway */ }
+  window.location.href = `/jobs/${encodeURIComponent(jobId)}/download`;
+});
+$("menu-preview").addEventListener("click", () => {
+  const jobId = menuJobId;
+  $("job-menu").hidePopover();
+  if (jobId) openPreview(jobId).catch(() => {});
 });
 
 // --- job submission and polling ------------------------------------------------
@@ -725,25 +817,6 @@ document.addEventListener("visibilitychange", () => {
     poll404s = 0;
     poll(activeJob, pollGen);
   }
-});
-
-// History downloads: confirm the job still exists before navigating, so an
-// expired artifact flips the entry to "expired" instead of showing raw 404 JSON.
-$("jobs").addEventListener("click", async (event) => {
-  const link = event.target.closest("a.dl-small");
-  if (!link) return;
-  event.preventDefault();
-  const jobId = link.dataset.jobId;
-  try {
-    const res = await fetch(`/jobs/${encodeURIComponent(jobId)}`);
-    if (res.status === 404) {
-      const jobs = loadJobs();
-      const j = jobs.find((x) => x.jobId === jobId);
-      if (j) { j.status = "expired"; saveJobs(jobs); renderHistory(); }
-      return;
-    }
-  } catch { /* fall through and attempt the download anyway */ }
-  window.location.href = link.href;
 });
 
 $("form").addEventListener("submit", submit);

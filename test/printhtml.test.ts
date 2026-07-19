@@ -100,6 +100,11 @@ describe("buildPrintHtml", () => {
     expect(html).toContain('lang="ja"');
     expect(html).toContain('<meta charset="utf-8">');
     expect(html).toContain(`<base href="${BASE}">`);
+    // Body font: extract mode carries the BIZ UDPGothic stylesheet in its
+    // own head so the render's networkidle2 wait covers the font files.
+    expect(html).toContain(
+      '<link href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&display=swap" rel="stylesheet">',
+    );
     expect(html).toContain("<title>記事タイトル</title>");
     expect(html).toContain("<h1>記事タイトル</h1>");
     expect(html).toContain("本文です。");

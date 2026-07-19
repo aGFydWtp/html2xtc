@@ -440,6 +440,83 @@ export function buildColophonScript(url: string, convertedAt: string): string {
 })();`;
 }
 
+/**
+ * Injected into the full-page render via addScriptTag (which the quick
+ * action runs after goto and before the waitForTimeout grace, same ordering
+ * the colophon/font handling already relies on): coaxes lazy-loaded images
+ * into fetching NOW so the waitForTimeout below can catch them. networkidle2
+ * alone misses them — a lazy image only starts loading on scroll, and the
+ * quick action never scrolls. Three triggers, all fail-soft:
+ *  1. promote data-src/data-srcset style deferred URLs onto img/source
+ *     (covers JS lazy-load libraries whose IntersectionObserver would need
+ *     scrolling);
+ *  2. flip loading="lazy" to eager (native lazy-loading skips
+ *     below-viewport images in an unscrolled page);
+ *  3. stepwise-scroll to the bottom and back to top, for loaders that only
+ *     react to viewport intersection (and rootMargin'd observers).
+ * quickAction has no waitForFunction, so the script cannot signal
+ * completion; the scroll phase bounds itself (<= 40 steps x 150 ms + a hard
+ * 6 s deadline) and PDF_FULL_WAIT_MS is the overall budget — on expiry the
+ * page is captured as-is (degraded images beat a failed render).
+ */
+export const LAZY_IMAGE_SCRIPT = `(() => {
+  try {
+    for (const el of Array.from(document.querySelectorAll("img, source"))) {
+      try {
+        const src = el.getAttribute("src") || "";
+        if (
+          el.tagName === "IMG" &&
+          (src.trim() === "" || /^(?:data|about|blob):/i.test(src.trim()))
+        ) {
+          const deferred =
+            el.getAttribute("data-src") ||
+            el.getAttribute("data-lazy-src") ||
+            el.getAttribute("data-original");
+          if (deferred) el.setAttribute("src", deferred);
+        }
+        if (!el.getAttribute("srcset")) {
+          const deferredSet =
+            el.getAttribute("data-srcset") || el.getAttribute("data-lazy-srcset");
+          if (deferredSet) el.setAttribute("srcset", deferredSet);
+        }
+        if (el.getAttribute("loading") === "lazy") {
+          el.setAttribute("loading", "eager");
+        }
+      } catch (e) {}
+    }
+    const scroller = document.scrollingElement || document.documentElement;
+    const deadline = Date.now() + 6000;
+    // Step size adapts to the page so even a very long article finishes in
+    // <= ~40 steps; scrollHeight is re-read each tick because loading images
+    // can grow the page under us.
+    const step = Math.max(window.innerHeight || 600, Math.ceil(scroller.scrollHeight / 40));
+    let y = 0;
+    const timer = setInterval(() => {
+      try {
+        y += step;
+        window.scrollTo(0, y);
+        if (y >= scroller.scrollHeight || Date.now() > deadline) {
+          clearInterval(timer);
+          window.scrollTo(0, 0);
+        }
+      } catch (e) {
+        clearInterval(timer);
+      }
+    }, 150);
+  } catch (e) {
+    // Fail-soft: never let image coaxing break the PDF render.
+  }
+})();`;
+
+// Fixed post-goto grace for the full-page path: the lazy-image scroll phase
+// (<= 6 s, see LAZY_IMAGE_SCRIPT) plus a fetch tail for the images it
+// triggered, and it subsumes the previous 3 s font grace (the BIZ UDPGothic
+// @import in X3_PRINT_CSS only starts loading at injection time — after
+// goto — so networkidle2 never waits for it). Capped well under the
+// quick-action limit (60 s) and budgeted in the render-pdf Workflow step
+// timeout (workflow.ts).
+const PDF_FULL_WAIT_MS = 10_000;
+
 // Options shared by both render paths (full URL and extract-mode HTML).
 const PDF_GOTO_OPTIONS = {
   // networkidle2 also applies to html-sourced renders: it waits for the
@@ -464,18 +541,20 @@ export function renderPdf(env: Env, url: string): Promise<Response> {
     url,
     userAgent: RENDER_USER_AGENT,
     addStyleTag: [{ content: X3_PRINT_CSS }],
-    // Appends the colophon page to the DOM after load, before PDF capture.
-    addScriptTag: [{ content: buildColophonScript(url, convertedAt) }],
+    // First coax lazy images into loading, then append the colophon page to
+    // the DOM — both run after load, before the waitForTimeout grace and the
+    // PDF capture. A page CSP can block either script (fail-soft by design).
+    addScriptTag: [
+      { content: LAZY_IMAGE_SCRIPT },
+      { content: buildColophonScript(url, convertedAt) },
+    ],
     gotoOptions: PDF_GOTO_OPTIONS,
-    // The BIZ UDPGothic @import in X3_PRINT_CSS only starts loading when the
-    // style is injected — after goto, so networkidle2 never waits for it.
-    // Because the font-family rule sits outside @media print, the screen
-    // layout uses the family right away and the lazy loader fires at
-    // injection time; this fixed grace period gives the CSS + woff2 subsets
-    // a chance to finish before capture (probabilistic, not guaranteed).
-    // display=swap bounds the worst case at the fallback font — on Browser
-    // Run that is WenQuanYi Zen Hei, since no Japanese font is installed.
-    waitForTimeout: 3_000,
+    // Grace for the lazy-image scroll/fetch AND the injected web font (see
+    // PDF_FULL_WAIT_MS). Probabilistic, not guaranteed: on expiry the page
+    // is captured as-is. display=swap bounds the font worst case at the
+    // fallback face — on Browser Run that is WenQuanYi Zen Hei, since no
+    // Japanese font is installed.
+    waitForTimeout: PDF_FULL_WAIT_MS,
     pdfOptions: PDF_OPTIONS,
   });
 }
@@ -514,9 +593,12 @@ export function renderPdfFromHtml(
         : [{ content: X3_PRINT_CSS }],
     gotoOptions: PDF_GOTO_OPTIONS,
     // Probes show data: faces apply even without a wait once the family is
-    // used at screen time; keep a short safety margin for cold-instance
-    // decode of multi-hundred-KB subsets (cheap, and harmless per probes).
-    waitForTimeout: 1_500,
+    // used at screen time; keep a safety margin for cold-instance decode of
+    // multi-hundred-KB subsets. Also covers the image tail: sanitizeContent
+    // normalized every img to a plain absolute src, so networkidle2 waits
+    // for them — but it fires with up to 2 connections still in flight, and
+    // this grace lets those stragglers land before capture.
+    waitForTimeout: 3_000,
     pdfOptions: PDF_OPTIONS,
   });
 }

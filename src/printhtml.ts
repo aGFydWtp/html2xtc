@@ -59,6 +59,34 @@ interface AttrElement {
 }
 
 /**
+ * Deferred-URL attributes used by the common lazy-load libraries (lazysizes,
+ * WP Rocket, jQuery.lazyload, ...), checked in order when an img has no
+ * usable src. Script/noscript are stripped before this runs, so nothing on
+ * the page can do this promotion itself — the sanitizer must.
+ */
+const LAZY_SRC_ATTRIBUTES = ["data-src", "data-lazy-src", "data-original"] as const;
+
+/** srcset-shaped fallbacks, tried after LAZY_SRC_ATTRIBUTES. */
+const LAZY_SRCSET_ATTRIBUTES = ["srcset", "data-srcset", "data-lazy-srcset"] as const;
+
+/**
+ * Lazy-load leftovers removed from every img once normalization ran: the
+ * attribute loop in sanitizeContent only strips srcset/sizes, so data-*
+ * variants would otherwise survive with unresolved (relative) URLs.
+ */
+const LAZY_CLEANUP_ATTRIBUTES = [
+  "data-src",
+  "data-lazy-src",
+  "data-original",
+  "data-srcset",
+  "data-lazy-srcset",
+  "data-sizes",
+] as const;
+
+/** X3 output width in px — the srcset candidate target. */
+const TARGET_IMAGE_WIDTH = 528;
+
+/**
  * Sanitizes a Readability content fragment for printing:
  * - removes STRIP_SELECTOR elements;
  * - strips on* handlers, inline styles (a known layout hazard on the 58mm
@@ -66,6 +94,10 @@ interface AttrElement {
  *   (pointless at the X3's 528px output width — src alone is enough);
  * - resolves relative src/href against the page URL and drops non-http(s)
  *   schemes (javascript:, data:, ...);
+ * - normalizes lazy-loaded images: promotes data-src/data-srcset style
+ *   deferred URLs onto src and drops loading="lazy", because the sanitized
+ *   document is rendered statically (scripts stripped, page never scrolled)
+ *   and would otherwise capture placeholder or missing images;
  * - drops the content's leading h1/h2 when it duplicates `title`, which
  *   buildPrintHtml renders as its own <h1>.
  */
@@ -81,6 +113,13 @@ export function sanitizeContent(
 
   for (const el of [...body.querySelectorAll(STRIP_SELECTOR)]) {
     el.remove();
+  }
+
+  // Before the attribute loop, so a promoted src goes through the same URL
+  // resolution / scheme check as an authored one. <source> needs no handling:
+  // it is in STRIP_SELECTOR, so a <picture> is reduced to its <img> here.
+  for (const img of [...body.querySelectorAll("img")]) {
+    normalizeLazyImage(img);
   }
 
   for (const el of [...body.querySelectorAll("*")]) {
@@ -148,6 +187,131 @@ function resolveUrlAttribute(
   } catch {
     el.removeAttribute(name);
   }
+}
+
+/**
+ * Normalizes one img for static rendering:
+ * - when src is missing or a placeholder (empty, data:/about:/blob:, or a
+ *   spacer-file name), promotes the first deferred URL from
+ *   LAZY_SRC_ATTRIBUTES, falling back to a srcset-shaped attribute via
+ *   pickFromSrcset;
+ * - drops loading="lazy" — Chromium's native lazy-loading skips
+ *   below-viewport images and the print path never scrolls, so a surviving
+ *   lazy hint means a blank image in the PDF;
+ * - removes the consumed lazy-load attributes (LAZY_CLEANUP_ATTRIBUTES).
+ * The promoted value is deliberately NOT resolved here: the caller's
+ * attribute loop applies resolveUrlAttribute to src afterwards, which also
+ * discards a promoted javascript:/data: value.
+ */
+function normalizeLazyImage(el: AttrElement): void {
+  if (isPlaceholderSrc(el.getAttribute("src"))) {
+    let candidate: string | null = null;
+    for (const name of LAZY_SRC_ATTRIBUTES) {
+      const value = el.getAttribute(name);
+      if (value !== null && value.trim().length > 0) {
+        candidate = value.trim();
+        break;
+      }
+    }
+    if (candidate === null) {
+      for (const name of LAZY_SRCSET_ATTRIBUTES) {
+        candidate = pickFromSrcset(el.getAttribute(name));
+        if (candidate !== null) {
+          break;
+        }
+      }
+    }
+    if (candidate !== null) {
+      el.setAttribute("src", candidate);
+    }
+  }
+  if ((el.getAttribute("loading") ?? "").trim().toLowerCase() === "lazy") {
+    el.removeAttribute("loading");
+  }
+  for (const name of LAZY_CLEANUP_ATTRIBUTES) {
+    el.removeAttribute(name);
+  }
+}
+
+/**
+ * True when src cannot be a real image: absent/blank, an inline scheme
+ * (data:/about:/blob: — the classic 1px shim carriers), or a spacer-ish
+ * file name (1x1.gif, blank.png, ...) that lazy-load libraries use as the
+ * pre-load placeholder. Deliberately conservative: an unrecognized real URL
+ * must never be overwritten by a data-* guess.
+ */
+function isPlaceholderSrc(src: string | null): boolean {
+  if (src === null) {
+    return true;
+  }
+  const value = src.trim();
+  if (value.length === 0) {
+    return true;
+  }
+  if (/^(?:data|about|blob):/i.test(value)) {
+    return true;
+  }
+  return /(?:^|\/)[^/?#]*(?:1x1|blank|spacer|placeholder|transparent|pixel|dummy)[^/?#]*\.(?:gif|png|svg)(?:[?#]|$)/i.test(
+    value,
+  );
+}
+
+/**
+ * Picks one URL out of a srcset-shaped value, aimed at TARGET_IMAGE_WIDTH:
+ * the smallest width descriptor that still covers it, else the largest
+ * available; for density descriptors the lowest density (1x). Candidates are
+ * split on commas — good enough for real-world srcsets; a data: URL with a
+ * comma inside would be dropped later by the scheme check anyway.
+ */
+function pickFromSrcset(srcset: string | null): string | null {
+  if (srcset === null) {
+    return null;
+  }
+  interface Candidate {
+    url: string;
+    width: number | null;
+    density: number | null;
+  }
+  const candidates: Candidate[] = [];
+  for (const part of srcset.split(",")) {
+    const tokens = part.trim().split(/\s+/);
+    const url = tokens[0];
+    if (url === undefined || url.length === 0) {
+      continue;
+    }
+    let width: number | null = null;
+    let density: number | null = null;
+    const descriptor = tokens[1];
+    if (descriptor !== undefined) {
+      const match = /^(\d+(?:\.\d+)?)([wx])$/i.exec(descriptor);
+      if (match === null) {
+        continue; // unparseable descriptor — skip rather than misrank
+      }
+      if (match[2].toLowerCase() === "w") {
+        width = Number(match[1]);
+      } else {
+        density = Number(match[1]);
+      }
+    }
+    candidates.push({ url, width, density });
+  }
+  if (candidates.length === 0) {
+    return null;
+  }
+  const withWidth = candidates.filter((c): c is Candidate & { width: number } => c.width !== null);
+  if (withWidth.length > 0) {
+    const covering = withWidth.filter((c) => c.width >= TARGET_IMAGE_WIDTH);
+    const pool = covering.length > 0 ? covering : withWidth;
+    const best =
+      covering.length > 0
+        ? pool.reduce((a, b) => (b.width < a.width ? b : a))
+        : pool.reduce((a, b) => (b.width > a.width ? b : a));
+    return best.url;
+  }
+  const best = candidates.reduce((a, b) =>
+    (b.density ?? 1) < (a.density ?? 1) ? b : a,
+  );
+  return best.url;
 }
 
 /**

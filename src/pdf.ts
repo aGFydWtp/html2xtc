@@ -30,6 +30,52 @@ export const X3_PRINT_CSS = `
       line-height: 1.55 !important;
     }
 
+    /* Normalize body-text size with direct element selectors: the body rule
+       above only works through inheritance, so a site rule that targets a
+       container (e.g. synodos.jp's .content { font-size: 1.13rem } = ~18px)
+       or an inline style bypasses it and the whole article prints oversized.
+       Absolute 10pt on each element, NOT html { font-size: 10pt } + 1rem:
+       rem is a shared layout unit (padding/width/gap), so resizing the root
+       would rescale every rem dimension — sites on the
+       html { font-size: 62.5% } convention would inflate ~1.33x and re-cause
+       the overflow clipping handled below. h1-h6 are deliberately NOT listed
+       so headings/titles keep the site's sizing. Trade-off: intentional
+       non-heading size differences (lead paragraphs, notes) flatten to 10pt;
+       a stable body size wins on a 58mm page. header/footer/nav/aside are
+       omitted because the hide rules below display:none them anyway. */
+    div,
+    section,
+    article,
+    main,
+    p,
+    li,
+    dd,
+    dt,
+    blockquote,
+    figcaption,
+    caption,
+    th,
+    td,
+    address,
+    summary,
+    pre {
+      font-size: 10pt !important;
+    }
+
+    /* Restore the semantically-smaller elements the normalization above
+       would otherwise inflate to full body size. */
+    sub,
+    sup,
+    small {
+      font-size: 0.75em !important;
+    }
+
+    code,
+    kbd,
+    samp {
+      font-size: 0.9em !important;
+    }
+
     /* Force full-contrast text everywhere: sites commonly use gray body text
        (e.g. #6b7280) or light text on dark blocks; with printBackground off
        and 1-bit XTG dithering both come out as faint dot patterns on the X3.
@@ -312,7 +358,10 @@ export function buildColophonScript(url: string, convertedAt: string): string {
     var addLine = function (text, styles) {
       var line = doc.createElement("div");
       line.textContent = text;
-      setStyles(line, { "margin": "0", "padding": "0" });
+      // font-size on each line, not just the box: X3_PRINT_CSS normalizes
+      // div font-size to 10pt !important, which would beat the box's
+      // inherited 8pt; the inline !important here wins the cascade.
+      setStyles(line, { "margin": "0", "padding": "0", "font-size": "8pt" });
       if (styles) setStyles(line, styles);
       box.appendChild(line);
     };

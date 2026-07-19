@@ -77,6 +77,96 @@ describe("sanitizeContent", () => {
     expect(out).not.toContain("data:");
   });
 
+  it("promotes data-src onto a src-less lazy image and resolves it", () => {
+    const out = sanitizeContent(
+      '<img data-src="/lazy/a.jpg" alt="a">',
+      BASE,
+    );
+    expect(out).toContain('src="https://example.com/lazy/a.jpg"');
+    expect(out).not.toContain("data-src");
+  });
+
+  it("replaces a data: URI placeholder src with the deferred URL", () => {
+    const out = sanitizeContent(
+      '<img src="data:image/gif;base64,R0lGOD" data-lazy-src="/lazy/b.png">',
+      BASE,
+    );
+    expect(out).toContain('src="https://example.com/lazy/b.png"');
+    expect(out).not.toContain("data:image/gif");
+  });
+
+  it("replaces a spacer-file placeholder src via data-original", () => {
+    const out = sanitizeContent(
+      '<img src="/img/1x1.gif" data-original="/lazy/c.jpg">',
+      BASE,
+    );
+    expect(out).toContain('src="https://example.com/lazy/c.jpg"');
+    expect(out).not.toContain("1x1.gif");
+  });
+
+  it("does not mistake a real file name containing a placeholder word", () => {
+    // "pixel" appears only as part of a larger name — a substring heuristic
+    // would wrongly swap this real image for the data-src value.
+    const out = sanitizeContent(
+      '<img src="/img/pixel-art-collection.png" data-src="/lazy/other.jpg">',
+      BASE,
+    );
+    expect(out).toContain('src="https://example.com/img/pixel-art-collection.png"');
+    expect(out).not.toContain("other.jpg");
+  });
+
+  it("picks a candidate covering 528px when only a srcset exists", () => {
+    const out = sanitizeContent(
+      '<img data-srcset="/a-300.jpg 300w, /a-600.jpg 600w, /a-1200.jpg 1200w">',
+      BASE,
+    );
+    // Smallest width that still covers the X3's 528px output.
+    expect(out).toContain('src="https://example.com/a-600.jpg"');
+    expect(out).not.toContain("srcset");
+  });
+
+  it("falls back to the largest srcset candidate below the target", () => {
+    const out = sanitizeContent(
+      '<img srcset="/a-200.jpg 200w, /a-400.jpg 400w">',
+      BASE,
+    );
+    expect(out).toContain('src="https://example.com/a-400.jpg"');
+  });
+
+  it("prefers the lowest density for density-descriptor srcsets", () => {
+    const out = sanitizeContent(
+      '<img data-srcset="/a-2x.jpg 2x, /a-1x.jpg 1x">',
+      BASE,
+    );
+    expect(out).toContain('src="https://example.com/a-1x.jpg"');
+  });
+
+  it('removes loading="lazy" so the static render fetches every image', () => {
+    const out = sanitizeContent(
+      '<img src="/a.png" loading="lazy"><img src="/b.png" loading="eager">',
+      BASE,
+    );
+    expect(out).not.toContain('loading="lazy"');
+    expect(out).toContain('loading="eager"'); // only the lazy hint is dropped
+  });
+
+  it("leaves a normal image's real src alone despite lazy attributes", () => {
+    const out = sanitizeContent(
+      '<img src="/real.jpg" data-src="/other.jpg">',
+      BASE,
+    );
+    expect(out).toContain('src="https://example.com/real.jpg"');
+    expect(out).not.toContain("other.jpg");
+  });
+
+  it("drops a promoted deferred URL with a dangerous scheme", () => {
+    const out = sanitizeContent(
+      '<img data-src="javascript:alert(1)">',
+      BASE,
+    );
+    expect(out).not.toContain("javascript:");
+  });
+
   it("drops a leading heading that duplicates the title", () => {
     const out = sanitizeContent(
       "<h1>記事 タイトル</h1><p>本文</p>",

@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildColophonScript,
   formatJstTimestamp,
+  renderPdf,
   renderPdfFromHtml,
+  LAZY_IMAGE_SCRIPT,
   PRINT_FONT_CSS_URL,
   X3_PRINT_CSS,
   X3_PRINT_CSS_NO_FONT_IMPORT,
@@ -50,10 +52,62 @@ describe("renderPdfFromHtml", () => {
     expect(styleContents(quickAction)).toEqual([X3_PRINT_CSS]);
   });
 
-  it("waits a fixed grace period for the font decode/swap", async () => {
+  it("waits a fixed grace period for the font decode and image tail", async () => {
     const { env, quickAction } = captureEnv();
     await renderPdfFromHtml(env, "<html></html>", "@font-face{}");
-    expect(capturedOptions(quickAction).waitForTimeout).toBe(1_500);
+    // networkidle2 fires with up to 2 image fetches still in flight; this
+    // grace lets those stragglers land before capture.
+    expect(capturedOptions(quickAction).waitForTimeout).toBe(3_000);
+  });
+});
+
+describe("renderPdf (full-page path)", () => {
+  const captureEnv = () => {
+    const quickAction = vi.fn(
+      async (_action: string, _options: unknown) =>
+        new Response("%PDF", { status: 200 }),
+    );
+    return {
+      env: { BROWSER: { quickAction } as unknown as BrowserRun } as Env,
+      quickAction,
+    };
+  };
+
+  it("injects the lazy-image script before the colophon script", async () => {
+    const { env, quickAction } = captureEnv();
+    await renderPdf(env, "https://example.com/article");
+    const options = quickAction.mock.calls[0]?.[1] as {
+      addScriptTag: Array<{ content: string }>;
+      waitForTimeout?: number;
+    };
+    expect(options.addScriptTag[0]?.content).toBe(LAZY_IMAGE_SCRIPT);
+    expect(options.addScriptTag).toHaveLength(2);
+    // Budget for the script's scroll phase (<= 6 s) + image fetch tail;
+    // also subsumes the previous 3 s font grace. Must stay under the
+    // quick-action cap (60 s) and inside the workflow step budget.
+    expect(options.waitForTimeout).toBe(10_000);
+  });
+});
+
+describe("LAZY_IMAGE_SCRIPT", () => {
+  // The script's runtime (Browser Rendering's Chromium) cannot be reproduced
+  // locally, so these tests deliberately stop at syntax parsing and content
+  // pins; the actual lazy-load behavior is verified on a deployed Worker.
+  it("is syntactically valid standalone JavaScript", () => {
+    expect(() => new Function(LAZY_IMAGE_SCRIPT)).not.toThrow();
+  });
+
+  it("covers deferred-src promotion, eager-izing and scrolling", () => {
+    for (const marker of [
+      "data-src",
+      "data-lazy-src",
+      "data-original",
+      "data-srcset",
+      '"eager"',
+      "scrollTo",
+    ]) {
+      expect(LAZY_IMAGE_SCRIPT).toContain(marker);
+    }
   });
 });
 

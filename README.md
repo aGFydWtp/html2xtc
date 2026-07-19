@@ -47,8 +47,10 @@ Worker
 非同期変換ジョブを作成する。長いドキュメントはこちらを使う（xtctool 最大 600 秒）。
 
 ```json
-{ "url": "https://example.com/article" }
+{ "url": "https://example.com/article", "mode": "extract" }
 ```
+
+- `mode`（任意）: `"full"`（既定。ページを丸ごとレンダリング）または `"extract"`（本文抽出モード。`src/extract.ts` が通常 fetch + Readability で本文だけのクリーン HTML を作って変換する。抽出できないページは Browser Rendering の `content` アクションで再試行し、それでも駄目なら full と同じ丸ごとレンダリングに自動劣化する — 必ず何かしらの出力は得られる）。`"full"`/`"extract"` 以外は 400。
 
 成功時 202:
 
@@ -58,11 +60,11 @@ Worker
 
 | ステータス | 意味 |
 |---|---|
-| 400 | body が JSON でない / `url` 欠落 / URL 検証エラー（/convert と同じ） |
+| 400 | body が JSON でない / `url` 欠落 / `mode` 不正 / URL 検証エラー（/convert と同じ） |
 | 429 | IP ごとのレート制限超過（`Retry-After` ヘッダ付き） |
 | 500 | Workflow インスタンス作成失敗 |
 
-裏側は Cloudflare Workflows（render-pdf → convert-xtc → delete-intermediate-pdf）。render / convert は失敗時にそのステップだけ再試行される（render: 2 回 / convert: 2 回。PDF サイズ超過などの恒久エラーは再試行なしで failed）。最後のステップは変換の成否にかかわらず中間 PDF を即削除する（best-effort）。
+裏側は Cloudflare Workflows（extract モード時のみ extract-content → 以降は常に render-pdf → convert-xtc → delete-intermediate-pdf）。render / convert は失敗時にそのステップだけ再試行される（render: 2 回 / convert: 2 回。PDF サイズ超過などの恒久エラーは再試行なしで failed）。extract-content は抽出失敗を throw せず full 劣化で吸収する（抽出 HTML は R2 の `intermediate/{jobId}/article.html` 経由で受け渡し。ステップ出力 1 MiB 制限のため）。最後のステップは変換の成否にかかわらず中間 PDF（と抽出 HTML）を即削除する（best-effort）。
 
 ### GET /jobs/{jobId}
 
@@ -84,8 +86,10 @@ R2 上の XTC（`jobs/{jobId}/output.xtc`）を attachment で返す。未完了
 ### POST /convert（短ページ用・非推奨。/jobs 推奨）
 
 ```json
-{ "url": "https://example.com/article" }
+{ "url": "https://example.com/article", "mode": "extract" }
 ```
+
+`mode` は POST /jobs と同じ（任意、既定 `"full"`）。
 
 成功時 200:
 

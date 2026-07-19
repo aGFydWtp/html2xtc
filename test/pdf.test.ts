@@ -1,12 +1,61 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildColophonScript,
   formatJstTimestamp,
+  renderPdfFromHtml,
   PRINT_FONT_CSS_URL,
   X3_PRINT_CSS,
+  X3_PRINT_CSS_NO_FONT_IMPORT,
 } from "../src/pdf";
+import type { Env } from "../src/types";
 
 const CONVERTED_AT = "2026-07-18 21:30 JST";
+
+describe("renderPdfFromHtml", () => {
+  const captureEnv = () => {
+    const quickAction = vi.fn(
+      async (_action: string, _options: unknown) =>
+        new Response("%PDF", { status: 200 }),
+    );
+    return {
+      env: { BROWSER: { quickAction } as unknown as BrowserRun } as Env,
+      quickAction,
+    };
+  };
+  const capturedOptions = (
+    quickAction: ReturnType<typeof captureEnv>["quickAction"],
+  ) =>
+    quickAction.mock.calls[0]?.[1] as {
+      addStyleTag: Array<{ content: string }>;
+      waitForTimeout?: number;
+    };
+  const styleContents = (
+    quickAction: ReturnType<typeof captureEnv>["quickAction"],
+  ) => capturedOptions(quickAction).addStyleTag.map((tag) => tag.content);
+
+  it("injects the inline font css via addStyleTag, faces before rules", async () => {
+    const { env, quickAction } = captureEnv();
+    const fontCss = "@font-face{font-family:'BIZ UDPGothic';src:url(data:font/woff2;base64,AQIDBA==) format('woff2');}";
+    await renderPdfFromHtml(env, "<html></html>", fontCss);
+    const styles = styleContents(quickAction);
+    // Browser Run applies custom fonts only through addStyleTag (docs), so
+    // the font MUST be here, and before the rules that reference it. The
+    // no-@import variant avoids a second network fetch of the same family.
+    expect(styles).toEqual([fontCss, X3_PRINT_CSS_NO_FONT_IMPORT]);
+  });
+
+  it("falls back to the @import print css when no font css is available", async () => {
+    const { env, quickAction } = captureEnv();
+    await renderPdfFromHtml(env, "<html></html>", null);
+    expect(styleContents(quickAction)).toEqual([X3_PRINT_CSS]);
+  });
+
+  it("waits a fixed grace period for the font decode/swap", async () => {
+    const { env, quickAction } = captureEnv();
+    await renderPdfFromHtml(env, "<html></html>", "@font-face{}");
+    expect(capturedOptions(quickAction).waitForTimeout).toBe(1_500);
+  });
+});
 
 describe("X3_PRINT_CSS", () => {
   it("imports the BIZ UDPGothic stylesheet as the first rule", () => {

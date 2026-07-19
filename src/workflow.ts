@@ -8,6 +8,7 @@ import { convertInContainer } from "./container";
 import { prepareRenderInput } from "./extract";
 import {
   articleHtmlKey,
+  fontsCssKey,
   intermediatePdfKey,
   outputXtcKey,
   resolveMaxPdfBytes,
@@ -46,13 +47,16 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
     // would have completed. The extracted HTML travels through R2, not the
     // step return value (step outputs are capped at 1 MiB).
     let articleKey: string | null = null;
+    let fontsKey: string | null = null;
     if (mode === "extract") {
-      ({ articleKey } = await step.do(
+      ({ articleKey, fontsKey } = await step.do(
         "extract-content",
         {
           retries: { limit: 1, delay: "5 seconds", backoff: "constant" },
           // Worst case: source fetch (15s) + DoH re-validation per redirect
-          // hop + content-action goto (60s), plus margin for R2 I/O.
+          // hop + content-action goto (60s) + the font-subsetting phase (up
+          // to 8 css2 + 16 woff2 fetches at 10s each, run in parallel —
+          // src/fonts.ts), plus margin for R2 I/O.
           timeout: "3 minutes",
         },
         async () => {
@@ -62,7 +66,7 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
             jobId,
           );
           if (input.kind === "url") {
-            return { articleKey: null };
+            return { articleKey: null, fontsKey: null };
           }
           const key = articleHtmlKey(jobId);
           try {
@@ -77,9 +81,28 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
               `[${jobId}] R2 put ${key} failed; falling back to full render`,
               error,
             );
-            return { articleKey: null };
+            return { articleKey: null, fontsKey: null };
           }
-          return { articleKey: key };
+          // The inlined font CSS rides a second key: it is injected via
+          // addStyleTag at render time, not embedded in the HTML (Browser
+          // Run's html mode ignores document-level data: @font-face).
+          // Losing it costs only the font, not the extraction.
+          let storedFontsKey: string | null = null;
+          if (input.fontCss !== null) {
+            const fKey = fontsCssKey(jobId);
+            try {
+              await this.env.XTC_BUCKET.put(fKey, input.fontCss, {
+                httpMetadata: { contentType: "text/css; charset=utf-8" },
+              });
+              storedFontsKey = fKey;
+            } catch (error) {
+              console.error(
+                `[${jobId}] R2 put ${fKey} failed; rendering without the inline font`,
+                error,
+              );
+            }
+          }
+          return { articleKey: key, fontsKey: storedFontsKey };
         },
       ));
     }
@@ -106,10 +129,32 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
             `[${jobId}] article HTML missing from R2; falling back to full render`,
           );
         }
-        const response =
-          article !== null
-            ? await renderPdfFromHtml(this.env, await article.text())
-            : await renderPdf(this.env, url);
+        let response: Response;
+        if (article !== null) {
+          // Missing/unreadable fonts.css only degrades the font (the render
+          // falls back to the @import variant inside renderPdfFromHtml).
+          let fontCss: string | null = null;
+          if (fontsKey !== null) {
+            try {
+              const fonts = await this.env.XTC_BUCKET.get(fontsKey);
+              fontCss = fonts !== null ? await fonts.text() : null;
+            } catch (error) {
+              console.error(`[${jobId}] R2 get ${fontsKey} failed`, error);
+            }
+            if (fontCss === null) {
+              console.error(
+                `[${jobId}] fonts.css unavailable; rendering with the remote-font fallback`,
+              );
+            }
+          }
+          response = await renderPdfFromHtml(
+            this.env,
+            await article.text(),
+            fontCss,
+          );
+        } else {
+          response = await renderPdf(this.env, url);
+        }
         if (!response.ok) {
           // Upstream detail goes to logs only; the thrown message surfaces
           // to the client via instance.status().error on final failure.
@@ -198,8 +243,9 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
       // Best-effort — if the delete itself fails, the R2 lifecycle rule on
       // intermediate/ still removes the object within ~a day.
       await step.do("delete-intermediate-pdf", async () => {
-        const keys =
-          articleKey !== null ? [pdfKey, articleKey] : [pdfKey];
+        const keys = [pdfKey, articleKey, fontsKey].filter(
+          (key): key is string => key !== null,
+        );
         for (const key of keys) {
           try {
             await this.env.XTC_BUCKET.delete(key);

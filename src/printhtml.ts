@@ -3,7 +3,6 @@
 
 import { parseHTML } from "linkedom";
 import type { ExtractedArticle } from "./extract";
-import { PRINT_FONT_CSS_URL } from "./pdf";
 
 /**
  * Print-HTML assembly for extract mode: sanitizes the Readability output and
@@ -183,10 +182,13 @@ export function printableText(
  * relative references resolve correctly; `convertedAt` comes from
  * formatJstTimestamp (pdf.ts), same as the full-page colophon.
  *
- * `fontCss` is the inlined @font-face CSS from buildInlineFontCss
- * (src/fonts.ts); it is embedded as a <style> so the render needs no font
- * network access. When null (font fetch fail-soft), the document falls back
- * to the previous <link> reference — probabilistic, worst case Noto.
+ * The document deliberately carries NO font reference (no <link>, no
+ * <style> @font-face): Browser Run's html mode does not apply data:
+ * @font-face rules placed in the document (measured — the capture stayed
+ * bit-identical to the Noto output while the same CSS worked in local
+ * Chromium), and the docs support custom fonts via the quickAction
+ * addStyleTag parameter only. The inlined font CSS therefore travels next
+ * to the HTML (RenderInput.fontCss) and renderPdfFromHtml injects it.
  *
  * The <title> is always present: the Container reads the PDF title metadata
  * into X-Xtc-Title, which becomes the download filename (pipeline.ts).
@@ -195,7 +197,6 @@ export function buildPrintHtml(
   article: ExtractedArticle,
   sourceUrl: string,
   convertedAt: string,
-  fontCss: string | null = null,
 ): string {
   const { document } = parseHTML(
     "<!doctype html><html><head></head><body></body></html>",
@@ -214,25 +215,6 @@ export function buildPrintHtml(
   const base = document.createElement("base");
   base.setAttribute("href", sourceUrl);
   document.head.appendChild(base);
-
-  if (fontCss !== null) {
-    // Body font (BIZ UDPGothic) inlined as base64 @font-face rules: the
-    // render needs no font network access, so the capture can never race a
-    // font download. linkedom serializes <style> children verbatim (exactly
-    // what CSS needs — no entity escaping), and the content is our own
-    // generated CSS with base64/URL-safe payloads only.
-    const fontStyle = document.createElement("style");
-    fontStyle.textContent = fontCss;
-    document.head.appendChild(fontStyle);
-  } else {
-    // Fail-soft: the previous <link> reference. Known to be probabilistic —
-    // the capture usually wins the race against the font download and falls
-    // back to Noto — but it costs nothing and occasionally succeeds.
-    const fontLink = document.createElement("link");
-    fontLink.setAttribute("rel", "stylesheet");
-    fontLink.setAttribute("href", PRINT_FONT_CSS_URL);
-    document.head.appendChild(fontLink);
-  }
 
   // Same "(無題)" fallback as the full-page colophon script.
   const title = article.title ?? "(無題)";

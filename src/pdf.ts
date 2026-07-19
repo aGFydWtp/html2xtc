@@ -265,9 +265,10 @@ export const X3_PRINT_CSS = `
 ${X3_PRINT_RULES}`;
 
 /**
- * Extract-path variant: shared rules only, no @import — the print HTML
- * carries its fonts inline (or, on font fail-soft, its own <link>), so this
- * stylesheet must not start another fetch of the same family.
+ * Extract-path variant: shared rules only, no @import — injected together
+ * with the inlined @font-face CSS (renderPdfFromHtml), which already carries
+ * the font as data: URLs, so this stylesheet must not start another network
+ * fetch of the same family.
  */
 export const X3_PRINT_CSS_NO_FONT_IMPORT = X3_PRINT_RULES;
 
@@ -467,21 +468,33 @@ export function renderPdf(env: Env, url: string): Promise<Response> {
  * the document, built server-side — which also means no page CSP can ever
  * block it, unlike the injected script on the full-page path.
  */
-export function renderPdfFromHtml(env: Env, html: string): Promise<Response> {
+export function renderPdfFromHtml(
+  env: Env,
+  html: string,
+  fontCss: string | null = null,
+): Promise<Response> {
   return env.BROWSER.quickAction("pdf", {
     html,
     // The browser still fetches the article's images from their origin;
     // announce the same UA as the full-page path so site operators see a
     // single identity for this service.
     userAgent: RENDER_USER_AGENT,
-    // No-@import variant: the document carries its fonts inline (base64,
-    // src/fonts.ts), so there is nothing to wait for on the network — which
-    // is the whole point: networkidle2 provably does NOT wait for font
-    // downloads (its ≤2-connection idle window passes during the serial
-    // CSS→woff2 fetch), so a render-time font fetch loses the race and the
-    // capture shows the swap fallback. See the font investigation notes.
-    addStyleTag: [{ content: X3_PRINT_CSS_NO_FONT_IMPORT }],
+    // fontCss (inlined data: @font-face rules, src/fonts.ts) MUST come in
+    // via addStyleTag: Browser Run's html mode does not apply data:
+    // @font-face from a document <style> (measured — output stayed
+    // bit-identical to the Noto fallback), and the custom-fonts docs support
+    // exactly this injection path. Order matters: the faces first, then the
+    // rules that reference the family. On font fail-soft (null) inject the
+    // @import variant instead — probabilistic like the full path, worst
+    // case Noto, but never a second fetch racing an inlined font.
+    addStyleTag:
+      fontCss !== null
+        ? [{ content: fontCss }, { content: X3_PRINT_CSS_NO_FONT_IMPORT }]
+        : [{ content: X3_PRINT_CSS }],
     gotoOptions: PDF_GOTO_OPTIONS,
+    // Even a data: font needs decode + swap before capture; a short fixed
+    // wait covers it (the full path uses 3s because it also downloads).
+    waitForTimeout: 1_500,
     pdfOptions: PDF_OPTIONS,
   });
 }

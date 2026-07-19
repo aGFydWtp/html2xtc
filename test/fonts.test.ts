@@ -100,6 +100,20 @@ describe("buildInlineFontCss", () => {
     await expect(buildInlineFontCss("あ", JOB_ID, fetchFn)).resolves.toBeNull();
   });
 
+  it("returns null when the woff2 src points outside fonts.gstatic.com", async () => {
+    // A poisoned/unexpected response must never make the Worker fetch (and
+    // inline) font bytes from an arbitrary origin.
+    const evilCss = `@font-face {
+  font-family: 'BIZ UDPGothic';
+  font-weight: 400;
+  src: url(https://evil.example/f.woff2) format('woff2');
+}`;
+    const { fetchFn, calls } = mockFetcher(evilCss);
+    await expect(buildInlineFontCss("あ", JOB_ID, fetchFn)).resolves.toBeNull();
+    // Only the css2 request went out; nothing was fetched from evil.example.
+    expect(calls.every((c) => c.url.startsWith("https://fonts.googleapis.com/"))).toBe(true);
+  });
+
   it("returns null when the css has no gstatic woff2 src (unexpected shape)", async () => {
     const ttfCss = `@font-face {
   font-family: 'BIZ UDPGothic';

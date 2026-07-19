@@ -29,6 +29,15 @@ export function articleHtmlKey(jobId: string): string {
   return `intermediate/${jobId}/article.html`;
 }
 
+/**
+ * R2 key for the inlined @font-face CSS handed from extract-content to
+ * render-pdf next to the article HTML (extract mode, font inlining
+ * succeeded). Same intermediate/ prefix, same 1-day lifecycle.
+ */
+export function fontsCssKey(jobId: string): string {
+  return `intermediate/${jobId}/fonts.css`;
+}
+
 /** R2 key for the finished XTC artifact. */
 export function outputXtcKey(jobId: string): string {
   return `jobs/${jobId}/output.xtc`;

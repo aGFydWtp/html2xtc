@@ -21,13 +21,63 @@ export const X3_PRINT_CSS = `
       color: black !important;
     }
 
+    /* 10pt on the root pins every rem unit to the X3 body size, so
+       rem-sized titles/headings scale down while keeping their intended
+       ratio (e.g. a 2.25rem title prints at 22.5pt). */
+    html {
+      font-size: 10pt !important;
+    }
+
     body {
       font-family:
         "Noto Sans JP",
         "Hiragino Sans",
         sans-serif !important;
-      font-size: 10pt !important;
+      font-size: 1rem !important;
       line-height: 1.55 !important;
+    }
+
+    /* Normalize body-text size with direct element selectors: the body rule
+       above only works through inheritance, so a site rule that targets a
+       container (e.g. synodos.jp's .content { font-size: 1.13rem } = ~18px)
+       or an inline style bypasses it and the whole article prints oversized.
+       h1-h6 are deliberately NOT listed so headings keep the site's sizing
+       (now rem-relative to the 10pt root above). */
+    div,
+    section,
+    article,
+    main,
+    aside,
+    header,
+    footer,
+    nav,
+    p,
+    li,
+    dd,
+    dt,
+    blockquote,
+    figcaption,
+    caption,
+    th,
+    td,
+    address,
+    summary,
+    pre {
+      font-size: 1rem !important;
+    }
+
+    /* Restore the semantically-smaller elements the normalization above
+       would otherwise inflate to full body size. */
+    sub,
+    sup,
+    small {
+      font-size: 0.75em !important;
+    }
+
+    code,
+    kbd,
+    samp {
+      font-size: 0.9em !important;
     }
 
     /* Force full-contrast text everywhere: sites commonly use gray body text
@@ -312,7 +362,10 @@ export function buildColophonScript(url: string, convertedAt: string): string {
     var addLine = function (text, styles) {
       var line = doc.createElement("div");
       line.textContent = text;
-      setStyles(line, { "margin": "0", "padding": "0" });
+      // font-size on each line, not just the box: X3_PRINT_CSS normalizes
+      // div font-size to 1rem !important, which would beat the box's
+      // inherited 8pt; the inline !important here wins the cascade.
+      setStyles(line, { "margin": "0", "padding": "0", "font-size": "8pt" });
       if (styles) setStyles(line, styles);
       box.appendChild(line);
     };

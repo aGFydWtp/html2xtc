@@ -8,8 +8,6 @@ export type JobStatus = "queued" | "rendering" | "converting" | "completed" | "f
 export interface Messages {
   brand: string;
   intro: string;
-  x3_title: string;
-  x3_body: string;
   convert: string;
   keep_layout: string;
   form_note: string;
@@ -58,8 +56,6 @@ export const I18N: Record<Lang, Messages> = {
   ja: {
     brand: "XTC 変換",
     intro: "公開されているWebサイトやコンテンツを、電子ペーパー端末 Xteink X3 用の XTC ファイルに変換します。",
-    x3_title: "X3 用とは",
-    x3_body: "記事をX3の画面サイズ（66×99mm・528×792px）に合わせた印刷レイアウトに整え、200dpiでレンダリングしたうえで、1-bit（ディザリングあり）のXTCに変換します。E-ink上で文字がかすれにくいよう、本文の文字色を黒に調整します。また、印刷時に通常不要となるナビゲーション、広告、Cookie同意バナーなどの表示要素は、可能な範囲で非表示にします。",
     convert: "変換する",
     keep_layout: "レイアウトを保持して変換する",
     form_note: "変換には 1〜2 分ほどかかります。生成されたファイルは約 24 時間後に自動削除されます。",
@@ -106,8 +102,6 @@ export const I18N: Record<Lang, Messages> = {
   en: {
     brand: "XTC Converter",
     intro: "Converts publicly available websites and content into XTC files for the Xteink X3 e-paper reader.",
-    x3_title: "What does “for the X3” mean?",
-    x3_body: "The article is arranged into a print layout matching the X3 screen (66×99mm · 528×792px), rendered at 200dpi, and then converted to 1-bit dithered XTC. To keep text legible on E-ink, body text color is adjusted to black. Elements usually unneeded in print — navigation, ads, cookie consent banners and the like — are hidden where possible.",
     convert: "Convert",
     keep_layout: "Keep the page layout",
     form_note: "Conversion takes 1–2 minutes. Files are deleted automatically after about 24 hours.",

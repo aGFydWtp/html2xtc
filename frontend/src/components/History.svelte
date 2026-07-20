@@ -184,7 +184,7 @@
   .job-menu button:hover:not(:disabled) { background: var(--panel); }
   .job-menu button:disabled { color: var(--disabled); cursor: default; }
   footer.site {
-    margin-top: 26px; padding-top: 16px; border-top: 1.5px solid var(--ink);
+    margin-top: 26px; padding-top: 16px;
     font-size: 14px; color: var(--muted); line-height: 1.8;
   }
   footer.site a { color: var(--muted2); }

@@ -30,11 +30,16 @@ const CONVERTER_TIMEOUT_MARGIN_MS = 30_000;
  * Sends the PDF to the converter container and returns its response.
  * timeoutMs bounds the whole fetch: the sync /convert path passes a short
  * budget, the Workflow passes one sized for the 600s xtctool limit.
+ * pdfBody may be a buffer (sync path, which already holds the bytes for the
+ * concurrent R2 put) or a ReadableStream (workflow path, streaming from R2).
+ * A stream MUST have a known length — pipe it through FixedLengthStream so
+ * fetch sends Content-Length — because the container's http.server rejects
+ * bodies without one (chunked requests are not parsed).
  */
 export function convertInContainer(
   env: Env,
   jobId: string,
-  pdfBytes: ArrayBuffer,
+  pdfBody: ArrayBuffer | ReadableStream,
   timeoutMs: number,
 ): Promise<Response> {
   const container = getContainer(env.XTC_CONVERTER, converterInstanceName(jobId));
@@ -54,7 +59,7 @@ export function convertInContainer(
         // 413 threshold tracks resolveMaxPdfBytes instead of its own default.
         "X-Max-Pdf-Bytes": String(resolveMaxPdfBytes(env)),
       },
-      body: pdfBytes,
+      body: pdfBody,
       signal: AbortSignal.timeout(timeoutMs),
     }),
   );

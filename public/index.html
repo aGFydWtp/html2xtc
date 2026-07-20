@@ -281,6 +281,7 @@ const I18N = {
     poll_fail: "状態の取得に失敗しました。ページを再読み込みしてください。",
     no_server: "サーバーに接続できません。",
     http_error: (s) => `エラー (HTTP ${s})`,
+    pdf_too_large: "生成された PDF がサイズ上限を超えました。「レイアウトを保持して変換する」を有効にすると変換できる場合があります。",
     status: { queued: "待機中", rendering: "PDF 生成中", converting: "XTC 変換中", completed: "✓ 完了", failed: "失敗", expired: "期限切れ" },
   },
   en: {
@@ -316,6 +317,7 @@ const I18N = {
     poll_fail: "Failed to fetch status. Please reload the page.",
     no_server: "Could not reach the server.",
     http_error: (s) => `Error (HTTP ${s})`,
+    pdf_too_large: "The rendered PDF exceeds the size limit. Enabling “Keep the page layout” may allow the conversion to succeed.",
     status: { queued: "Queued", rendering: "Rendering PDF", converting: "Converting to XTC", completed: "\u2713 Done", failed: "Failed", expired: "Expired" },
   },
 };
@@ -391,6 +393,15 @@ function noteText(note) {
   return typeof v === "function" ? v(...args) : v;
 }
 
+// Server error strings arrive untranslated and are rendered as-is; map the
+// known ones onto i18n keys so they follow the language toggle. The size
+// message is matched on its stable prefix (the byte value tracks the
+// MAX_PDF_BYTES config); anything unrecognized is shown verbatim.
+function serverErrorText(err) {
+  if (/rendered PDF exceeds the \d+ byte limit/.test(err)) return t("pdf_too_large");
+  return err;
+}
+
 function renderCurrent(job, note) {
   const el = $("current");
   activeView = job ? { job, note } : null;
@@ -406,7 +417,7 @@ function renderCurrent(job, note) {
       <button type="button" class="preview-btn" data-act="preview-open"${previewBroken.has(job.jobId) ? " disabled" : ""}>${t("preview")}</button>` : ""}
     </div>
     ${note ? `<div class="error-text">${esc(noteText(note))}</div>` : ""}
-    ${job.status === "failed" && job.error ? `<div class="error-text">${esc(job.error)}</div>` : ""}
+    ${job.status === "failed" && job.error ? `<div class="error-text">${esc(serverErrorText(job.error))}</div>` : ""}
   `;
 }
 function rerenderCurrent() {

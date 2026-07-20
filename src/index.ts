@@ -283,7 +283,7 @@ async function handleConvert(request: Request, env: Env): Promise<Response> {
   if (pdfBytes.byteLength > maxPdfBytes) {
     return Response.json(
       {
-        error: `rendered PDF exceeds the ${maxPdfBytes} byte limit; try a shorter page`,
+        error: `rendered PDF exceeds the ${maxPdfBytes} byte limit; try a shorter page or the layout-preserving (full) mode`,
         jobId,
       },
       { status: 422 },
@@ -328,7 +328,7 @@ async function handleConvert(request: Request, env: Env): Promise<Response> {
       if (converterResponse.status === 413) {
         return Response.json(
           {
-            error: `rendered PDF exceeds the ${maxPdfBytes} byte limit; try a shorter page`,
+            error: `rendered PDF exceeds the ${maxPdfBytes} byte limit; try a shorter page or the layout-preserving (full) mode`,
             jobId,
           },
           { status: 422 },

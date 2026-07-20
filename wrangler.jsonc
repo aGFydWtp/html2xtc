@@ -27,6 +27,18 @@
 			"bucket_name": "xteink-conversions"
 		}
 	],
+	"d1_databases": [
+		{
+			// Aozora Bunko catalog, synced daily by AozoraCatalogSyncWorkflow.
+			// Migrations live under migrations/aozora (separate from the DO
+			// migrations array above); apply with:
+			//   npx wrangler d1 migrations apply html2xtc-aozora-catalog --local
+			"binding": "AOZORA_DB",
+			"database_name": "html2xtc-aozora-catalog",
+			"database_id": "5b20f008-2d9a-417a-be9a-e9a7a3738eb5",
+			"migrations_dir": "migrations/aozora"
+		}
+	],
 	"containers": [
 		{
 			"class_name": "XtcConverterContainer",
@@ -47,8 +59,28 @@
 			// Exported from src/index.ts (defined in src/workflow.ts).
 			// No migrations entry needed: those apply to DO classes only.
 			"class_name": "ConvertWorkflow"
+		},
+		{
+			// Daily Aozora Bunko catalog sync (defined in
+			// src/catalog-workflow.ts, re-exported from src/index.ts).
+			"name": "aozora-catalog-sync",
+			"binding": "AOZORA_SYNC_WORKFLOW",
+			"class_name": "AozoraCatalogSyncWorkflow"
 		}
 	],
+	"triggers": {
+		// Cron is UTC: 18:30 UTC == 03:30 JST, once daily. The scheduled()
+		// handler only starts the sync Workflow (src/index.ts).
+		"crons": [
+			"30 18 * * *"
+		]
+	},
+	"limits": {
+		// Max CPU per Workflow invocation. ZIP inflate + CSV parse of the full
+		// catalog are CPU-bound, so raise the ceiling to 5 minutes (a cap, not
+		// a per-run reservation).
+		"cpu_ms": 300000
+	},
 	"durable_objects": {
 		"bindings": [
 			{

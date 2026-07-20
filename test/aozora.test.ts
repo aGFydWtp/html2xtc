@@ -501,7 +501,55 @@ describe("buildPrintRules (vertical)", () => {
   it("gives the body no fixed block size", () => {
     // height:100%/100vh on the body is the classic way to collapse a
     // vertical document into a single page.
-    expect(rules).not.toMatch(/height:\s*100/);
+    expect(rules).not.toMatch(/height:\s*100%/);
+    expect(rules).not.toMatch(/height:\s*100vh/);
+  });
+
+  it("carries the shared anti-overflow defenses (general sites can be vertical)", () => {
+    const horizontal = buildPrintRules({
+      layout: "horizontal",
+      font: "BIZ UDPGothic",
+    });
+    for (const set of [rules, horizontal]) {
+      // Per-element body-text normalization (body-only sizing loses to
+      // site container rules on specificity).
+      expect(set).toMatch(/figcaption,[\s\S]{0,200}font-size: 10pt !important/);
+      // Article-column and layout-wrapper resets.
+      expect(set).toContain("max-width: none !important");
+      expect(set).toContain("padding-left: 0 !important");
+      expect(set).toContain("max-width: 100% !important");
+      // Media clamps + aspect-ratio reset for width/height attributes.
+      expect(set).toContain("height: auto !important");
+      // Flex/grid shrink + mid-token wrap guards.
+      expect(set).toContain("overflow-wrap: anywhere !important");
+      expect(set).toContain("min-width: 0 !important");
+      // Page-chrome hiding (consent banners repeat on every printed page).
+      expect(set).toContain("body #onetrust-banner-sdk");
+    }
+    // The vertical set keeps its logical media limits on top.
+    expect(rules).toContain("max-inline-size: 100% !important");
+    expect(rules).toContain("max-block-size: 90% !important");
+  });
+
+  it("stays harmless for the Aozora document (structure CSS wins where it must)", () => {
+    // The shared div-margin strip is physical left/right only; the jisage
+    // indent is margin-inline-start (= margin-top in vertical-rl), so the
+    // two never target the same declaration in the vertical layout — and in
+    // the horizontal layout the class selector out-specifies the shared
+    // element selector at equal !important.
+    expect(rules).not.toContain("margin-inline-start: 0");
+    expect(AOZORA_DOCUMENT_CSS).toContain(
+      ".jisage_2 { margin-inline-start: 2em !important; }",
+    );
+    // gaiji/illustration sizing beats the shared img rules the same way.
+    expect(AOZORA_DOCUMENT_CSS).toMatch(/img\.gaiji\s*\{[^}]*width: 1em !important/);
+    expect(AOZORA_DOCUMENT_CSS).toMatch(
+      /img\.illustration\s*\{[^}]*height: auto !important/,
+    );
+    // 底本 8pt beats the shared 10pt div normalization (class specificity).
+    expect(AOZORA_DOCUMENT_CSS).toMatch(
+      /\.bibliographical_information\s*\{[^}]*font-size: 8pt !important/,
+    );
   });
 });
 

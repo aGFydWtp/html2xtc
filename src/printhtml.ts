@@ -413,7 +413,9 @@ export function printableText(
  * `documentCss` (optional) is embedded as a <style> in the head — for
  * markup-specific rules that belong to THIS document regardless of the
  * layout selected at render time (e.g. the Aozora structure CSS,
- * src/aozora.ts). Static, trusted CSS only; never page-derived text.
+ * src/aozora.ts). Static, trusted CSS only; never page-derived text — and
+ * angle brackets are stripped anyway as defense in depth (see below), so
+ * the CSS must not rely on the child combinator ">".
  */
 export function buildPrintHtml(
   article: ExtractedArticle,
@@ -451,7 +453,13 @@ export function buildPrintHtml(
 
   if (documentCss !== undefined) {
     const style = document.createElement("style");
-    style.textContent = documentCss;
+    // linkedom serializes <style> children verbatim (no entity escaping) —
+    // same hazard as <title> above: a "</style>" sequence inside the CSS
+    // would break out of the element into the head, and the rendering
+    // browser executes scripts. The CSS used here never needs angle
+    // brackets (descendant selectors only — no child combinator ">"), so
+    // strip them outright rather than trusting the caller.
+    style.textContent = documentCss.replace(/[<>]/g, " ");
     document.head.appendChild(style);
   }
 

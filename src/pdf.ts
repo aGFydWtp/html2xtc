@@ -40,6 +40,128 @@ function fontStack(options: RenderOptions): string {
  */
 export const PRINT_FONT_CSS_URL = fontCssEndpoint(DEFAULT_FONT_FAMILY);
 
+// ---------------------------------------------------------------------------
+// Blocks shared by the horizontal AND vertical rule sets. All of these were
+// added for real overflow/size bugs on ordinary sites (webgenron.com /
+// synodos.jp / omocoro.jp — rationale in the comments below), and a request
+// may render ANY site vertically (layout option), so the vertical set needs
+// the same defenses. Physical left/right properties are correct in both
+// layouts on purpose: Chromium's print-layout "contents width" expansion and
+// paper-edge clipping are physically horizontal regardless of writing-mode,
+// so the paper-width guards stay physical. The blocks are inert on documents
+// this service authors itself (extract/Aozora print HTML): those carry no
+// page chrome, no pinned widths and no competing font sizing — and the
+// Aozora structure CSS wins against them on !important + class specificity
+// where it must (jisage margins, gaiji/illustration sizing, 底本 8pt).
+// ---------------------------------------------------------------------------
+
+/* Normalize body-text size with direct element selectors: a body rule only
+   works through inheritance, so a site rule that targets a container (e.g.
+   synodos.jp's .content { font-size: 1.13rem } = ~18px) or an inline style
+   bypasses it and the whole article prints oversized. Absolute 10pt on each
+   element, NOT html { font-size: 10pt } + 1rem: rem is a shared layout unit
+   (padding/width/gap), so resizing the root would rescale every rem
+   dimension — sites on the html { font-size: 62.5% } convention would
+   inflate ~1.33x and re-cause the overflow clipping handled below. h1-h6
+   are deliberately NOT listed so headings/titles keep their sizing (the
+   vertical set sizes them explicitly). Trade-off: intentional non-heading
+   size differences (lead paragraphs, notes) flatten to 10pt; a stable body
+   size wins on a 58mm page. header/footer/nav/aside are omitted because
+   the hide rules display:none them anyway. */
+const BODY_TEXT_SIZE_RULES = `div,
+    section,
+    article,
+    main,
+    p,
+    li,
+    dd,
+    dt,
+    blockquote,
+    figcaption,
+    caption,
+    th,
+    td,
+    address,
+    summary,
+    pre {
+      font-size: 10pt !important;
+    }
+
+    /* Restore the semantically-smaller elements the normalization above
+       would otherwise inflate to full body size. */
+    sub,
+    sup,
+    small {
+      font-size: 0.75em !important;
+    }
+
+    code,
+    kbd,
+    samp {
+      font-size: 0.9em !important;
+    }`;
+
+/* Layout-wrapper resets. main/article: unclamp the article column a site
+   centers at a fixed max-width. div/section: Chromium evaluates print media
+   queries at ~816px (US Letter), not at the @page size, so sites keep their
+   desktop/tablet shell when printed — padded, centered layout wrappers get
+   flowed into the 58mm content box and push the article column past the
+   right paper edge (verified on webgenron.com: a grid wrapper with 20px
+   side padding shifted all body text ~3.5mm right, clipping ~2mm off every
+   line on every page). Divs/sections are layout chrome, not prose, so drop
+   their horizontal padding and (auto-)centering margins; the @page margin
+   is the only gutter the X3 page can afford. Lists, blockquotes, pre and
+   table cells are untouched and keep their indentation. The max-width
+   clamp catches script-pinned wrapper widths (verified on omocoro.jp: a
+   slider-pro carousel set width: 800px on its track div, growing the whole
+   print layout ~10% past the paper); max-width rather than width: auto so
+   deliberately narrow UI bits keep their intended width. */
+const LAYOUT_RESET_RULES = `main,
+    article {
+      width: 100% !important;
+      max-width: none !important;
+      margin: 0 !important;
+      padding: 0 !important;
+    }
+
+    div,
+    section {
+      padding-left: 0 !important;
+      padding-right: 0 !important;
+      margin-left: 0 !important;
+      margin-right: 0 !important;
+    }
+
+    div,
+    section {
+      max-width: 100% !important;
+    }`;
+
+/* Keep replaced/embedded media inside the page. A fixed-width image or
+   iframe would widen the print layout and clip the page at the right edge
+   (same "contents width" mechanism as above), and height: auto preserves
+   the aspect ratio when width/height attributes would otherwise squash a
+   shrunken image. */
+const MEDIA_FIT_RULES = `img,
+    svg,
+    video,
+    iframe,
+    canvas,
+    embed,
+    table,
+    pre {
+      max-width: 100% !important;
+    }
+
+    img,
+    svg,
+    video,
+    iframe,
+    canvas,
+    embed {
+      height: auto !important;
+    }`;
+
 // Page-chrome hide rules shared by the horizontal and vertical rule sets
 // (the long rationale for the selector choices sits at the usage site in
 // horizontalPrintRules; the vertical set reuses the block because full-page
@@ -125,51 +247,7 @@ function horizontalPrintRules(options: RenderOptions): string {
       line-height: 1.55 !important;
     }
 
-    /* Normalize body-text size with direct element selectors: the body rule
-       above only works through inheritance, so a site rule that targets a
-       container (e.g. synodos.jp's .content { font-size: 1.13rem } = ~18px)
-       or an inline style bypasses it and the whole article prints oversized.
-       Absolute 10pt on each element, NOT html { font-size: 10pt } + 1rem:
-       rem is a shared layout unit (padding/width/gap), so resizing the root
-       would rescale every rem dimension — sites on the
-       html { font-size: 62.5% } convention would inflate ~1.33x and re-cause
-       the overflow clipping handled below. h1-h6 are deliberately NOT listed
-       so headings/titles keep the site's sizing. Trade-off: intentional
-       non-heading size differences (lead paragraphs, notes) flatten to 10pt;
-       a stable body size wins on a 58mm page. header/footer/nav/aside are
-       omitted because the hide rules below display:none them anyway. */
-    div,
-    section,
-    article,
-    main,
-    p,
-    li,
-    dd,
-    dt,
-    blockquote,
-    figcaption,
-    caption,
-    th,
-    td,
-    address,
-    summary,
-    pre {
-      font-size: 10pt !important;
-    }
-
-    /* Restore the semantically-smaller elements the normalization above
-       would otherwise inflate to full body size. */
-    sub,
-    sup,
-    small {
-      font-size: 0.75em !important;
-    }
-
-    code,
-    kbd,
-    samp {
-      font-size: 0.9em !important;
-    }
+    ${BODY_TEXT_SIZE_RULES}
 
     /* Force full-contrast text everywhere: sites commonly use gray body text
        (e.g. #6b7280) or light text on dark blocks; with printBackground off
@@ -223,71 +301,9 @@ function horizontalPrintRules(options: RenderOptions): string {
        repeated on every printed page by Chromium. */
     ${HIDE_CHROME_RULES}
 
-    main,
-    article {
-      width: 100% !important;
-      max-width: none !important;
-      margin: 0 !important;
-      padding: 0 !important;
-    }
+    ${LAYOUT_RESET_RULES}
 
-    /* Chromium evaluates print media queries at ~816px (US Letter), not at
-       the @page size, so sites keep their desktop/tablet shell when printed:
-       padded, centered layout wrappers get flowed into the 58mm content box
-       and push the article column past the right paper edge (verified on
-       webgenron.com: a grid wrapper with 20px side padding shifted all body
-       text ~3.5mm right, clipping ~2mm off every line on every page).
-       Divs/sections are layout chrome, not prose, so drop their horizontal
-       padding and (auto-)centering margins; the @page margin is the only
-       gutter the X3 page can afford. Lists, blockquotes, pre and table cells
-       are untouched and keep their indentation. */
-    div,
-    section {
-      padding-left: 0 !important;
-      padding-right: 0 !important;
-      margin-left: 0 !important;
-      margin-right: 0 !important;
-    }
-
-    /* Stripping padding/margin above is not enough when a script pins an
-       explicit width on a wrapper: carousel JS writes inline styles like
-       width: 800px on its track div (verified on omocoro.jp: a slider-pro
-       carousel set width: 800px on the track and width: 200px per slide),
-       which re-triggers the same contents-width expansion — the whole print
-       layout grows ~10% past the paper and every line loses its last 1-2
-       characters, while blockquote borders run off the right edge. Clamp
-       with max-width rather than width: auto so deliberately narrow UI
-       bits (e.g. a 180px "read more" button div) keep their intended width
-       instead of being inflated to full page width. */
-    div,
-    section {
-      max-width: 100% !important;
-    }
-
-    /* Keep replaced/embedded media inside the page. A fixed-width image or
-       iframe would widen the print layout and clip the page at the right
-       edge (same mechanism as the flex overflow handled above), and
-       height: auto preserves the aspect ratio when width/height attributes
-       would otherwise squash a shrunken image. */
-    img,
-    svg,
-    video,
-    iframe,
-    canvas,
-    embed,
-    table,
-    pre {
-      max-width: 100% !important;
-    }
-
-    img,
-    svg,
-    video,
-    iframe,
-    canvas,
-    embed {
-      height: auto !important;
-    }
+    ${MEDIA_FIT_RULES}
 
     pre {
       white-space: pre-wrap !important;
@@ -360,17 +376,28 @@ function verticalPrintRules(options: RenderOptions): string {
       font-size: 10pt !important;
     }
 
+    /* Full contrast plus the overflow guards: mid-token wraps and letting
+       flex/grid items shrink below min-content (min-width for the physical
+       paper-width axis, min-height for the inline axis, which is vertical
+       here) — same "contents width" clipping mechanism documented on the
+       shared blocks above. */
     body * {
       color: black !important;
       -webkit-text-fill-color: black !important;
       text-shadow: none !important;
       overflow-wrap: anywhere !important;
+      min-width: 0 !important;
+      min-height: 0 !important;
     }
+
+    ${BODY_TEXT_SIZE_RULES}
 
     /* The title heading buildPrintHtml emits, plus the 見出し levels the
        Aozora markup uses (h3.o-midashi / h4.naka-midashi / h5.ko-midashi).
        Kept close to the body size: a 58mm-wide page has no room for large
-       display sizes. */
+       display sizes. Sized AFTER the shared normalization on purpose — the
+       normalization skips h1-h6, and the vertical set pins them because a
+       site's display sizes have no room on this page. */
     h1 {
       font-size: 13pt !important;
       font-weight: 700 !important;
@@ -401,9 +428,16 @@ function verticalPrintRules(options: RenderOptions): string {
       display: none !important;
     }
 
-    /* Replaced/embedded media: keep it inside the page in both axes.
+    ${LAYOUT_RESET_RULES}
+
+    ${MEDIA_FIT_RULES}
+
+    /* On top of the shared physical clamps: logical limits so media also
+       stays inside the page along the vertical inline axis, and
        max-block-size < 100% so a full-bleed image cannot swallow a whole
-       column; block size is the horizontal axis here. */
+       column (block size is the horizontal axis here). The Aozora document
+       CSS overrides these for gaiji/illustrations where it must (class
+       specificity + !important). */
     img,
     svg,
     video,

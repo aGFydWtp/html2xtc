@@ -17,9 +17,14 @@ export type ConvertLayout = "horizontal" | "vertical";
 /**
  * Resolved rendering options, produced by resolveRenderOptions()
  * (src/sitepresets.ts) from the request's optional layout/font fields plus
- * the per-site defaults (Aozora Bunko → vertical + BIZ UDMincho). `font` is
- * a sanitized Google Fonts family name (sanitizeFontFamily, src/fonts.ts) —
- * safe to embed in a quoted CSS font-family and in the css2 URL.
+ * the per-site defaults (Aozora Bunko → vertical + BIZ UDMincho).
+ *
+ * INVARIANT: `font` is a sanitized Google Fonts family name — safe to embed
+ * in a quoted CSS font-family declaration and in the css2 URL. ALWAYS build
+ * this type via resolveRenderOptions() (or pass the value through
+ * sanitizeFontFamily, src/fonts.ts); never place raw request input here.
+ * (A branded type could enforce this at compile time; deliberately not
+ * introduced yet — reviewed and deferred.)
  */
 export interface RenderOptions {
   layout: ConvertLayout;

@@ -1,0 +1,59 @@
+xtctool build-time performance patch: vectorise XTGWriter._encode_bitmap
+
+Applied by converter/Dockerfile with `git apply` after cloning xtctool at
+commit d7bff34ff835889e158ca8ff2253de06a3e825cf, before `pip install`.
+
+What: replaces the pure-Python per-pixel triple loop in
+xtctool/core/xtg.py:_encode_bitmap with np.packbits(mono, axis=1).
+
+Why: the loop costs ~63 ms per page (~78% of total conversion time) and made
+600+ page PDFs exceed the conversion timeout on the 1/4 vCPU container. The
+packbits version produces byte-identical output (verified on a 665-page
+Aozora Bunko PDF: identical XTC bytes for the same input) because packbits
+packs MSB-first along rows and zero-pads the final byte of each row, exactly
+matching the original loop's layout and padding.
+
+License note: xtctool is upstream-licensed; this repo is AGPL-3.0-or-later.
+Keeping the modification as a patch applied at image build time keeps the
+modified Corresponding Source reproducible from this repo (Dockerfile +
+pinned commit + this patch).
+
+diff --git a/xtctool/core/xtg.py b/xtctool/core/xtg.py
+index 4ee4ef7..5e43c15 100644
+--- a/xtctool/core/xtg.py
++++ b/xtctool/core/xtg.py
+@@ -84,25 +84,15 @@ class XTGWriter:
+         Returns:
+             Bitmap data as bytearray
+         """
+-        bitmap_data = bytearray()
+-        bytes_per_row = (self.width + 7) // 8
+-
+-        # Process row by row, top to bottom
+-        for y in range(self.height):
+-            # Process each byte in the row
+-            for byte_idx in range(bytes_per_row):
+-                byte_val = 0
+-                # Pack 8 pixels into one byte
+-                for bit_idx in range(8):
+-                    x = byte_idx * 8 + bit_idx
+-                    if x < self.width:
+-                        pixel = pixel_values[y, x]
+-                        # MSB = leftmost pixel
+-                        byte_val |= pixel << (7 - bit_idx)
+-
+-                bitmap_data.append(byte_val)
+-
+-        return bitmap_data
++        # Vectorised with np.packbits: packs 8 pixels per byte along each row
++        # (axis=1) with MSB-first bit order, zero-padding the final byte of
++        # every row when the width is not a multiple of 8 — byte-for-byte the
++        # same layout the original per-pixel Python loop produced, at a small
++        # fraction of the cost.
++        mono = np.ascontiguousarray(
++            pixel_values[: self.height, : self.width], dtype=np.uint8
++        )
++        return bytearray(np.packbits(mono, axis=1).tobytes())
+ 
+     def encode(
+         self,

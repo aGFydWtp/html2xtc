@@ -29,9 +29,9 @@ Worker
 
 ## WebUI
 
-`public/index.html`（依存なしの 1 ページ、スマホファースト）を Workers static assets として `/` で配信する。URL を入力すると `POST /jobs` → 数秒間隔のポーリングで進捗（待機中 → PDF 生成中 → XTC 変換中）を表示し、完了するとダウンロードリンクとプレビューボタンが出る。変換モードは「レイアウトを保持して変換する」チェックボックスで選び、**未チェック（既定）が本文抽出（extract）、チェックありがページ丸ごと（full）**。WebUI は常に `mode` を明示送信する（API 自体の `mode` 省略時既定は full のまま）。履歴はブラウザの localStorage に保存（最大 50 件。サーバー上のファイルは約 24 時間で自動削除される旨を表示）。
+`frontend/`（Vite + Svelte 5 の SPA、スマホファースト）をビルドした `frontend/dist` を Workers static assets として `/` で配信する。URL を入力すると `POST /jobs` → 数秒間隔のポーリングで進捗（待機中 → PDF 生成中 → XTC 変換中）を表示し、完了するとダウンロードリンクとプレビューボタンが出る。変換モードは「レイアウトを保持して変換する」チェックボックスで選び、**未チェック（既定）が本文抽出（extract）、チェックありがページ丸ごと（full）**。WebUI は常に `mode` を明示送信する（API 自体の `mode` 省略時既定は full のまま）。履歴はブラウザの localStorage に保存（最大 50 件。サーバー上のファイルは約 24 時間で自動削除される旨を表示）。
 
-**XTC プレビュー**: 生成済み XTC をブラウザ内でデコードしてモーダルダイアログ（ネイティブ `<dialog>`）の canvas に描画する。XTC コンテナ（48B ヘッダー + 16B/ページのインデックス）と 1-bit XTG フレーム（22B ヘッダー、行方向 MSB 詰め）のパーサーを WebUI 内に持ち、fetch した ArrayBuffer はジョブ ID キーでキャッシュ（上限 5 件）してページ送りで再取得しない。マジック・version・colorMode・compression が想定外のファイルはプレビューのみ無効化してダウンロードリンクは維持する（将来 xtctool の出力形式が変わった場合のフォールバック）。履歴の各行には ⋮ ボタンがあり、ポップオーバーメニュー（Popover API、非対応ブラウザはクラス切替にフォールバック）から XTC ダウンロード / プレビューを選べる。サービス概要・利用規約・クローラー情報・連絡先は `/about`（`public/about.html`、静的配信）に掲示し、フッターからリンクする。
+**XTC プレビュー**: 生成済み XTC をブラウザ内でデコードしてモーダルダイアログ（ネイティブ `<dialog>`）の canvas に描画する。XTC コンテナ（48B ヘッダー + 16B/ページのインデックス）と 1-bit XTG フレーム（22B ヘッダー、行方向 MSB 詰め）のパーサーを WebUI 内に持ち、fetch した ArrayBuffer はジョブ ID キーでキャッシュ（上限 5 件）してページ送りで再取得しない。マジック・version・colorMode・compression が想定外のファイルはプレビューのみ無効化してダウンロードリンクは維持する（将来 xtctool の出力形式が変わった場合のフォールバック）。履歴の各行には ⋮ ボタンがあり、ポップオーバーメニュー（Popover API、非対応ブラウザはクラス切替にフォールバック）から XTC ダウンロード / プレビューを選べる。サービス概要・利用規約・クローラー情報・連絡先は `/about`（`frontend/public/about.html`、ビルドで dist へそのままコピーされる静的ページ）に掲示し、フッターからリンクする。
 
 静的アセットの配信は Worker を通らず、エッジから直接配信される。
 
@@ -187,6 +187,12 @@ python3 -m venv .venv && .venv/bin/pip install pytest   # 初回のみ
 # Container イメージのビルド確認（linux/amd64 必須）
 docker build --platform linux/amd64 -f converter/Dockerfile converter/
 
+# フロントエンドのビルド（初回は npm install も必要）。
+# wrangler.jsonc の assets.directory が frontend/dist（gitignore 済み）を指すため、
+# 未ビルドのまま npx wrangler dev を実行すると起動に失敗する。
+npm install --prefix frontend
+npm run build --prefix frontend
+
 # 青空文庫カタログ用 D1 の作成（初回のみ。出力の database_id を
 # wrangler.jsonc の d1_databases[].database_id へ設定する）
 npx wrangler d1 create html2xtc-aozora-catalog
@@ -211,14 +217,25 @@ npx wrangler dev
 npm run deploy
 ```
 
-デプロイは必ず `npm run deploy`（[scripts/deploy.sh](scripts/deploy.sh)）で行う。作業ツリーがクリーンで HEAD が origin/main に push 済みであることを検証したうえで、稼働コミットを WebUI フッターに表示するための `public/version.json`（gitignore 済み）を生成してから `wrangler deploy` を実行し、成功時に `deploy-<UTC日時>-<短縮コミットハッシュ>` の Git タグを自動作成・push する。AGPL-3.0 対応として「デプロイごとに対応する Git タグを記録する」運用は、このスクリプトで自動化されている。`wrangler deploy` の直叩きはしないこと。
+フロントエンド（`frontend/`、Vite + Svelte 5）の開発は `npm install --prefix frontend` 後に `npm run dev:frontend` で Vite dev サーバーを起動する。`/convert` `/jobs` `/download` `/version.json` は `http://localhost:8787`（`npx wrangler dev`）へプロキシされるので、Worker を並行起動すれば実 API で動作確認できる。型チェックは `npm run check:frontend`（svelte-check）、本番ビルドは `npm run build:frontend`（`frontend/dist` に出力。デプロイ時は scripts/deploy.sh が自動でビルドする）。
+
+デプロイは必ず `npm run deploy`（[scripts/deploy.sh](scripts/deploy.sh)）で行う。作業ツリーがクリーンで HEAD が origin/main に push 済みであることを検証したうえで、フロントエンドをビルド（`npm ci --prefix frontend && npm run build --prefix frontend`）し、稼働コミットを WebUI フッターに表示するための `frontend/dist/version.json`（dist ごと gitignore 済み）を生成してから `wrangler deploy` を実行し、成功時に `deploy-<UTC日時>-<短縮コミットハッシュ>` の Git タグを自動作成・push する。AGPL-3.0 対応として「デプロイごとに対応する Git タグを記録する」運用は、このスクリプトで自動化されている。`wrangler deploy` の直叩きはしないこと。
 
 ## 構成ファイル
 
 ```
-public/
-  index.html     スマホ向け WebUI（vanilla 1 ページ、Workers static assets で配信。XTC プレビューのデコーダ含む）
-  about.html     サービス概要・利用規約・クローラー情報・連絡先（/about、静的配信）
+frontend/
+  index.html               SPA のエントリ HTML（Vite）
+  vite.config.ts           Vite 設定（dev proxy: /convert /jobs /download /version.json → :8787）
+  public/about.html        サービス概要・利用規約・クローラー情報・連絡先（/about、静的配信。dist へそのままコピー）
+  src/
+    App.svelte             ルートコンポーネント
+    components/            Header / ConvertForm / CurrentJob / History / PreviewDialog
+    lib/i18n.svelte.ts     日英 i18n（localStorage の xtc-lang、about.html と共有）
+    lib/jobs.svelte.ts     localStorage 履歴（最大 50 件・24h expired 判定）
+    lib/convert.svelte.ts  POST /jobs 送信とポーリング（4 秒間隔・タブ非表示で停止）
+    lib/preview.svelte.ts  XTC プレビュー状態（キャッシュ 5 件・破損ファイル無効化）
+    lib/xtc.ts             XTC/XTG デコーダ（純関数）
 src/
   index.ts       ルーティング・エラーハンドリング
   workflow.ts    ConvertWorkflow（[extract-content →] render-pdf → convert-xtc → delete-intermediate-pdf）
@@ -268,7 +285,7 @@ test/
 
 変換に使う [xtctool](https://github.com/chazeon/xtctool)（GPL-3.0 として扱う）と PyMuPDF（AGPL-3.0 / 商用デュアル）はリポジトリに含まれず、Docker ビルド時に取得する。`converter/app.py` が PyMuPDF を直接 import するため、権利者 Artifex の示す保守的な解釈（サーバーアプリケーションに組み込む場合はアプリケーション全体のソースを AGPL で開示する）に沿い、リポジトリ全体を AGPL-3.0-or-later で公開している。使用コミット・ビルド時に加えている変更・配布時の義務は [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) を参照。**Docker イメージを第三者へ配布する場合は同ファイル記載の GPL/AGPL 対応が必要。**
 
-このコードをネットワーク越しのサービスとして稼働させる場合、AGPL-3.0 第 13 条により、サービスの利用者に対して「稼働中のバージョンに対応するソースコード」を提供する必要がある（本デプロイでは WebUI フッターの GitHub リンクがこれに当たる）。稼働版とソースの対応関係を明確にするため、デプロイのたびに対応する Git タグ（または commit ハッシュ）を記録し、公開リポジトリの当該リビジョンがそのまま稼働版のソースとなるように運用する。このタグ記録は `npm run deploy`（[scripts/deploy.sh](scripts/deploy.sh)）が自動で行う（クリーンツリー・origin/main push 済みを検証のうえ、稼働コミットを記した `public/version.json` を生成してデプロイし、`deploy-<UTC日時>-<短縮コミットハッシュ>` タグを作成・push。詳細は「使い方」のデプロイ手順を参照）。WebUI フッターは `/version.json` を読み取り、稼働中の commit と当該リビジョンへの GitHub リンクを表示する。
+このコードをネットワーク越しのサービスとして稼働させる場合、AGPL-3.0 第 13 条により、サービスの利用者に対して「稼働中のバージョンに対応するソースコード」を提供する必要がある（本デプロイでは WebUI フッターの GitHub リンクがこれに当たる）。稼働版とソースの対応関係を明確にするため、デプロイのたびに対応する Git タグ（または commit ハッシュ）を記録し、公開リポジトリの当該リビジョンがそのまま稼働版のソースとなるように運用する。このタグ記録は `npm run deploy`（[scripts/deploy.sh](scripts/deploy.sh)）が自動で行う（クリーンツリー・origin/main push 済みを検証のうえ、フロントエンドをビルドし、稼働コミットを記した `frontend/dist/version.json` を生成してデプロイし、`deploy-<UTC日時>-<短縮コミットハッシュ>` タグを作成・push。詳細は「使い方」のデプロイ手順を参照）。WebUI フッターは `/version.json` を読み取り、稼働中の commit と当該リビジョンへの GitHub リンクを表示する。
 
 Container イメージの Python 依存（xtctool の推移的依存を含む）は [converter/requirements.lock](converter/requirements.lock) でバージョン・ハッシュとも完全固定しており、同じ Git リビジョンから再ビルドすれば稼働版と同一バージョンの依存構成が再現される（対応ソースの再現性確保。更新手順は同ファイルのヘッダーコメントを参照）。なおビルド時依存（hatchling 等の build-system.requires）は固定対象外。
 

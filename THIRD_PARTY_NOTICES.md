@@ -24,6 +24,6 @@
 ## その他の依存関係
 
 - xtctool の推移的依存（click、Pillow、numpy、requests、tqdm、numba、typst、jinja2 など）は、それぞれのライセンスに従ってビルド時にインストールされる。全 pip 依存は [converter/requirements.lock](converter/requirements.lock) でバージョン・ハッシュとも完全固定しており、同じ Git リビジョンから再ビルドすれば稼働版と同一バージョンの依存構成が再現される（AGPL の対応ソースの再現性確保）。ただしビルド時依存（xtctool の PEP 517 ビルドに使われる hatchling 等の build-system.requires）は固定対象外で、将来のバージョン更新によりビルド自体が失敗する可能性は残る。
-- Worker 側の npm 依存は [package.json](package.json) を参照。
+- Worker 側の npm 依存は [package.json](package.json) を参照。フロントエンド側の npm 依存（svelte、vite など。いずれも MIT）は [frontend/package.json](frontend/package.json) を参照。
 
 本ファイルは網羅的なライセンス調査の結果ではない。イメージや成果物を配布する際は、その時点の依存関係で改めてライセンスを確認すること。

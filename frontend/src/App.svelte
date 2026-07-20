@@ -1,6 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import { onMount } from "svelte";
+  import AozoraDialog from "./components/AozoraDialog.svelte";
   import ConvertForm from "./components/ConvertForm.svelte";
   import CurrentJob from "./components/CurrentJob.svelte";
   import Header from "./components/Header.svelte";
@@ -19,6 +20,7 @@
   <CurrentJob />
   <History />
 </main>
+<AozoraDialog />
 <PreviewDialog />
 
 <style>

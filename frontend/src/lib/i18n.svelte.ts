@@ -39,6 +39,18 @@ export interface Messages {
   no_server: string;
   http_error: (s: number) => string;
   pdf_too_large: string;
+  aozora_open: string;
+  aozora_title: string;
+  aozora_hint: string;
+  aozora_credit: string;
+  cancel: string;
+  aozora_start: string;
+  aozora_searching: string;
+  aozora_empty: string;
+  aozora_fail: string;
+  aozora_results: (n: number) => string;
+  aozora_selected: (n: number, max: number) => string;
+  aozora_convert: (n: number) => string;
   status: Record<JobStatus, string>;
 }
 
@@ -77,6 +89,18 @@ export const I18N: Record<Lang, Messages> = {
     no_server: "サーバーに接続できません。",
     http_error: (s) => `エラー (HTTP ${s})`,
     pdf_too_large: "生成された PDF がサイズ上限を超えました。「レイアウトを保持して変換する」を有効にすると変換できる場合があります。",
+    aozora_open: "青空文庫から選択",
+    aozora_title: "青空文庫から選択",
+    aozora_hint: "タイトル・作者名で検索できます",
+    aozora_credit: "データ提供：青空文庫",
+    cancel: "キャンセル",
+    aozora_start: "作品名か作者名を入力してください。",
+    aozora_searching: "検索中…",
+    aozora_empty: "該当する作品が見つかりませんでした。",
+    aozora_fail: "検索に失敗しました。時間をおいてお試しください。",
+    aozora_results: (n) => `検索結果 · ${n}件`,
+    aozora_selected: (n, max) => `${n} / ${max} 件選択中`,
+    aozora_convert: (n) => n > 0 ? `${n} 件を変換する` : "変換する",
     status: { queued: "待機中", rendering: "PDF 生成中", converting: "XTC 変換中", completed: "✓ 完了", failed: "失敗", expired: "期限切れ" },
   },
   en: {
@@ -113,6 +137,18 @@ export const I18N: Record<Lang, Messages> = {
     no_server: "Could not reach the server.",
     http_error: (s) => `Error (HTTP ${s})`,
     pdf_too_large: "The rendered PDF exceeds the size limit. Enabling “Keep the page layout” may allow the conversion to succeed.",
+    aozora_open: "Choose from Aozora Bunko",
+    aozora_title: "Choose from Aozora Bunko",
+    aozora_hint: "Search by title or author",
+    aozora_credit: "Data: Aozora Bunko",
+    cancel: "Cancel",
+    aozora_start: "Type a title or author name.",
+    aozora_searching: "Searching…",
+    aozora_empty: "No matching works found.",
+    aozora_fail: "Search failed. Please try again later.",
+    aozora_results: (n) => `Results · ${n}`,
+    aozora_selected: (n, max) => `${n} / ${max} selected`,
+    aozora_convert: (n) => n > 0 ? `Convert ${n} selected` : "Convert",
     status: { queued: "Queued", rendering: "Rendering PDF", converting: "Converting to XTC", completed: "✓ Done", failed: "Failed", expired: "Expired" },
   },
 };

@@ -6,32 +6,39 @@
   import { openPreview, previewBroken } from "../lib/preview.svelte";
 </script>
 
-{#if current.job}
-  {@const job = current.job}
-  {@const busy = !current.note && IN_FLIGHT.includes(job.status)}
+{#if current.entries.length}
   <div class="current">
-    {#if job.title}<div class="title-line">{job.title}</div>{/if}
-    <div class="url-line">{job.url}</div>
-    <div class="status-line">
-      {#if busy}<span class="spinner"></span>{/if}
-      <span class="badge" class:err={job.status === "failed" || job.status === "expired"}>{statusLabel(job.status)}</span>
-      {#if job.status === "completed"}
-        <a class="dl" href="/jobs/{encodeURIComponent(job.jobId)}/download">{t("dl")}</a>
-        <button
-          type="button"
-          class="preview-btn"
-          disabled={previewBroken.has(job.jobId)}
-          onclick={() => void openPreview(job.jobId)}
-        >{t("preview")}</button>
-      {/if}
-    </div>
-    {#if current.note}<div class="error-text">{noteText(current.note)}</div>{/if}
-    {#if job.status === "failed" && job.error}<div class="error-text">{serverErrorText(job.error)}</div>{/if}
+    {#each current.entries as entry (entry.key)}
+      {@const job = entry.job}
+      {@const busy = !entry.note && IN_FLIGHT.includes(job.status)}
+      <div class="job-row">
+        {#if job.title}<div class="title-line">{job.title}</div>{/if}
+        {#if job.url}<div class="url-line">{job.url}</div>{/if}
+        <div class="status-line">
+          {#if busy}<span class="spinner"></span>{/if}
+          <span class="badge" class:err={job.status === "failed" || job.status === "expired"}>{statusLabel(job.status)}</span>
+          {#if job.status === "completed"}
+            <a class="dl" href="/jobs/{encodeURIComponent(job.jobId)}/download">{t("dl")}</a>
+            <button
+              type="button"
+              class="preview-btn"
+              disabled={previewBroken.has(job.jobId)}
+              onclick={() => void openPreview(job.jobId)}
+            >{t("preview")}</button>
+          {/if}
+        </div>
+        {#if entry.note}<div class="error-text">{noteText(entry.note)}</div>{/if}
+        {#if job.status === "failed" && job.error}<div class="error-text">{serverErrorText(job.error)}</div>{/if}
+      </div>
+    {/each}
   </div>
 {/if}
 
 <style>
-  .current { padding: 22px 0; border-bottom: 1px solid var(--line); }
+  .current { border-bottom: 1px solid var(--line); }
+  /* 1 件時は旧 .current（padding: 22px 0）と同じ見え方。複数件は行間に区切り線。 */
+  .job-row { padding: 22px 0; }
+  .job-row + .job-row { border-top: 1px solid var(--line); }
   .title-line { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .url-line {
     font-family: var(--mono); font-size: 14px; color: var(--faint);

@@ -31,7 +31,8 @@
 		{
 			"class_name": "XtcConverterContainer",
 			"image": "./converter/Dockerfile",
-			"max_instances": 2,
+			// src/container.ts の CONVERTER_POOL_SIZE と一致させること。
+			"max_instances": 4,
 			// Default is "lite" (256MiB); PyMuPDF rasterization needs more headroom.
 			// basic (1GiB) suffices: converter/app.py splits long PDFs into
 			// page-range chunks, so peak memory tracks the chunk size (100p ≈

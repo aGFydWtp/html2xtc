@@ -474,9 +474,14 @@ export async function countGeneration(
 
 /**
  * Atomically points active_generation at the new generation and clears the
- * lock, guarded by lock ownership. Returns whether the switch happened (0
- * rows means the lock was lost — e.g. expired and taken over). This single
- * UPDATE is the instant the *_active views begin returning the new data.
+ * lock, guarded by lock ownership. This single UPDATE is the instant the
+ * *_active views begin returning the new data.
+ *
+ * Idempotent under a step retry: the UPDATE also clears lock_owner, so a
+ * retry (the response was lost after the commit) affects 0 rows. That alone
+ * is indistinguishable from "lock lost before activation", so before treating
+ * 0 rows as failure we re-read the state — if active_generation already equals
+ * ours, the switch happened on the earlier attempt and we report success.
  */
 export async function activateGeneration(
   db: D1Database,
@@ -508,7 +513,12 @@ export async function activateGeneration(
       runId,
     )
     .run();
-  return { activated: (result.meta.changes ?? 0) > 0 };
+  if ((result.meta.changes ?? 0) > 0) {
+    return { activated: true };
+  }
+  // Absorb a post-commit retry: a prior attempt may have already switched.
+  const state = await getCatalogState(db);
+  return { activated: state?.activeGeneration === activation.generation };
 }
 
 /**

@@ -33,10 +33,10 @@
 			"image": "./converter/Dockerfile",
 			"max_instances": 2,
 			// Default is "lite" (256MiB); PyMuPDF rasterization needs more headroom.
-			// TODO(chunked-conversion): xtctool が全ページを先読みするため長編 PDF
-			// (665p で実測ピーク 1.24GiB) が basic (1GiB) では OOM kill される。
-			// コンテナ内チャンク分割の実装後に "basic" へ戻す。
-			"instance_type": "standard-1"
+			// basic (1GiB) suffices: converter/app.py splits long PDFs into
+			// page-range chunks, so peak memory tracks the chunk size (100p ≈
+			// 380MB measured), not the document length.
+			"instance_type": "basic"
 		}
 	],
 	"workflows": [

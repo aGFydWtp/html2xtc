@@ -113,7 +113,9 @@ export function startPolling(job: JobEntry): void {
   void poll(p);
 }
 
-export async function submitUrl(rawUrl: string, keepLayout: boolean): Promise<void> {
+// displayTitle は青空文庫など、投入元が作品名を持つ場合の初期表示タイトル。
+// 指定時は poll でサーバー由来タイトルに上書きされない（下の !job.title ガード）。
+export async function submitUrl(rawUrl: string, keepLayout: boolean, displayTitle?: string): Promise<void> {
   const url = rawUrl.trim();
   if (!url) return;
   submitting.busy = true;
@@ -136,7 +138,13 @@ export async function submitUrl(rawUrl: string, keepLayout: boolean): Promise<vo
       return;
     }
     // 投入直後に履歴へ queued を記録してから並行ポーリングを開始する。
-    const job: JobEntry = { jobId: body.jobId, url, createdAt: new Date().toISOString(), status: "queued" };
+    const job: JobEntry = {
+      jobId: body.jobId,
+      url,
+      createdAt: new Date().toISOString(),
+      status: "queued",
+      ...(displayTitle ? { title: displayTitle } : {}),
+    };
     jobsStore.upsert({ ...job });
     startPolling(job);
   } catch {
@@ -175,7 +183,9 @@ async function poll(p: Poller): Promise<void> {
       p.failures = 0;
       p.poll404s = 0;
       job.status = body.status;
-      if (typeof body.title === "string" && body.title) job.title = body.title;
+      // 投入元が付けた表示タイトル（青空文庫の作品名など）は保持し、無い場合のみ
+      // サーバー由来タイトルを採用する。
+      if (typeof body.title === "string" && body.title && !job.title) job.title = body.title;
       if (body.error) job.error = body.error;
       jobsStore.upsert({ ...job });
       current.upsert(job.jobId, { ...job }, null);

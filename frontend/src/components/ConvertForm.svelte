@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
+  import { aozora } from "../lib/aozora.svelte";
   import { submitUrl, submitting } from "../lib/convert.svelte";
   import { t } from "../lib/i18n.svelte";
 
@@ -43,6 +44,9 @@
     <div class="form-note">{t("form_note")}</div>
     <div class="form-note"><span>{t("agree_before")}</span><a href="/about#terms">{t("agree_link")}</a><span>{t("agree_after")}</span></div>
   </form>
+  <div class="aozora-open-row">
+    <button type="button" class="secondary" onclick={() => aozora.show()}>{t("aozora_open")}</button>
+  </div>
 </section>
 
 <style>
@@ -83,4 +87,10 @@
   }
   .mode-row input { accent-color: var(--ink); width: 16px; height: 16px; margin: 0; flex: none; }
   .form-note { font-size: 14px; color: var(--muted); margin-top: 10px; }
+  .aozora-open-row { margin-top: 16px; }
+  button.secondary {
+    padding: 8px 18px; font: inherit; font-size: 14px; font-weight: 500; border-radius: 4px;
+    border: 1px solid var(--ink); background: var(--card); color: var(--ink); cursor: pointer;
+  }
+  button.secondary:hover { background: var(--panel); }
 </style>

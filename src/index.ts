@@ -16,9 +16,10 @@ import { renderPdf, renderPdfFromHtml } from "./pdf";
 import { storeXtcOutput } from "./pipeline";
 import { enforceRateLimit } from "./ratelimiter";
 import { isAozoraBunkoUrl, resolveRenderOptions } from "./sitepresets";
-import type { ConvertMode, Env } from "./types";
+import type { AozoraCatalogSyncParams, ConvertMode, Env } from "./types";
 import { UrlValidationError, validatePublicUrl } from "./validate";
 
+export { AozoraCatalogSyncWorkflow } from "./catalog-workflow";
 export { XtcConverterContainer } from "./container";
 export { RateLimiter } from "./ratelimiter";
 export { ConvertWorkflow } from "./workflow";
@@ -39,6 +40,36 @@ export default {
     } catch (error) {
       console.error("unhandled error", error);
       return Response.json({ error: "internal error" }, { status: 500 });
+    }
+  },
+
+  // Daily Cron (see wrangler.jsonc triggers.crons). Kicks off the Aozora
+  // catalog sync Workflow and returns; the heavy work (fetch, parse, D1 load)
+  // runs in the Workflow, never in this short-lived scheduled invocation.
+  async scheduled(controller, env) {
+    // Deriving the instance ID from scheduledTime dedupes a doubled Cron
+    // delivery: a second create() with the same ID throws instead of starting
+    // a parallel sync.
+    const id = `aozora-${controller.scheduledTime}`;
+    const params: AozoraCatalogSyncParams = {
+      scheduledTime: controller.scheduledTime,
+      cron: controller.cron,
+    };
+    try {
+      await env.AOZORA_SYNC_WORKFLOW.create({
+        id,
+        params,
+        // Instances carry no user data, only catalog metadata; a week is
+        // enough to inspect a failed sync's history via the dashboard.
+        retention: {
+          successRetention: "7 days",
+          errorRetention: "7 days",
+        },
+      });
+    } catch (error) {
+      // A duplicate-ID error means this scheduledTime already has a run; that
+      // is the intended dedupe, not a failure worth escalating.
+      console.error(`[${id}] catalog sync workflow create failed`, error);
     }
   },
 } satisfies ExportedHandler<Env>;

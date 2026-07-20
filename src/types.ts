@@ -45,12 +45,26 @@ export interface ConvertJobParams {
   font?: string;
 }
 
+/**
+ * Params handed to AozoraCatalogSyncWorkflow via AOZORA_SYNC_WORKFLOW.create()
+ * from scheduled(). Carries only the Cron controller fields — the instance ID
+ * (derived from scheduledTime) is what dedupes a doubled Cron delivery.
+ */
+export interface AozoraCatalogSyncParams {
+  scheduledTime: number;
+  cron: string;
+}
+
 export interface Env {
   BROWSER: BrowserRun;
   XTC_BUCKET: R2Bucket;
   XTC_CONVERTER: DurableObjectNamespace<XtcConverterContainer>;
   RATE_LIMITER: DurableObjectNamespace<RateLimiter>;
   CONVERT_WORKFLOW: Workflow<ConvertJobParams>;
+  /** D1 holding the Aozora Bunko catalog (generation-versioned). */
+  AOZORA_DB: D1Database;
+  /** Daily catalog sync, kicked off by scheduled() (src/catalog-workflow.ts). */
+  AOZORA_SYNC_WORKFLOW: Workflow<AozoraCatalogSyncParams>;
   /** Max rendered-PDF size in bytes. Default 20 MiB. */
   MAX_PDF_BYTES?: string;
   /**

@@ -15,6 +15,7 @@ import {
 import { renderPdf, renderPdfFromHtml } from "./pdf";
 import { storeXtcOutput } from "./pipeline";
 import { enforceRateLimit } from "./ratelimiter";
+import { isAozoraBunkoUrl } from "./sitepresets";
 import type { ConvertMode, Env } from "./types";
 import { UrlValidationError, validatePublicUrl } from "./validate";
 
@@ -255,13 +256,28 @@ async function handleConvert(request: Request, env: Env): Promise<Response> {
 
   let pdfResponse: Response;
   try {
-    if (mode === "extract") {
-      // prepareRenderInput degrades internally (fetch → browser → full);
-      // only the PDF render itself can still throw here.
-      const input = await prepareRenderInput(env, target, jobId);
+    // Aozora Bunko URLs take the prepared-HTML path regardless of mode: the
+    // vertical-writing preset lives behind prepareRenderInput, which for
+    // mode "full" degrades back to the plain URL render on any problem.
+    if (mode === "extract" || isAozoraBunkoUrl(target)) {
+      // prepareRenderInput degrades internally (aozora → fetch → browser →
+      // full); only the PDF render itself can still throw here.
+      const input = await prepareRenderInput(
+        env,
+        target,
+        jobId,
+        undefined,
+        undefined,
+        mode,
+      );
       pdfResponse =
         input.kind === "html"
-          ? await renderPdfFromHtml(env, input.html, input.fontCss)
+          ? await renderPdfFromHtml(
+              env,
+              input.html,
+              input.fontCss,
+              input.printPreset ?? "x3",
+            )
           : await renderPdf(env, input.url);
     } else {
       pdfResponse = await renderPdf(env, target.toString());

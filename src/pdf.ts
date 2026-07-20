@@ -289,6 +289,211 @@ ${X3_PRINT_RULES}`;
 export const X3_PRINT_CSS_NO_FONT_IMPORT = X3_PRINT_RULES;
 
 /**
+ * Print-CSS preset for HTML-sourced renders: "x3" is the default extract
+ * layout (horizontal, BIZ UDPGothic), "aozora" the vertical-writing Aozora
+ * Bunko layout (AOZORA_PRINT_RULES / BIZ UDMincho, src/aozora.ts).
+ */
+export type PrintPreset = "x3" | "aozora";
+
+// Aozora Bunko 字下げ (jisage_N: N-em indent from the line start) and 地付き
+// (chitsuki_N: aligned to the line end, N em short of it) run up to well
+// past 10 em in real files; 30 covers everything observed in practice, and
+// an unmatched deeper class just prints without the indent. Logical
+// properties on purpose: the original files carry physical margin-left/right
+// inline styles that would indent the wrong axis in vertical-rl —
+// sanitizeContent strips all inline styles, and these rules re-express the
+// intent along the inline axis.
+const AOZORA_MAX_INDENT_EM = 30;
+
+function aozoraIndentRules(): string {
+  const rules: string[] = [];
+  for (let n = 1; n <= AOZORA_MAX_INDENT_EM; n++) {
+    rules.push(`.jisage_${n} { margin-inline-start: ${n}em !important; }`);
+  }
+  rules.push(
+    `[class^="chitsuki_"], [class*=" chitsuki_"] { text-align: end !important; }`,
+  );
+  for (let n = 1; n <= AOZORA_MAX_INDENT_EM; n++) {
+    rules.push(`.chitsuki_${n} { margin-inline-end: ${n}em !important; }`);
+  }
+  return rules.join("\n    ");
+}
+
+/**
+ * Vertical-writing print CSS for Aozora Bunko documents (renderPdfFromHtml
+ * with preset "aozora"). Purpose-built instead of reusing X3_PRINT_RULES:
+ * the X3 rules are horizontal-writing assumptions throughout (its !important
+ * body font-family would beat this serif stack, and its per-element
+ * font-size normalization / margin stripping targets scraped web layouts,
+ * not a document this service authors itself). The page geometry (66mm x
+ * 99mm at 4mm margins — the Xteink X3 panel) is identical.
+ *
+ * Deliberate choices, mirroring the constraints documented on X3_PRINT_RULES:
+ * - writing-mode sits on html, not body: applying it below the root is a
+ *   known source of broken pagination in Chromium's print path.
+ * - font-family stays at TOP LEVEL (outside @media print) — same lazy-font
+ *   loading trap as the X3 stylesheet; test/pdf.test.ts pins this too.
+ * - No height:100%/100vh anywhere: a fixed block size on the body is the
+ *   classic way to collapse a vertical document into a single page.
+ * - BIZ UDMincho has no italic; 斜体 (shatai) degrades to synthetic oblique.
+ * - 傍点 (emphasis dots) map to text-emphasis: the original site CSS draws
+ *   them with horizontal repeat-x background images, unusable vertically.
+ */
+export const AOZORA_PRINT_RULES = `
+  /* Root: vertical flow + the serif stack. The named fallbacks do not exist
+     on Browser Run (worst case is its WenQuanYi face, as with the X3 path);
+     they matter for local previews only. */
+  html {
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+    font-family: "BIZ UDMincho", "Noto Serif JP", serif;
+    line-height: 1.9;
+    line-break: strict;
+  }
+
+  @page {
+    size: 66mm 99mm;
+    margin: 4mm;
+  }
+
+  @media print {
+    html,
+    body {
+      margin: 0 !important;
+      padding: 0 !important;
+      background: white !important;
+      color: black !important;
+    }
+
+    body {
+      font-size: 10pt !important;
+    }
+
+    body * {
+      color: black !important;
+      -webkit-text-fill-color: black !important;
+      text-shadow: none !important;
+      overflow-wrap: anywhere !important;
+    }
+
+    /* The title heading buildPrintHtml emits, plus the 見出し levels the
+       Aozora markup uses (h3.o-midashi / h4.naka-midashi / h5.ko-midashi).
+       Kept close to the body size: a 58mm-wide page has no room for large
+       display sizes. */
+    h1 {
+      font-size: 13pt !important;
+      font-weight: 700 !important;
+    }
+    h2 {
+      font-size: 11pt !important;
+      font-weight: 700 !important;
+    }
+    h3,
+    h4,
+    h5,
+    h6 {
+      font-size: 10.5pt !important;
+      font-weight: 700 !important;
+    }
+
+    /* Ruby: annotations on the right of the base text (over-position in
+       vertical-rl), readings upright, and the <rp> fallback parentheses
+       hidden — with real ruby layout they would print as stray （）. */
+    ruby {
+      ruby-position: over;
+    }
+    rt {
+      font-size: 0.5em !important;
+      text-orientation: upright;
+    }
+    rp {
+      display: none !important;
+    }
+
+    /* 傍点/傍線 (emphasis marks). Aozora marks them up as <em class="...">;
+       neutralize the italic default and the site's background-image dots,
+       then re-draw via text-emphasis / text-decoration. */
+    em[class] {
+      font-style: normal !important;
+      background: none !important;
+      padding: 0 !important;
+    }
+    em.sesame_dot,
+    em.sesame_dot_after {
+      text-emphasis: filled sesame;
+    }
+    em.white_sesame_dot {
+      text-emphasis: open sesame;
+    }
+    em.black_circle {
+      text-emphasis: filled circle;
+    }
+    em.white_circle {
+      text-emphasis: open circle;
+    }
+    em.black_up-pointing_triangle {
+      text-emphasis: filled triangle;
+    }
+    em.white_up-pointing_triangle {
+      text-emphasis: open triangle;
+    }
+    em.bullseye {
+      text-emphasis: open double-circle;
+    }
+    em.fisheye {
+      text-emphasis: filled double-circle;
+    }
+    em.saltire {
+      text-emphasis: "×";
+    }
+    em[class^="underline_"] {
+      text-decoration: underline;
+      text-underline-position: left;
+    }
+    em[class^="overline_"] {
+      text-decoration: overline;
+    }
+
+    /* 外字 (JIS X 0213 glyphs served as tiny PNGs): size them like a kanji.
+       Distinct from the illustration rule below — a gaiji is a character. */
+    img.gaiji {
+      width: 1em !important;
+      height: 1em !important;
+    }
+
+    /* 挿絵: keep them inside the page in both axes and unsplit. width/height
+       ATTRIBUTES survive sanitization (only style/srcset are stripped) and
+       would pin a squashed size once the max-* limits bite, so both CSS
+       dimensions go back to auto — with the attributes still supplying the
+       intrinsic aspect ratio. */
+    img {
+      max-inline-size: 100% !important;
+      max-block-size: 90% !important;
+    }
+    img.illustration {
+      width: auto !important;
+      height: auto !important;
+      break-inside: avoid;
+    }
+
+    /* Aozora's empty JS-table-of-contents placeholder (jquery is stripped by
+       the sanitizer; the div would just waste page space). */
+    #contents {
+      display: none !important;
+    }
+
+    /* 底本 (source edition) info, appended by extractAozoraArticle: small
+       print on its own page, like the colophon. */
+    .bibliographical_information {
+      break-before: page;
+      font-size: 8pt !important;
+    }
+
+    ${aozoraIndentRules()}
+  }
+`;
+
+/**
  * User agent the rendering browser announces when fetching the target page.
  * Named after the Googlebot "+URL" convention so site operators can identify
  * this service, block it by UA if unwanted, and find policy/contact
@@ -569,7 +774,19 @@ export function renderPdfFromHtml(
   env: Env,
   html: string,
   fontCss: string | null = null,
+  preset: PrintPreset = "x3",
 ): Promise<Response> {
+  // Preset selection. On the "aozora" preset a missing fontCss deliberately
+  // does NOT fall back to an @import stylesheet: the remote fetch is
+  // probabilistic at capture time (see the fonts.ts investigation notes), so
+  // the vertical path degrades straight to the serif fallback stack instead.
+  const rules = preset === "aozora" ? AOZORA_PRINT_RULES : X3_PRINT_CSS_NO_FONT_IMPORT;
+  const styles =
+    fontCss !== null
+      ? [{ content: fontCss }, { content: rules }]
+      : preset === "aozora"
+        ? [{ content: AOZORA_PRINT_RULES }]
+        : [{ content: X3_PRINT_CSS }];
   return env.BROWSER.quickAction("pdf", {
     html,
     // The browser still fetches the article's images from their origin;
@@ -587,10 +804,7 @@ export function renderPdfFromHtml(
     // (null) inject the @import variant instead — probabilistic like the
     // full path, worst case the WenQuanYi fallback, but never a second
     // fetch racing an inlined font.
-    addStyleTag:
-      fontCss !== null
-        ? [{ content: fontCss }, { content: X3_PRINT_CSS_NO_FONT_IMPORT }]
-        : [{ content: X3_PRINT_CSS }],
+    addStyleTag: styles,
     gotoOptions: PDF_GOTO_OPTIONS,
     // Probes show data: faces apply even without a wait once the family is
     // used at screen time; keep a safety margin for cold-instance decode of

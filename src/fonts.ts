@@ -31,8 +31,17 @@
  * behavior (worst case: Noto rendering, never a failed job).
  */
 
-const FONT_CSS_ENDPOINT =
-  "https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&display=swap";
+/**
+ * Default family for the extract path. The Aozora vertical path overrides
+ * this with "BIZ UDMincho" (src/aozora.ts); both are Google Fonts families
+ * with exactly the 400/700 weights the endpoint below requests.
+ */
+export const DEFAULT_FONT_FAMILY = "BIZ UDPGothic";
+
+/** css2 endpoint for `family`; spaces become + per the css2 URL convention. */
+function fontCssEndpoint(family: string): string {
+  return `https://fonts.googleapis.com/css2?family=${family.replace(/ /g, "+")}:wght@400;700&display=swap`;
+}
 
 /**
  * Sent to fonts.googleapis.com / fonts.gstatic.com ONLY. Google Fonts keys
@@ -82,6 +91,7 @@ export async function buildInlineFontCss(
   text: string,
   jobId: string,
   fetchFn: FontFetcher = fetch,
+  family: string = DEFAULT_FONT_FAMILY,
 ): Promise<string | null> {
   try {
     const chars = uniqueChars(text);
@@ -105,7 +115,7 @@ export async function buildInlineFontCss(
     }
 
     const cssChunks = await Promise.all(
-      chunks.map((chunk) => fetchFontCss(chunk, fetchFn)),
+      chunks.map((chunk) => fetchFontCss(chunk, fetchFn, family)),
     );
     const faces = cssChunks.flatMap((css) => parseFontFaces(css));
     if (faces.length === 0) {
@@ -123,10 +133,10 @@ export async function buildInlineFontCss(
     }
 
     const css = faces
-      .map((face, i) => inlineFontFace(face, fonts[i] as Uint8Array))
+      .map((face, i) => inlineFontFace(face, fonts[i] as Uint8Array, family))
       .join("\n");
     console.log(
-      `[${jobId}] font: inline (${faces.length} faces, ${Math.round(totalBytes / 1024)}KB woff2, ${covered} unique chars)`,
+      `[${jobId}] font: inline (${family}, ${faces.length} faces, ${Math.round(totalBytes / 1024)}KB woff2, ${covered} unique chars)`,
     );
     return css;
   } catch (error) {
@@ -154,8 +164,9 @@ function uniqueChars(text: string): string[] {
 async function fetchFontCss(
   chunk: string,
   fetchFn: FontFetcher,
+  family: string,
 ): Promise<string> {
-  const url = `${FONT_CSS_ENDPOINT}&text=${encodeURIComponent(chunk)}`;
+  const url = `${fontCssEndpoint(family)}&text=${encodeURIComponent(chunk)}`;
   const response = await fetchFn(url, {
     headers: { "User-Agent": FONT_FETCH_USER_AGENT },
     signal: AbortSignal.timeout(FONT_FETCH_TIMEOUT_MS),
@@ -205,11 +216,15 @@ function parseFontFaces(css: string): ParsedFontFace[] {
   return faces;
 }
 
-function inlineFontFace(face: ParsedFontFace, bytes: Uint8Array): string {
+function inlineFontFace(
+  face: ParsedFontFace,
+  bytes: Uint8Array,
+  family: string,
+): string {
   const range =
     face.unicodeRange === null ? "" : `unicode-range:${face.unicodeRange};`;
   return (
-    `@font-face{font-family:'BIZ UDPGothic';font-style:${face.fontStyle};` +
+    `@font-face{font-family:'${family}';font-style:${face.fontStyle};` +
     `font-weight:${face.fontWeight};font-display:swap;` +
     `src:url(data:font/woff2;base64,${base64Encode(bytes)}) format('woff2');${range}}`
   );

@@ -3,12 +3,15 @@
 
 import { Readability } from "@mozilla/readability";
 import { parseHTML } from "linkedom";
+import { prepareAozoraRenderInput } from "./aozora";
 import { buildInlineFontCss } from "./fonts";
 import type { FontFetcher } from "./fonts";
 import { resolveExtractMinChars } from "./jobs";
 import { formatJstTimestamp, RENDER_USER_AGENT } from "./pdf";
+import type { PrintPreset } from "./pdf";
 import { buildPrintHtml, printableText } from "./printhtml";
-import type { Env } from "./types";
+import { isAozoraBunkoUrl } from "./sitepresets";
+import type { ConvertMode, Env } from "./types";
 import { validatePublicUrl } from "./validate";
 
 /**
@@ -65,7 +68,17 @@ export interface SourceHtml {
  * X3_PRINT_RULES — see pdf.ts.)
  */
 export type RenderInput =
-  | { kind: "html"; html: string; fontCss: string | null }
+  | {
+      kind: "html";
+      html: string;
+      fontCss: string | null;
+      /**
+       * Print-CSS preset the render must use; absent means the default "x3"
+       * extract layout. "aozora" selects the vertical-writing rules
+       * (AOZORA_PRINT_RULES, see src/aozora.ts).
+       */
+      printPreset?: PrintPreset;
+    }
   | { kind: "url"; url: string };
 
 /** Injection point for tests, mirroring validate.ts's DnsResolver pattern. */
@@ -337,11 +350,11 @@ export async function fetchRenderedHtml(
 }
 
 /**
- * The extract-mode orchestrator: fetch → extract → (browser render → extract)
- * → degrade to full. Returns prepared print HTML when extraction succeeds,
- * otherwise the original URL for the classic full render. Never throws for
- * extraction problems; the chosen path is logged as
- * "[jobId] extract path: fetch|browser|fallback-full".
+ * The extract-mode orchestrator: site preset (Aozora Bunko) → fetch →
+ * extract → (browser render → extract) → degrade to full. Returns prepared
+ * print HTML when extraction succeeds, otherwise the original URL for the
+ * classic full render. Never throws for extraction problems; the chosen path
+ * is logged as "[jobId] extract path: aozora|fetch|browser|fallback-full".
  */
 export async function prepareRenderInput(
   env: ExtractEnv,
@@ -349,7 +362,34 @@ export async function prepareRenderInput(
   jobId: string,
   fetchSource: SourceHtmlFetcher = fetchSourceHtml,
   fontFetch: FontFetcher = fetch,
+  mode: ConvertMode = "extract",
 ): Promise<RenderInput> {
+  // Site preset: Aozora Bunko XHTML gets the dedicated vertical-writing
+  // pipeline regardless of mode (both callers route Aozora URLs here even
+  // for mode "full"). Fail-soft like everything else in this module: on any
+  // problem the standard pipeline below — or, for mode "full", the plain
+  // URL render — is the baseline.
+  if (isAozoraBunkoUrl(target)) {
+    const aozora = await prepareAozoraRenderInput(
+      target,
+      jobId,
+      fetchSource,
+      fontFetch,
+    );
+    if (aozora !== null) {
+      console.log(`[${jobId}] extract path: aozora`);
+      return aozora;
+    }
+    console.log(
+      `[${jobId}] aozora extraction failed; degrading to the standard ${mode} path`,
+    );
+  }
+  if (mode === "full") {
+    // Only reachable for an Aozora URL whose dedicated extraction failed:
+    // the caller asked for full mode, so degrade to exactly that.
+    return { kind: "url", url: target.toString() };
+  }
+
   const fetched = await fetchSource(target, jobId);
   if (fetched !== null) {
     const article = extractArticle(fetched.html, fetched.finalUrl.toString());

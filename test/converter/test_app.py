@@ -146,6 +146,112 @@ class TestConvertPdf:
         assert "timed out after 42s" in str(excinfo.value)
 
 
+class TestChunkedConversion:
+    """PDFs above CHUNK_THRESHOLD_PAGES are converted in CHUNK_SIZE_PAGES
+    page-range chunks and repacked; shorter PDFs keep the single-pass path."""
+
+    @staticmethod
+    def _recording_run(calls):
+        def run(cmd, **kwargs):
+            calls.append(list(cmd))
+            return run_success(cmd, **kwargs)
+
+        return run
+
+    @staticmethod
+    def _sources(cmd):
+        return cmd[2 : cmd.index("-o")]
+
+    def test_page_count_at_threshold_uses_single_pass(self):
+        calls = []
+        with mock.patch.object(
+            app.subprocess, "run", side_effect=self._recording_run(calls)
+        ):
+            result = app.convert_pdf(FAKE_PDF, page_count=app.CHUNK_THRESHOLD_PAGES)
+        assert result == FAKE_XTC
+        assert len(calls) == 1
+        (source,) = self._sources(calls[0])
+        assert source.endswith("source.pdf")  # no page-range suffix
+
+    def test_unknown_page_count_falls_back_to_single_pass(self):
+        calls = []
+        with mock.patch.object(
+            app.subprocess, "run", side_effect=self._recording_run(calls)
+        ):
+            with mock.patch.object(
+                app, "count_pdf_pages", return_value=None
+            ) as counter:
+                assert app.convert_pdf(FAKE_PDF) == FAKE_XTC
+        counter.assert_called_once_with(FAKE_PDF)
+        assert len(calls) == 1
+
+    def test_above_threshold_converts_in_chunks_then_repacks(self):
+        calls = []
+        with mock.patch.object(
+            app.subprocess, "run", side_effect=self._recording_run(calls)
+        ):
+            result = app.convert_pdf(FAKE_PDF, page_count=151)
+        assert result == FAKE_XTC
+        assert len(calls) == 3
+        (chunk1,) = self._sources(calls[0])
+        (chunk2,) = self._sources(calls[1])
+        assert chunk1.endswith("source.pdf:1-100")
+        assert chunk2.endswith("source.pdf:101-151")
+        # The repack step consumes exactly the chunk outputs, in page order.
+        chunk_outputs = [cmd[cmd.index("-o") + 1] for cmd in calls[:2]]
+        assert self._sources(calls[2]) == chunk_outputs
+        assert all(path.endswith(".xtc") for path in chunk_outputs)
+
+    def test_chunk_failure_raises_with_stage_name(self):
+        def run(cmd, **kwargs):
+            if any(str(part).endswith(":101-151") for part in cmd):
+                return run_failure(cmd, **kwargs)
+            return run_success(cmd, **kwargs)
+
+        with mock.patch.object(app.subprocess, "run", side_effect=run):
+            with pytest.raises(app.ConversionError) as excinfo:
+                app.convert_pdf(FAKE_PDF, page_count=151)
+        assert "chunk 2/2 pages 101-151" in str(excinfo.value)
+        assert "boom: bad pdf" in excinfo.value.stderr
+
+    def test_budget_exhaustion_between_chunks_raises(self):
+        # Fake clock: deadline calc at t=0, chunk 1 at t=1 (within budget),
+        # chunk 2 at t=9999 (budget exhausted before the subprocess starts).
+        clock = iter([0.0, 1.0, 9999.0])
+        with mock.patch.object(app.subprocess, "run", side_effect=run_success):
+            with mock.patch.object(app.time, "monotonic", side_effect=lambda: next(clock)):
+                with pytest.raises(app.ConversionError) as excinfo:
+                    app.convert_pdf(FAKE_PDF, page_count=151, timeout_seconds=10)
+        assert "timed out after 10s" in str(excinfo.value)
+
+    def test_read_pdf_metadata_returns_page_count_with_real_pymupdf(self):
+        pymupdf = pytest.importorskip("pymupdf")
+        doc = pymupdf.open()
+        doc.new_page()
+        doc.new_page()
+        title, page_count = app.read_pdf_metadata(doc.tobytes())
+        assert page_count == 2
+
+
+class TestPositiveEnvInt:
+    def test_missing_env_returns_default(self, monkeypatch):
+        monkeypatch.delenv("XTC_CHUNK_SIZE_PAGES", raising=False)
+        assert app._positive_env_int("XTC_CHUNK_SIZE_PAGES", 100) == 100
+
+    def test_valid_value_is_used(self, monkeypatch):
+        monkeypatch.setenv("XTC_CHUNK_SIZE_PAGES", "80")
+        assert app._positive_env_int("XTC_CHUNK_SIZE_PAGES", 100) == 80
+
+    def test_invalid_values_fall_back_to_default_with_warning(
+        self, monkeypatch, caplog
+    ):
+        for bad in ("0", "-5", "many"):
+            monkeypatch.setenv("XTC_CHUNK_SIZE_PAGES", bad)
+            with caplog.at_level(logging.WARNING, logger="converter"):
+                assert app._positive_env_int("XTC_CHUNK_SIZE_PAGES", 100) == 100
+        assert "XTC_CHUNK_SIZE_PAGES" in caplog.text
+
+
 SAMPLE_CONFIG = """\
 [output]
 width = 528
@@ -334,7 +440,7 @@ class TestHttpServer:
         assert "X-Xtc-Title" not in headers
 
     def test_convert_success_sends_percent_encoded_title_header(self, server):
-        with mock.patch.object(app, "extract_pdf_title", return_value="日本語 T"):
+        with mock.patch.object(app, "read_pdf_metadata", return_value=("日本語 T", 1)):
             with mock.patch.object(app.subprocess, "run", side_effect=run_success):
                 status, headers, body = request(
                     server, "POST", "/convert", body=FAKE_PDF
@@ -532,11 +638,11 @@ class TestHttpServer:
             observed["slot_free_during_extract"] = acquired
             if acquired:
                 slot.release()
-            return ""
+            return "", 1
 
         with mock.patch.object(app, "CONVERSION_SLOTS", slot):
             with mock.patch.object(
-                app, "extract_pdf_title", side_effect=probing_extract
+                app, "read_pdf_metadata", side_effect=probing_extract
             ):
                 with mock.patch.object(
                     app.subprocess, "run", side_effect=run_success

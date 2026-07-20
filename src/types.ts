@@ -65,6 +65,13 @@ export interface Env {
   AOZORA_DB: D1Database;
   /** Daily catalog sync, kicked off by scheduled() (src/catalog-workflow.ts). */
   AOZORA_SYNC_WORKFLOW: Workflow<AozoraCatalogSyncParams>;
+  /**
+   * D1 holding application data: accounts, WebAuthn credentials, sessions,
+   * devices, pairings, and the persistent library (migrations/app).
+   * Deliberately separate from AOZORA_DB so catalog re-syncs never touch
+   * user data (see implementation plan §7).
+   */
+  APP_DB: D1Database;
   /** Max rendered-PDF size in bytes. Default 20 MiB. */
   MAX_PDF_BYTES?: string;
   /**
@@ -77,4 +84,32 @@ export interface Env {
    * window). Default 50.
    */
   RATE_LIMIT_PER_HOUR?: string;
+  /**
+   * WebAuthn relying party ID (e.g. "xtc.hr20k.com"). Required once the
+   * passkey routes (a later phase) are wired up; unset in this phase.
+   */
+  WEBAUTHN_RP_ID?: string;
+  /**
+   * Expected Origin for WebAuthn ceremonies and the CSRF Origin check
+   * (src/auth/csrf.ts), e.g. "https://xtc.hr20k.com".
+   */
+  WEBAUTHN_ORIGIN?: string;
+  /** Session cookie lifetime in days. Default 30 (src/auth/sessions.ts). */
+  SESSION_TTL_DAYS?: string;
+  /**
+   * Secret mixed into the session token hash before it is persisted to D1
+   * (src/auth/sessions.ts). A Wrangler secret, never a var.
+   */
+  SESSION_PEPPER?: string;
+  /**
+   * AES-GCM key used to encrypt a device token in transit during pairing
+   * (device_pairings.encrypted_device_token). Consumed by the pairing
+   * module added in a later phase.
+   */
+  PAIRING_ENCRYPTION_KEY?: string;
+  /**
+   * Secret used to validate one-time registration invite tokens. Consumed by
+   * the passkey registration routes added in a later phase.
+   */
+  REGISTRATION_INVITE_SECRET?: string;
 }

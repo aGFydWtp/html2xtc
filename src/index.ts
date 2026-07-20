@@ -17,9 +17,12 @@ import {
   resolveMaxPdfBytes,
   xtcContentDisposition,
 } from "./jobs";
+import { registerLibraryRoutes } from "./library/routes";
 import { renderPdf, renderPdfFromHtml } from "./pdf";
 import { storeXtcOutput } from "./pipeline";
 import { enforceRateLimit } from "./ratelimiter";
+import { Router } from "./router";
+import { newRequestId, withSecurityHeaders } from "./security/headers";
 import { isAozoraBunkoUrl, resolveRenderOptions } from "./sitepresets";
 import type { AozoraCatalogSyncParams, ConvertMode, Env } from "./types";
 import { UrlValidationError, validatePublicUrl } from "./validate";
@@ -37,10 +40,21 @@ const UUID_PATTERN =
 // allows the full 600s xtctool run (see src/workflow.ts).
 const SYNC_CONVERTER_FETCH_TIMEOUT_MS = 150_000;
 
+// New (Phase 0+) endpoints — auth, library, devices, pairings, OPDS — are
+// registered here instead of in route() below. Existing endpoints are never
+// moved onto this router; router.handle() returns null for any path it
+// doesn't own, and fetch() falls back to the legacy route() unchanged.
+const router = new Router();
+registerLibraryRoutes(router);
+
 export default {
   async fetch(request, env) {
     // Whatever fails below, the client always gets an {error} JSON.
     try {
+      const routed = await router.handle(request, env);
+      if (routed !== null) {
+        return withSecurityHeaders(routed, newRequestId());
+      }
       return await route(request, env);
     } catch (error) {
       console.error("unhandled error", error);

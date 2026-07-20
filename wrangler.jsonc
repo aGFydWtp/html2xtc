@@ -37,6 +37,19 @@
 			"database_name": "html2xtc-aozora-catalog",
 			"database_id": "5b20f008-2d9a-417a-be9a-e9a7a3738eb5",
 			"migrations_dir": "migrations/aozora"
+		},
+		{
+			// Application data (accounts, sessions, devices, library items, ...).
+			// Deliberately separate from AOZORA_DB: catalog re-syncs/regenerations
+			// must never be able to touch user data. database_id is a placeholder
+			// until the real D1 database is created at deploy time — see
+			// docs/device-library-adr.md / implementation plan §12.
+			//   npx wrangler d1 create html2xtc-app
+			//   npx wrangler d1 migrations apply html2xtc-app --local
+			"binding": "APP_DB",
+			"database_name": "html2xtc-app",
+			"database_id": "TBD-SET-AT-DEPLOY",
+			"migrations_dir": "migrations/app"
 		}
 	],
 	"containers": [

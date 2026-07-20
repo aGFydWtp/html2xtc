@@ -32,15 +32,54 @@
  */
 
 /**
- * Default family for the extract path. The Aozora vertical path overrides
- * this with "BIZ UDMincho" (src/aozora.ts); both are Google Fonts families
- * with exactly the 400/700 weights the endpoint below requests.
+ * Default body family (the pre-options behavior). The request's `font`
+ * option may name any Google Fonts family; resolveRenderOptions
+ * (src/sitepresets.ts) falls back to this — or to BIZ UDMincho for Aozora
+ * Bunko URLs — when the option is absent or fails sanitization.
  */
 export const DEFAULT_FONT_FAMILY = "BIZ UDPGothic";
 
-/** css2 endpoint for `family`; spaces become + per the css2 URL convention. */
-function fontCssEndpoint(family: string): string {
-  return `https://fonts.googleapis.com/css2?family=${family.replace(/ /g, "+")}:wght@400;700&display=swap`;
+/**
+ * Families requested at 400;700. css2 rejects the whole request when ANY
+ * listed weight is missing from the family, so the dual-weight axis is only
+ * safe for families whose weights are known. Arbitrary user-supplied
+ * families are requested without a weight axis instead — css2 then serves
+ * regular (400) only, which every family has; bold text falls back to
+ * synthetic bold. Both defaults ship exactly 400/700 on Google Fonts.
+ */
+const DUAL_WEIGHT_FAMILIES = new Set(["BIZ UDPGothic", "BIZ UDMincho"]);
+
+/**
+ * css2 stylesheet URL for `family`; spaces become + per the css2 URL
+ * convention. Callers must pass a sanitizeFontFamily()-clean name — the
+ * character allowlist is what keeps this interpolation URL-safe.
+ */
+export function fontCssEndpoint(family: string): string {
+  const axis = DUAL_WEIGHT_FAMILIES.has(family) ? ":wght@400;700" : "";
+  return `https://fonts.googleapis.com/css2?family=${family.replace(/ /g, "+")}${axis}&display=swap`;
+}
+
+/**
+ * Validates a user-supplied Google Fonts family name; undefined for
+ * anything unusable (the caller then falls back to the default family).
+ * The name gets embedded in a quoted CSS font-family declaration AND in the
+ * css2 request URL, so this is injection control, not just tidiness: ASCII
+ * letters/digits/spaces/hyphens only (every Google Fonts family name fits),
+ * must start with a letter or digit, 64 chars max. Notably excluded:
+ * quotes, semicolons, braces, parentheses, slashes, "&", "#" and non-ASCII.
+ */
+export function sanitizeFontFamily(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || trimmed.length > 64) {
+    return undefined;
+  }
+  if (!/^[A-Za-z0-9][A-Za-z0-9 -]*$/.test(trimmed)) {
+    return undefined;
+  }
+  return trimmed;
 }
 
 /**

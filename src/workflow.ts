@@ -14,9 +14,8 @@ import {
   resolveMaxPdfBytes,
 } from "./jobs";
 import { renderPdf, renderPdfFromHtml } from "./pdf";
-import type { PrintPreset } from "./pdf";
 import { storeXtcOutput } from "./pipeline";
-import { isAozoraBunkoUrl } from "./sitepresets";
+import { isAozoraBunkoUrl, resolveRenderOptions } from "./sitepresets";
 import type { ConvertJobParams, Env } from "./types";
 
 // xtctool may run up to 600s (XTC_TIMEOUT_SECONDS in container.ts); allow a
@@ -51,15 +50,17 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
     // step return value (step outputs are capped at 1 MiB).
     let articleKey: string | null = null;
     let fontsKey: string | null = null;
-    // Which print CSS the render step must use; null means the default "x3"
-    // rules. Travels through the step return value (small JSON), unlike the
-    // HTML/fonts, which ride R2.
-    let printPreset: PrintPreset | null = null;
+    // Render options resolved deterministically from the params (explicit
+    // layout/font win; blanks fall back to per-site defaults — Aozora
+    // Bunko: vertical + BIZ UDMincho). Pure derivation, so it needs no step
+    // and every step attempt computes the same value.
+    const target = new URL(url);
+    const options = resolveRenderOptions(target, event.payload.layout, event.payload.font);
     // Aozora Bunko URLs run the extract-content step regardless of mode:
-    // their vertical-writing preset lives behind prepareRenderInput, which
-    // for mode "full" degrades back to the plain URL render on any problem.
-    if (mode === "extract" || isAozoraBunkoUrl(new URL(url))) {
-      ({ articleKey, fontsKey, printPreset } = await step.do(
+    // their dedicated extraction lives behind prepareRenderInput, which for
+    // mode "full" degrades back to the plain URL render on any problem.
+    if (mode === "extract" || isAozoraBunkoUrl(target)) {
+      ({ articleKey, fontsKey } = await step.do(
         "extract-content",
         {
           retries: { limit: 1, delay: "5 seconds", backoff: "constant" },
@@ -77,9 +78,10 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
             undefined,
             undefined,
             mode,
+            options,
           );
           if (input.kind === "url") {
-            return { articleKey: null, fontsKey: null, printPreset: null };
+            return { articleKey: null, fontsKey: null };
           }
           const key = articleHtmlKey(jobId);
           try {
@@ -94,7 +96,7 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
               `[${jobId}] R2 put ${key} failed; falling back to full render`,
               error,
             );
-            return { articleKey: null, fontsKey: null, printPreset: null };
+            return { articleKey: null, fontsKey: null };
           }
           // The inlined font CSS rides a second key: it is injected via
           // addStyleTag at render time (the docs-supported custom-font path
@@ -115,11 +117,7 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
               );
             }
           }
-          return {
-            articleKey: key,
-            fontsKey: storedFontsKey,
-            printPreset: input.printPreset ?? null,
-          };
+          return { articleKey: key, fontsKey: storedFontsKey };
         },
       ));
     }
@@ -165,16 +163,14 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
               );
             }
           }
-          // "?? x3" also covers instances whose extract step ran before the
-          // preset field existed (memoized step results lack printPreset).
           response = await renderPdfFromHtml(
             this.env,
             await article.text(),
             fontCss,
-            printPreset ?? "x3",
+            options,
           );
         } else {
-          response = await renderPdf(this.env, url);
+          response = await renderPdf(this.env, url, options);
         }
         if (!response.ok) {
           // Upstream detail goes to logs only; the thrown message surfaces

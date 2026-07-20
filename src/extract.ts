@@ -7,11 +7,10 @@ import { prepareAozoraRenderInput } from "./aozora";
 import { buildInlineFontCss } from "./fonts";
 import type { FontFetcher } from "./fonts";
 import { resolveExtractMinChars } from "./jobs";
-import { formatJstTimestamp, RENDER_USER_AGENT } from "./pdf";
-import type { PrintPreset } from "./pdf";
+import { DEFAULT_RENDER_OPTIONS, formatJstTimestamp, RENDER_USER_AGENT } from "./pdf";
 import { buildPrintHtml, printableText } from "./printhtml";
 import { isAozoraBunkoUrl } from "./sitepresets";
-import type { ConvertMode, Env } from "./types";
+import type { ConvertMode, Env, RenderOptions } from "./types";
 import { validatePublicUrl } from "./validate";
 
 /**
@@ -65,20 +64,10 @@ export interface SourceHtml {
  * injection path the custom-fonts docs document for quick actions, and
  * keeping the ~300KB of base64 out of the document keeps article.html small.
  * (What makes the font actually apply is the top-level font-family rule in
- * X3_PRINT_RULES — see pdf.ts.)
+ * the print rules — see pdf.ts.)
  */
 export type RenderInput =
-  | {
-      kind: "html";
-      html: string;
-      fontCss: string | null;
-      /**
-       * Print-CSS preset the render must use; absent means the default "x3"
-       * extract layout. "aozora" selects the vertical-writing rules
-       * (AOZORA_PRINT_RULES, see src/aozora.ts).
-       */
-      printPreset?: PrintPreset;
-    }
+  | { kind: "html"; html: string; fontCss: string | null }
   | { kind: "url"; url: string };
 
 /** Injection point for tests, mirroring validate.ts's DnsResolver pattern. */
@@ -363,18 +352,21 @@ export async function prepareRenderInput(
   fetchSource: SourceHtmlFetcher = fetchSourceHtml,
   fontFetch: FontFetcher = fetch,
   mode: ConvertMode = "extract",
+  options: RenderOptions = DEFAULT_RENDER_OPTIONS,
 ): Promise<RenderInput> {
-  // Site preset: Aozora Bunko XHTML gets the dedicated vertical-writing
-  // pipeline regardless of mode (both callers route Aozora URLs here even
-  // for mode "full"). Fail-soft like everything else in this module: on any
-  // problem the standard pipeline below — or, for mode "full", the plain
-  // URL render — is the baseline.
+  // Site preprocessing: Aozora Bunko XHTML gets the dedicated extraction
+  // regardless of mode (both callers route Aozora URLs here even for mode
+  // "full"); layout/font themselves come from `options`, resolved by the
+  // caller. Fail-soft like everything else in this module: on any problem
+  // the standard pipeline below — or, for mode "full", the plain URL
+  // render — is the baseline.
   if (isAozoraBunkoUrl(target)) {
     const aozora = await prepareAozoraRenderInput(
       target,
       jobId,
       fetchSource,
       fontFetch,
+      options,
     );
     if (aozora !== null) {
       console.log(`[${jobId}] extract path: aozora`);
@@ -402,6 +394,7 @@ export async function prepareRenderInput(
         fetched.finalUrl.toString(),
         jobId,
         fontFetch,
+        options,
       );
     }
     // Fetch worked but Readability found too little; record why the browser
@@ -418,7 +411,7 @@ export async function prepareRenderInput(
     const article = extractArticle(rendered, target.toString());
     if (isExtractSufficient(article, env)) {
       console.log(`[${jobId}] extract path: browser`);
-      return buildPrintInput(article, target.toString(), jobId, fontFetch);
+      return buildPrintInput(article, target.toString(), jobId, fontFetch, options);
     }
   }
 
@@ -438,12 +431,14 @@ async function buildPrintInput(
   sourceUrl: string,
   jobId: string,
   fontFetch: FontFetcher,
+  options: RenderOptions,
 ): Promise<RenderInput> {
   const convertedAt = formatJstTimestamp(new Date());
   const fontCss = await buildInlineFontCss(
     printableText(article, sourceUrl, convertedAt),
     jobId,
     fontFetch,
+    options.font,
   );
   return {
     kind: "html",

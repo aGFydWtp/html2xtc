@@ -15,7 +15,7 @@ import {
 import { renderPdf, renderPdfFromHtml } from "./pdf";
 import { storeXtcOutput } from "./pipeline";
 import { enforceRateLimit } from "./ratelimiter";
-import { isAozoraBunkoUrl } from "./sitepresets";
+import { isAozoraBunkoUrl, resolveRenderOptions } from "./sitepresets";
 import type { ConvertMode, Env } from "./types";
 import { UrlValidationError, validatePublicUrl } from "./validate";
 
@@ -107,20 +107,36 @@ function methodNotAllowed(allow: string): Response {
 interface ConvertRequest {
   target: URL;
   mode: ConvertMode;
+  /**
+   * Raw optional render options: validated fail-soft later by
+   * resolveRenderOptions (invalid values act as unspecified — never a 4xx —
+   * so the per-site defaults kick in), unlike mode's strict 400.
+   */
+  layout?: string;
+  font?: string;
 }
 
 /**
- * Parses the {url, mode} request body and runs SSRF validation. mode is
- * optional and defaults to "full" (the pre-extract behavior). Returns the
- * validated request, or the error Response to send as-is.
+ * Parses the {url, mode, layout, font} request body and runs SSRF
+ * validation. mode is optional and defaults to "full" (the pre-extract
+ * behavior); layout/font are optional render options resolved per URL by
+ * resolveRenderOptions. Returns the validated request, or the error
+ * Response to send as-is.
  */
 async function readConvertRequest(
   request: Request,
 ): Promise<ConvertRequest | Response> {
   let url: unknown;
   let mode: unknown;
+  let layout: unknown;
+  let font: unknown;
   try {
-    ({ url, mode } = await request.json<{ url?: unknown; mode?: unknown }>());
+    ({ url, mode, layout, font } = await request.json<{
+      url?: unknown;
+      mode?: unknown;
+      layout?: unknown;
+      font?: unknown;
+    }>());
   } catch {
     return Response.json({ error: "request body must be JSON" }, { status: 400 });
   }
@@ -135,7 +151,12 @@ async function readConvertRequest(
   }
 
   try {
-    return { target: await validatePublicUrl(url), mode: mode ?? "full" };
+    return {
+      target: await validatePublicUrl(url),
+      mode: mode ?? "full",
+      ...(typeof layout === "string" ? { layout } : {}),
+      ...(typeof font === "string" ? { font } : {}),
+    };
   } catch (error) {
     if (error instanceof UrlValidationError) {
       return Response.json({ error: error.message }, { status: 400 });
@@ -149,13 +170,20 @@ async function handleCreateJob(request: Request, env: Env): Promise<Response> {
   if (parsed instanceof Response) {
     return parsed;
   }
-  const { target, mode } = parsed;
+  const { target, mode, layout, font } = parsed;
 
   const jobId = crypto.randomUUID();
   try {
     await env.CONVERT_WORKFLOW.create({
       id: jobId,
-      params: { url: target.toString(), mode },
+      params: {
+        url: target.toString(),
+        mode,
+        // Stored raw; the Workflow re-resolves them via resolveRenderOptions
+        // (params persist across deploys, so it never trusts the shape).
+        ...(layout !== undefined ? { layout } : {}),
+        ...(font !== undefined ? { font } : {}),
+      },
       // The submitted URL lives in params, so instance state must not outlive
       // the ~24h promised to users (default retention is 30 days on Paid).
       // Errored instances carry the URL too, hence the same errorRetention.
@@ -250,15 +278,18 @@ async function handleConvert(request: Request, env: Env): Promise<Response> {
   if (parsed instanceof Response) {
     return parsed;
   }
-  const { target, mode } = parsed;
+  const { target, mode, layout, font } = parsed;
+  // Explicit layout/font win; blanks (and invalid values, fail-soft) resolve
+  // to per-site defaults — Aozora Bunko: vertical + BIZ UDMincho.
+  const options = resolveRenderOptions(target, layout, font);
 
   const jobId = crypto.randomUUID();
 
   let pdfResponse: Response;
   try {
     // Aozora Bunko URLs take the prepared-HTML path regardless of mode: the
-    // vertical-writing preset lives behind prepareRenderInput, which for
-    // mode "full" degrades back to the plain URL render on any problem.
+    // dedicated extraction lives behind prepareRenderInput, which for mode
+    // "full" degrades back to the plain URL render on any problem.
     if (mode === "extract" || isAozoraBunkoUrl(target)) {
       // prepareRenderInput degrades internally (aozora → fetch → browser →
       // full); only the PDF render itself can still throw here.
@@ -269,18 +300,14 @@ async function handleConvert(request: Request, env: Env): Promise<Response> {
         undefined,
         undefined,
         mode,
+        options,
       );
       pdfResponse =
         input.kind === "html"
-          ? await renderPdfFromHtml(
-              env,
-              input.html,
-              input.fontCss,
-              input.printPreset ?? "x3",
-            )
-          : await renderPdf(env, input.url);
+          ? await renderPdfFromHtml(env, input.html, input.fontCss, options)
+          : await renderPdf(env, input.url, options);
     } else {
-      pdfResponse = await renderPdf(env, target.toString());
+      pdfResponse = await renderPdf(env, target.toString(), options);
     }
   } catch (error) {
     console.error(`[${jobId}] Browser Run request failed`, error);

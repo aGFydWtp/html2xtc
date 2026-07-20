@@ -1,20 +1,35 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  AOZORA_DOCUMENT_CSS,
   extractAozoraArticle,
   prepareAozoraRenderInput,
 } from "../src/aozora";
 import { prepareRenderInput } from "../src/extract";
 import type { SourceHtmlFetcher } from "../src/extract";
-import { buildInlineFontCss } from "../src/fonts";
+import {
+  buildInlineFontCss,
+  fontCssEndpoint,
+  sanitizeFontFamily,
+} from "../src/fonts";
 import type { FontFetcher } from "../src/fonts";
-import { AOZORA_PRINT_RULES, renderPdfFromHtml } from "../src/pdf";
-import { isAozoraBunkoUrl } from "../src/sitepresets";
-import type { Env } from "../src/types";
+import {
+  buildPrintCssWithFontImport,
+  buildPrintRules,
+  renderPdfFromHtml,
+} from "../src/pdf";
+import { isAozoraBunkoUrl, resolveRenderOptions } from "../src/sitepresets";
+import type { Env, RenderOptions } from "../src/types";
 
 const JOB_ID = "0f6ff35e-3f8a-4f2e-9c8e-1a2b3c4d5e6f";
 
 const AOZORA_URL =
   "https://www.aozora.gr.jp/cards/000148/files/789_14547.html";
+
+/** The resolved default options for an Aozora URL. */
+const VERTICAL_MINCHO: RenderOptions = {
+  layout: "vertical",
+  font: "BIZ UDMincho",
+};
 
 // Shape of a real Aozora XHTML reader file: XML prolog, Shift_JIS metas,
 // ruby in full <rb>/<rp>/<rt> form, U+3000 paragraph indents, <br /> breaks,
@@ -47,6 +62,15 @@ const AOZORA_HTML = `<?xml version="1.0" encoding="Shift_JIS"?>
 </body>
 </html>`;
 
+// Standard-pipeline fixture (long enough for Readability + the extract
+// gate), for the general-site + explicit-options cases.
+const GENERAL_BODY = "これは本文の段落です。抽出テストのための文章が続きます。".repeat(30);
+const GENERAL_HTML = `<!doctype html>
+<html lang="ja">
+<head><title>一般記事</title></head>
+<body><article><h1>一般記事</h1><p>${GENERAL_BODY}</p><p>${GENERAL_BODY}</p></article></body>
+</html>`;
+
 const sourceAozora: SourceHtmlFetcher = async () => ({
   html: AOZORA_HTML,
   finalUrl: new URL(AOZORA_URL),
@@ -55,6 +79,26 @@ const sourceAozora: SourceHtmlFetcher = async () => ({
 const fontFetchFail: FontFetcher = async () => {
   throw new Error("no network in tests");
 };
+
+/** css2/gstatic mock that serves `face` and records every request URL. */
+const fontFetchServing = (face: string) => {
+  const calls: string[] = [];
+  const fetchFn: FontFetcher = async (url) => {
+    calls.push(url);
+    return url.startsWith("https://fonts.googleapis.com/")
+      ? new Response(face, { status: 200 })
+      : new Response(new Uint8Array([1, 2, 3, 4]).buffer, { status: 200 });
+  };
+  return { fetchFn, calls };
+};
+
+const mincho400Face = (family: string) => `@font-face {
+  font-family: '${family}';
+  font-style: normal;
+  font-weight: 400;
+  src: url(https://fonts.gstatic.com/l/font?kit=k4) format('woff2');
+  unicode-range: U+3042;
+}`;
 
 const browserEnv = () => {
   const quickAction = vi.fn(
@@ -101,6 +145,92 @@ describe("isAozoraBunkoUrl", () => {
   });
 });
 
+describe("resolveRenderOptions", () => {
+  const general = new URL("https://example.com/article");
+  const aozora = new URL(AOZORA_URL);
+
+  it("defaults to horizontal + BIZ UDPGothic", () => {
+    expect(resolveRenderOptions(general)).toEqual({
+      layout: "horizontal",
+      font: "BIZ UDPGothic",
+    });
+  });
+
+  it("defaults Aozora URLs to vertical + BIZ UDMincho", () => {
+    expect(resolveRenderOptions(aozora)).toEqual(VERTICAL_MINCHO);
+  });
+
+  it("lets explicit values beat the per-site defaults (both directions)", () => {
+    // Aozora forced back to horizontal, with a user-chosen family.
+    expect(resolveRenderOptions(aozora, "horizontal", "Noto Serif JP")).toEqual({
+      layout: "horizontal",
+      font: "Noto Serif JP",
+    });
+    // Ordinary site rendered vertically.
+    expect(resolveRenderOptions(general, "vertical", "Zen Old Mincho")).toEqual({
+      layout: "vertical",
+      font: "Zen Old Mincho",
+    });
+  });
+
+  it("fails soft to the defaults on invalid values (never an error)", () => {
+    expect(resolveRenderOptions(general, "diagonal", 42)).toEqual({
+      layout: "horizontal",
+      font: "BIZ UDPGothic",
+    });
+    // Invalid values on an Aozora URL fall back to the AOZORA defaults.
+    expect(resolveRenderOptions(aozora, "slanted", "Fake'); @import")).toEqual(
+      VERTICAL_MINCHO,
+    );
+  });
+});
+
+describe("sanitizeFontFamily", () => {
+  it("accepts real Google Fonts family names (trimmed)", () => {
+    expect(sanitizeFontFamily("BIZ UDMincho")).toBe("BIZ UDMincho");
+    expect(sanitizeFontFamily("  Zen Old Mincho ")).toBe("Zen Old Mincho");
+    expect(sanitizeFontFamily("M PLUS 1p")).toBe("M PLUS 1p");
+  });
+
+  it("rejects anything that could break out of CSS or the css2 URL", () => {
+    for (const value of [
+      "Fake'; } body { display: none }", // CSS injection
+      'Fake" <style>', // markup
+      "Fake&family=Evil", // URL parameter smuggling
+      "游明朝", // non-ASCII: not a Google Fonts machine name
+      "-leading-hyphen",
+      "a".repeat(65), // over the length cap
+      "",
+      "   ",
+      42,
+      null,
+      undefined,
+      ["BIZ UDMincho"],
+    ]) {
+      expect(sanitizeFontFamily(value)).toBeUndefined();
+    }
+  });
+});
+
+describe("fontCssEndpoint", () => {
+  it("requests 400;700 for the known dual-weight defaults", () => {
+    expect(fontCssEndpoint("BIZ UDPGothic")).toBe(
+      "https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&display=swap",
+    );
+    expect(fontCssEndpoint("BIZ UDMincho")).toContain(":wght@400;700");
+  });
+
+  it("requests regular only for arbitrary families (+-encoded)", () => {
+    // css2 rejects the whole request when a listed weight is missing from
+    // the family, so unknown families must not pin a weight axis.
+    const url = fontCssEndpoint("Zen Old Mincho");
+    expect(url).toBe(
+      "https://fonts.googleapis.com/css2?family=Zen+Old+Mincho&display=swap",
+    );
+    expect(url).not.toContain("wght");
+  });
+});
+
 describe("extractAozoraArticle", () => {
   it("pulls title, author and the main text with ruby intact", () => {
     const article = extractAozoraArticle(AOZORA_HTML, AOZORA_URL);
@@ -141,22 +271,51 @@ describe("extractAozoraArticle", () => {
   });
 });
 
+describe("AOZORA_DOCUMENT_CSS", () => {
+  it("re-expresses 字下げ/地付き along the logical inline axis", () => {
+    expect(AOZORA_DOCUMENT_CSS).toContain(
+      ".jisage_2 { margin-inline-start: 2em !important; }",
+    );
+    expect(AOZORA_DOCUMENT_CSS).toContain(
+      ".chitsuki_1 { margin-inline-end: 1em !important; }",
+    );
+    expect(AOZORA_DOCUMENT_CSS).toMatch(/chitsuki[^}]*text-align:\s*end/);
+    // Physical properties must not sneak in: they indent the wrong axis in
+    // vertical writing.
+    expect(AOZORA_DOCUMENT_CSS).not.toContain("margin-left");
+    expect(AOZORA_DOCUMENT_CSS).not.toContain("margin-right");
+  });
+
+  it("replaces the background-image 傍点 with text-emphasis", () => {
+    expect(AOZORA_DOCUMENT_CSS).toContain("text-emphasis: filled sesame");
+    expect(AOZORA_DOCUMENT_CSS).toMatch(/em\[class\]\s*\{[^}]*background: none/);
+  });
+
+  it("sizes 外字 like a kanji", () => {
+    expect(AOZORA_DOCUMENT_CSS).toMatch(/img\.gaiji\s*\{[^}]*width: 1em/);
+  });
+});
+
 describe("prepareAozoraRenderInput", () => {
-  it("builds a vertical-preset print document", async () => {
+  it("builds a print document with the structure CSS embedded", async () => {
     const input = await prepareAozoraRenderInput(
       new URL(AOZORA_URL),
       JOB_ID,
       sourceAozora,
       fontFetchFail,
+      VERTICAL_MINCHO,
     );
     expect(input).not.toBeNull();
     expect(input?.kind).toBe("html");
     if (input?.kind !== "html") {
       return;
     }
-    expect(input.printPreset).toBe("aozora");
     // Font fail-soft: render proceeds without the inline font.
     expect(input.fontCss).toBeNull();
+    // The Aozora structure CSS travels inside the document, so it applies
+    // under whichever layout the request resolved to.
+    expect(input.html).toContain("margin-inline-start: 2em");
+    expect(input.html).toContain("text-emphasis: filled sesame");
     // Ruby structure survives sanitization end to end.
     expect(input.html).toContain("<rt>のぼ</rt>");
     // Site-relative gaiji and files-relative illustration are absolutized.
@@ -166,8 +325,8 @@ describe("prepareAozoraRenderInput", () => {
     expect(input.html).toContain(
       'src="https://www.aozora.gr.jp/cards/000148/files/fig789_01.png"',
     );
-    // Physical inline margins are gone (vertical-rl would indent the wrong
-    // axis); the class survives for the logical margin-inline rules.
+    // The original PHYSICAL inline margins are gone (sanitizeContent strips
+    // inline styles); the classes survive for the logical rules above.
     expect(input.html).not.toContain("margin-left");
     expect(input.html).toContain('class="jisage_2"');
     expect(input.html).toContain('class="chitsuki_1"');
@@ -178,6 +337,22 @@ describe("prepareAozoraRenderInput", () => {
     expect(input.html).toContain(AOZORA_URL);
   });
 
+  it("subsets the font the options selected", async () => {
+    const { fetchFn, calls } = fontFetchServing(mincho400Face("BIZ UDMincho"));
+    const input = await prepareAozoraRenderInput(
+      new URL(AOZORA_URL),
+      JOB_ID,
+      sourceAozora,
+      fetchFn,
+      VERTICAL_MINCHO,
+    );
+    expect(input?.kind).toBe("html");
+    if (input?.kind === "html") {
+      expect(input.fontCss).toContain("font-family:'BIZ UDMincho'");
+    }
+    expect(calls[0]).toContain("family=BIZ+UDMincho");
+  });
+
   it("returns null when the fetch fails", async () => {
     await expect(
       prepareAozoraRenderInput(
@@ -185,13 +360,14 @@ describe("prepareAozoraRenderInput", () => {
         JOB_ID,
         async () => null,
         fontFetchFail,
+        VERTICAL_MINCHO,
       ),
     ).resolves.toBeNull();
   });
 });
 
-describe("prepareRenderInput aozora routing", () => {
-  it("uses the aozora preset for Aozora URLs regardless of mode", async () => {
+describe("prepareRenderInput routing", () => {
+  it("runs the aozora extraction for Aozora URLs regardless of mode", async () => {
     const { env, quickAction } = browserEnv();
     for (const mode of ["full", "extract"] as const) {
       const input = await prepareRenderInput(
@@ -201,10 +377,11 @@ describe("prepareRenderInput aozora routing", () => {
         sourceAozora,
         fontFetchFail,
         mode,
+        VERTICAL_MINCHO,
       );
       expect(input.kind).toBe("html");
       if (input.kind === "html") {
-        expect(input.printPreset).toBe("aozora");
+        expect(input.html).toContain("text-emphasis: filled sesame");
       }
     }
     expect(quickAction).not.toHaveBeenCalled();
@@ -219,6 +396,7 @@ describe("prepareRenderInput aozora routing", () => {
       async () => null,
       fontFetchFail,
       "full",
+      VERTICAL_MINCHO,
     );
     expect(input).toEqual({ kind: "url", url: AOZORA_URL });
     // Full mode must not silently pay for the browser-extract fallback.
@@ -234,50 +412,54 @@ describe("prepareRenderInput aozora routing", () => {
       async () => null,
       fontFetchFail,
       "extract",
+      VERTICAL_MINCHO,
     );
     // Fetch fails and the browser fallback reports failure → full render.
     expect(input).toEqual({ kind: "url", url: AOZORA_URL });
   });
 
-  it("keeps non-aozora URLs off the aozora preset", async () => {
+  it("keeps general sites on the standard pipeline and honors the font option", async () => {
+    const target = new URL("https://example.com/article");
+    const sourceGeneral: SourceHtmlFetcher = async () => ({
+      html: GENERAL_HTML,
+      finalUrl: target,
+    });
+    const { fetchFn, calls } = fontFetchServing(mincho400Face("Noto Serif JP"));
     const { env } = browserEnv();
     const input = await prepareRenderInput(
       env,
-      new URL("https://example.com/cards/000148/files/789_14547.html"),
+      target,
       JOB_ID,
-      sourceAozora,
-      fontFetchFail,
+      sourceGeneral,
+      fetchFn,
+      "extract",
+      { layout: "vertical", font: "Noto Serif JP" },
     );
+    expect(input.kind).toBe("html");
     if (input.kind === "html") {
-      expect(input.printPreset).toBeUndefined();
+      // Standard (Readability) document: no Aozora structure CSS embedded.
+      expect(input.html).not.toContain("text-emphasis: filled sesame");
+      expect(input.fontCss).toContain("font-family:'Noto Serif JP'");
     }
+    // Arbitrary family: no weight axis in the css2 request.
+    expect(calls[0]).toContain("family=Noto+Serif+JP&display=swap");
   });
 });
 
-describe("buildInlineFontCss family override", () => {
-  it("requests and emits BIZ UDMincho when asked to", async () => {
-    const face = `@font-face {
-  font-family: 'BIZ UDMincho';
-  font-style: normal;
-  font-weight: 400;
-  src: url(https://fonts.gstatic.com/l/font?kit=k4) format('woff2');
-  unicode-range: U+3042;
-}`;
-    const calls: string[] = [];
-    const fetchFn: FontFetcher = async (url) => {
-      calls.push(url);
-      return url.startsWith("https://fonts.googleapis.com/")
-        ? new Response(face, { status: 200 })
-        : new Response(new Uint8Array([1, 2, 3, 4]).buffer, { status: 200 });
-    };
+describe("buildInlineFontCss family selection", () => {
+  it("requests and emits the given family", async () => {
+    const { fetchFn, calls } = fontFetchServing(mincho400Face("BIZ UDMincho"));
     const css = await buildInlineFontCss("あ", JOB_ID, fetchFn, "BIZ UDMincho");
     expect(css).toContain("font-family:'BIZ UDMincho'");
     expect(calls[0]).toContain("family=BIZ+UDMincho");
   });
 });
 
-describe("AOZORA_PRINT_RULES", () => {
-  const rules = AOZORA_PRINT_RULES.replace(/\/\*[\s\S]*?\*\//g, "");
+describe("buildPrintRules (vertical)", () => {
+  const rules = buildPrintRules(VERTICAL_MINCHO).replace(
+    /\/\*[\s\S]*?\*\//g,
+    "",
+  );
 
   it("sets vertical writing on the root element", () => {
     expect(rules).toMatch(/html\s*\{[^}]*writing-mode:\s*vertical-rl/);
@@ -288,29 +470,27 @@ describe("AOZORA_PRINT_RULES", () => {
     expect(rules).toContain("margin: 4mm");
   });
 
-  it("declares the BIZ UDMincho family OUTSIDE the @media print block", () => {
-    // Same lazy-font-loading pin as X3_PRINT_CSS: Chromium's print capture
-    // only waits for a web font that some element references under the
-    // CURRENT (screen) media, so the family must sit at the top level.
+  it("stacks the chosen family over the layout's generic fallback", () => {
+    expect(rules).toContain('font-family: "BIZ UDMincho", serif !important');
+    expect(
+      buildPrintRules({ layout: "vertical", font: "Zen Old Mincho" }),
+    ).toContain('font-family: "Zen Old Mincho", serif !important');
+    // Horizontal layouts fall back to sans-serif instead.
+    expect(
+      buildPrintRules({ layout: "horizontal", font: "BIZ UDPGothic" }),
+    ).toContain('font-family: "BIZ UDPGothic", sans-serif !important');
+  });
+
+  it("declares the family OUTSIDE the @media print block", () => {
+    // Same lazy-font-loading pin as the horizontal stylesheet: Chromium's
+    // print capture only waits for a web font that some element references
+    // under the CURRENT (screen) media.
     const familyIndex = rules.indexOf("font-family:");
     const printIndex = rules.indexOf("@media print");
     expect(familyIndex).toBeGreaterThan(-1);
     expect(printIndex).toBeGreaterThan(-1);
     expect(familyIndex).toBeLessThan(printIndex);
     expect(rules.slice(printIndex)).not.toContain("font-family");
-    expect(rules).toContain('"BIZ UDMincho"');
-  });
-
-  it("never @imports a remote stylesheet", () => {
-    // The vertical path relies on the inlined subset only; a remote fetch
-    // at capture time is probabilistic and must not be reintroduced.
-    expect(rules).not.toContain("@import");
-  });
-
-  it("indents 字下げ/地付き along the logical inline axis", () => {
-    expect(rules).toContain(".jisage_2 { margin-inline-start: 2em !important; }");
-    expect(rules).toContain(".chitsuki_1 { margin-inline-end: 1em !important; }");
-    expect(rules).toMatch(/chitsuki[^}]*text-align:\s*end/);
   });
 
   it("hides the rp fallback parentheses and shrinks rt", () => {
@@ -325,7 +505,22 @@ describe("AOZORA_PRINT_RULES", () => {
   });
 });
 
-describe("renderPdfFromHtml aozora preset", () => {
+describe("buildPrintCssWithFontImport", () => {
+  it("imports the css2 stylesheet of the selected family first", () => {
+    const css = buildPrintCssWithFontImport({
+      layout: "vertical",
+      font: "Zen Old Mincho",
+    });
+    const firstRule = css.replace(/\/\*[\s\S]*?\*\//g, "").trim();
+    expect(
+      firstRule.startsWith(
+        '@import url("https://fonts.googleapis.com/css2?family=Zen+Old+Mincho&display=swap");',
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("renderPdfFromHtml with options", () => {
   const captureEnv = () => {
     const quickAction = vi.fn(
       async (_action: string, _options: unknown) =>
@@ -345,17 +540,22 @@ describe("renderPdfFromHtml aozora preset", () => {
       }
     ).addStyleTag.map((tag) => tag.content);
 
-  it("injects the vertical rules after the inline font", async () => {
+  it("injects the layout rules after the inline font", async () => {
     const { env, quickAction } = captureEnv();
     const fontCss = "@font-face{font-family:'BIZ UDMincho';src:url(data:font/woff2;base64,AQIDBA==) format('woff2');}";
-    await renderPdfFromHtml(env, "<html></html>", fontCss, "aozora");
-    expect(styleContents(quickAction)).toEqual([fontCss, AOZORA_PRINT_RULES]);
+    await renderPdfFromHtml(env, "<html></html>", fontCss, VERTICAL_MINCHO);
+    expect(styleContents(quickAction)).toEqual([
+      fontCss,
+      buildPrintRules(VERTICAL_MINCHO),
+    ]);
   });
 
-  it("renders with the vertical rules alone when the font failed (no @import fallback)", async () => {
+  it("falls back to the @import variant of the same options when the font failed", async () => {
     const { env, quickAction } = captureEnv();
-    await renderPdfFromHtml(env, "<html></html>", null, "aozora");
-    expect(styleContents(quickAction)).toEqual([AOZORA_PRINT_RULES]);
+    await renderPdfFromHtml(env, "<html></html>", null, VERTICAL_MINCHO);
+    expect(styleContents(quickAction)).toEqual([
+      buildPrintCssWithFontImport(VERTICAL_MINCHO),
+    ]);
   });
 });
 

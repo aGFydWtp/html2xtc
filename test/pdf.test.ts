@@ -123,12 +123,14 @@ describe("X3_PRINT_CSS", () => {
     expect(PRINT_FONT_CSS_URL).toContain("display=swap");
   });
 
-  it("prefers BIZ UDPGothic with the fallback stack", () => {
-    // Web font first. The named fallbacks do NOT exist on Browser Run (its
-    // only CJK face is WenQuanYi Zen Hei); they are harmless there and only
-    // matter for local previews or a future runtime image.
+  it("prefers BIZ UDPGothic with the generic fallback", () => {
+    // Web font first, then the layout's bare generic (sans-serif for
+    // horizontal). Named intermediate fallbacks were dropped when the font
+    // became a request option: for a user-chosen family they would be
+    // arbitrary, and Browser Run has no Japanese font either way (its only
+    // CJK face is WenQuanYi Zen Hei).
     expect(X3_PRINT_CSS).toMatch(
-      /font-family:\s*"BIZ UDPGothic",\s*"Noto Sans JP",\s*"Hiragino Sans",\s*sans-serif !important/,
+      /font-family:\s*"BIZ UDPGothic",\s*sans-serif !important/,
     );
   });
 

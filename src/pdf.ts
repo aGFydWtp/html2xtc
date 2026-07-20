@@ -1,40 +1,101 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 aGFydWtp
 
-import type { Env } from "./types";
+import { DEFAULT_FONT_FAMILY, fontCssEndpoint } from "./fonts";
+import type { Env, RenderOptions } from "./types";
 
 /**
- * Google Fonts stylesheet for BIZ UDPGothic (SIL OFL), the preferred body
- * font: a UD (universal design) gothic tuned for legibility at small sizes,
- * which suits 10pt text on the X3's 1-bit e-paper. The CSS defines @font-face
- * rules split into many unicode-range subsets, so the browser downloads only
- * the few woff2 slices a given page actually uses — this is why the CSS is
- * referenced by URL instead of being inlined (inlining all JP subsets would
- * bloat the injected style by ~100 KB while still fetching from
- * fonts.gstatic.com). display=swap keeps text readable via the fallback
- * stack whenever the fetch is slow or blocked.
+ * Baseline render options — the pre-options behavior: horizontal layout,
+ * BIZ UDPGothic (SIL OFL), a UD (universal design) gothic tuned for
+ * legibility at small sizes, which suits 10pt text on the X3's 1-bit
+ * e-paper. Requests may override both axes (layout/font); callers that
+ * predate the options — and Workflow steps replaying old params — get this.
  */
-export const PRINT_FONT_CSS_URL =
-  "https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&display=swap";
+export const DEFAULT_RENDER_OPTIONS: RenderOptions = {
+  layout: "horizontal",
+  font: DEFAULT_FONT_FAMILY,
+};
 
-// Print CSS for the Xteink X3 page geometry (66mm x 99mm at 4mm margins).
-// Body text prefers BIZ UDPGothic (web font, PRINT_FONT_CSS_URL above).
+/**
+ * Body font stack for the given options: the (sanitized) Google Fonts
+ * family first, then a bare generic keyed on the layout — serif suits
+ * vertical literary text, sans-serif the default horizontal article layout.
+ * Deliberately no named intermediate fallbacks: for a user-chosen family
+ * they would be arbitrary, and Browser Run ships no Japanese font anyway
+ * (its only CJK face is WenQuanYi Zen Hei, whatever we list).
+ */
+function fontStack(options: RenderOptions): string {
+  return `"${options.font}", ${options.layout === "vertical" ? "serif" : "sans-serif"}`;
+}
+
+/**
+ * Google Fonts stylesheet URL for the default family, kept for the tests
+ * that pin the @import placement. The css2 CSS defines @font-face rules
+ * split into many unicode-range subsets, so the browser downloads only the
+ * few woff2 slices a given page actually uses — this is why the full-page
+ * path references the CSS by URL instead of inlining it (inlining all JP
+ * subsets would bloat the injected style by ~100 KB while still fetching
+ * from fonts.gstatic.com). display=swap keeps text readable via the
+ * fallback stack whenever the fetch is slow or blocked.
+ */
+export const PRINT_FONT_CSS_URL = fontCssEndpoint(DEFAULT_FONT_FAMILY);
+
+// Page-chrome hide rules shared by the horizontal and vertical rule sets
+// (the long rationale for the selector choices sits at the usage site in
+// horizontalPrintRules; the vertical set reuses the block because full-page
+// vertical renders of ordinary sites meet the same nav/consent/share
+// chrome, and the selectors are inert on documents we author ourselves).
+const HIDE_CHROME_RULES = `body header,
+    body nav,
+    body footer,
+    body aside,
+    body [role="navigation"],
+    body [class~="sidebar"],
+    body [class~="advert"],
+    body [class~="advertisement"],
+    body [class~="ad-container"],
+    body [class*="cookie-banner" i],
+    body [class*="cookie-consent" i],
+    body [class*="cookieconsent" i],
+    body [class*="cookie-notice" i],
+    body [class*="cookie-popup" i],
+    body [id*="cookie-banner" i],
+    body [id*="cookieconsent" i],
+    body [class~="share"],
+    body [class*="share-button"],
+    body [class*="social-share"],
+    body [class*="share-bar"],
+    body [class*="share-icons"],
+    body [class*="share-tools"],
+    body [class*="sharetools" i],
+    body #onetrust-banner-sdk,
+    body #CybotCookiebotDialog,
+    body .cc-window,
+    body .fc-consent-root,
+    body #cookie-law-info-bar,
+    body .cmplz-cookiebanner,
+    body .addthis_toolbox,
+    body .sharedaddy {
+      display: none !important;
+    }`;
+
+// Print CSS for the Xteink X3 page geometry (66mm x 99mm at 4mm margins),
+// horizontal layout. Body text prefers the web font the options selected.
 // NOTE: Browser Run ships NO Japanese font — when the web font is not
 // applied, CJK text falls back to WenQuanYi Zen Hei (a Chinese font with
 // Chinese-style glyphs for 学/編 etc.), which is why the web font matters.
-// "Noto Sans JP" / "Hiragino Sans" in the stack do not exist in that
-// environment; they are kept because they are harmless there and pick the
-// right face if the runtime image ever gains them (or for local previews).
 //
-// Shared rule block (everything except the web-font @import): the extract
-// path injects these rules together with the inlined @font-face CSS
-// (renderPdfFromHtml), so re-importing the same family here would only add
-// a pointless network fetch at render time.
-const X3_PRINT_RULES = `
+// Rule block only (no web-font @import): the extract path injects these
+// rules together with the inlined @font-face CSS (renderPdfFromHtml), so
+// re-importing the same family here would only add a pointless network
+// fetch at render time. buildPrintCssWithFontImport prepends the @import
+// for the paths that have no inlined font.
+function horizontalPrintRules(options: RenderOptions): string {
+  return `
   /* The body font-family is declared at TOP LEVEL — outside @media print —
      deliberately, and it must stay there. Chromium loads web fonts lazily:
      a @font-face only loads once some element uses its family under the
-     CURRENT media. Inside @media print, nothing references "BIZ UDPGothic"
+     CURRENT media. Inside @media print, nothing references the family
      during the normal (screen) rendering, the face stays "unloaded", and
      Chromium's print path does NOT wait for font loads — it captures with
      the fallback. Verified with minimal probes: identical font payloads
@@ -42,11 +103,7 @@ const X3_PRINT_RULES = `
      regardless of injection route, payload size or waits (see the font
      investigation notes). test/pdf.test.ts pins this placement. */
   body {
-    font-family:
-      "BIZ UDPGothic",
-      "Noto Sans JP",
-      "Hiragino Sans",
-      sans-serif !important;
+    font-family: ${fontStack(options)} !important;
   }
 
   @page {
@@ -164,39 +221,7 @@ const X3_PRINT_RULES = `
        their ids/classes are unique to those vendors so there is no misfire
        risk, and hiding them matters because position:fixed banners are
        repeated on every printed page by Chromium. */
-    body header,
-    body nav,
-    body footer,
-    body aside,
-    body [role="navigation"],
-    body [class~="sidebar"],
-    body [class~="advert"],
-    body [class~="advertisement"],
-    body [class~="ad-container"],
-    body [class*="cookie-banner" i],
-    body [class*="cookie-consent" i],
-    body [class*="cookieconsent" i],
-    body [class*="cookie-notice" i],
-    body [class*="cookie-popup" i],
-    body [id*="cookie-banner" i],
-    body [id*="cookieconsent" i],
-    body [class~="share"],
-    body [class*="share-button"],
-    body [class*="social-share"],
-    body [class*="share-bar"],
-    body [class*="share-icons"],
-    body [class*="share-tools"],
-    body [class*="sharetools" i],
-    body #onetrust-banner-sdk,
-    body #CybotCookiebotDialog,
-    body .cc-window,
-    body .fc-consent-root,
-    body #cookie-law-info-bar,
-    body .cmplz-cookiebanner,
-    body .addthis_toolbox,
-    body .sharedaddy {
-      display: none !important;
-    }
+    ${HIDE_CHROME_RULES}
 
     main,
     article {
@@ -270,85 +295,51 @@ const X3_PRINT_RULES = `
     }
   }
 `;
-
-// Full-page path variant: the font @import ahead of the shared rules.
-export const X3_PRINT_CSS = `
-  /* Must stay the first rule in this stylesheet (CSS drops later @imports).
-     Injected via addStyleTag after page load on the full-page path, so a
-     target page's CSP may block it — an accepted degradation, like the
-     colophon script below. */
-  @import url("${PRINT_FONT_CSS_URL}");
-${X3_PRINT_RULES}`;
-
-/**
- * Extract-path variant: shared rules only, no @import — injected together
- * with the inlined @font-face CSS (renderPdfFromHtml), which already carries
- * the font as data: URLs, so this stylesheet must not start another network
- * fetch of the same family.
- */
-export const X3_PRINT_CSS_NO_FONT_IMPORT = X3_PRINT_RULES;
-
-/**
- * Print-CSS preset for HTML-sourced renders: "x3" is the default extract
- * layout (horizontal, BIZ UDPGothic), "aozora" the vertical-writing Aozora
- * Bunko layout (AOZORA_PRINT_RULES / BIZ UDMincho, src/aozora.ts).
- */
-export type PrintPreset = "x3" | "aozora";
-
-// Aozora Bunko 字下げ (jisage_N: N-em indent from the line start) and 地付き
-// (chitsuki_N: aligned to the line end, N em short of it) run up to well
-// past 10 em in real files; 30 covers everything observed in practice, and
-// an unmatched deeper class just prints without the indent. Logical
-// properties on purpose: the original files carry physical margin-left/right
-// inline styles that would indent the wrong axis in vertical-rl —
-// sanitizeContent strips all inline styles, and these rules re-express the
-// intent along the inline axis.
-const AOZORA_MAX_INDENT_EM = 30;
-
-function aozoraIndentRules(): string {
-  const rules: string[] = [];
-  for (let n = 1; n <= AOZORA_MAX_INDENT_EM; n++) {
-    rules.push(`.jisage_${n} { margin-inline-start: ${n}em !important; }`);
-  }
-  rules.push(
-    `[class^="chitsuki_"], [class*=" chitsuki_"] { text-align: end !important; }`,
-  );
-  for (let n = 1; n <= AOZORA_MAX_INDENT_EM; n++) {
-    rules.push(`.chitsuki_${n} { margin-inline-end: ${n}em !important; }`);
-  }
-  return rules.join("\n    ");
 }
 
 /**
- * Vertical-writing print CSS for Aozora Bunko documents (renderPdfFromHtml
- * with preset "aozora"). Purpose-built instead of reusing X3_PRINT_RULES:
- * the X3 rules are horizontal-writing assumptions throughout (its !important
- * body font-family would beat this serif stack, and its per-element
- * font-size normalization / margin stripping targets scraped web layouts,
- * not a document this service authors itself). The page geometry (66mm x
+ * Vertical-writing rule set. Purpose-built instead of deriving from the
+ * horizontal rules: those are horizontal-writing assumptions throughout
+ * (per-element font-size normalization and physical margin stripping target
+ * scraped web layouts flowing left-to-right). The page geometry (66mm x
  * 99mm at 4mm margins — the Xteink X3 panel) is identical.
  *
- * Deliberate choices, mirroring the constraints documented on X3_PRINT_RULES:
+ * Works for both sources of vertical renders: documents this service
+ * authors (extract mode, Aozora Bunko — whose structure-specific CSS is
+ * embedded in the document itself, see AOZORA_DOCUMENT_CSS in
+ * src/aozora.ts) and full-page renders of arbitrary sites, which is why
+ * the chrome-hide block rides along here too.
+ *
+ * Deliberate choices, mirroring the constraints documented on the
+ * horizontal rules:
  * - writing-mode sits on html, not body: applying it below the root is a
- *   known source of broken pagination in Chromium's print path.
+ *   known source of broken pagination in Chromium's print path. !important
+ *   so a site's own root rules cannot flip a requested vertical render.
  * - font-family stays at TOP LEVEL (outside @media print) — same lazy-font
- *   loading trap as the X3 stylesheet; test/pdf.test.ts pins this too.
+ *   loading trap as the horizontal stylesheet; test/pdf.test.ts pins this.
+ *   Declared on html AND body so a site's body font rule cannot mask the
+ *   family at screen time.
  * - No height:100%/100vh anywhere: a fixed block size on the body is the
  *   classic way to collapse a vertical document into a single page.
- * - BIZ UDMincho has no italic; 斜体 (shatai) degrades to synthetic oblique.
- * - 傍点 (emphasis dots) map to text-emphasis: the original site CSS draws
- *   them with horizontal repeat-x background images, unusable vertically.
+ * - 傍点 (Aozora emphasis marks) and 字下げ/地付き live in
+ *   AOZORA_DOCUMENT_CSS, not here: their class selectors (e.g. #contents)
+ *   could collide with ordinary sites' markup.
  */
-export const AOZORA_PRINT_RULES = `
-  /* Root: vertical flow + the serif stack. The named fallbacks do not exist
-     on Browser Run (worst case is its WenQuanYi face, as with the X3 path);
-     they matter for local previews only. */
+function verticalPrintRules(options: RenderOptions): string {
+  return `
+  /* Root: vertical flow. */
   html {
-    writing-mode: vertical-rl;
-    text-orientation: mixed;
-    font-family: "BIZ UDMincho", "Noto Serif JP", serif;
+    writing-mode: vertical-rl !important;
+    text-orientation: mixed !important;
     line-height: 1.9;
     line-break: strict;
+  }
+
+  /* Chosen family + serif generic; must stay OUTSIDE @media print (the
+     lazy-font-loading trap documented on the horizontal rules). */
+  html,
+  body {
+    font-family: ${fontStack(options)} !important;
   }
 
   @page {
@@ -410,88 +401,62 @@ export const AOZORA_PRINT_RULES = `
       display: none !important;
     }
 
-    /* 傍点/傍線 (emphasis marks). Aozora marks them up as <em class="...">;
-       neutralize the italic default and the site's background-image dots,
-       then re-draw via text-emphasis / text-decoration. */
-    em[class] {
-      font-style: normal !important;
-      background: none !important;
-      padding: 0 !important;
-    }
-    em.sesame_dot,
-    em.sesame_dot_after {
-      text-emphasis: filled sesame;
-    }
-    em.white_sesame_dot {
-      text-emphasis: open sesame;
-    }
-    em.black_circle {
-      text-emphasis: filled circle;
-    }
-    em.white_circle {
-      text-emphasis: open circle;
-    }
-    em.black_up-pointing_triangle {
-      text-emphasis: filled triangle;
-    }
-    em.white_up-pointing_triangle {
-      text-emphasis: open triangle;
-    }
-    em.bullseye {
-      text-emphasis: open double-circle;
-    }
-    em.fisheye {
-      text-emphasis: filled double-circle;
-    }
-    em.saltire {
-      text-emphasis: "×";
-    }
-    em[class^="underline_"] {
-      text-decoration: underline;
-      text-underline-position: left;
-    }
-    em[class^="overline_"] {
-      text-decoration: overline;
-    }
-
-    /* 外字 (JIS X 0213 glyphs served as tiny PNGs): size them like a kanji.
-       Distinct from the illustration rule below — a gaiji is a character. */
-    img.gaiji {
-      width: 1em !important;
-      height: 1em !important;
-    }
-
-    /* 挿絵: keep them inside the page in both axes and unsplit. width/height
-       ATTRIBUTES survive sanitization (only style/srcset are stripped) and
-       would pin a squashed size once the max-* limits bite, so both CSS
-       dimensions go back to auto — with the attributes still supplying the
-       intrinsic aspect ratio. */
-    img {
+    /* Replaced/embedded media: keep it inside the page in both axes.
+       max-block-size < 100% so a full-bleed image cannot swallow a whole
+       column; block size is the horizontal axis here. */
+    img,
+    svg,
+    video,
+    iframe,
+    canvas,
+    embed,
+    table,
+    pre {
       max-inline-size: 100% !important;
       max-block-size: 90% !important;
     }
-    img.illustration {
-      width: auto !important;
-      height: auto !important;
-      break-inside: avoid;
+
+    pre {
+      white-space: pre-wrap !important;
+      overflow-wrap: anywhere !important;
     }
 
-    /* Aozora's empty JS-table-of-contents placeholder (jquery is stripped by
-       the sanitizer; the div would just waste page space). */
-    #contents {
-      display: none !important;
-    }
-
-    /* 底本 (source edition) info, appended by extractAozoraArticle: small
-       print on its own page, like the colophon. */
-    .bibliographical_information {
-      break-before: page;
-      font-size: 8pt !important;
-    }
-
-    ${aozoraIndentRules()}
+    ${HIDE_CHROME_RULES}
   }
 `;
+}
+
+/**
+ * Print rules for the given options (no font @import): the layout picks the
+ * rule set, the font fills the body stack. Injected next to the inlined
+ * @font-face CSS on the extract path.
+ */
+export function buildPrintRules(options: RenderOptions): string {
+  return options.layout === "vertical"
+    ? verticalPrintRules(options)
+    : horizontalPrintRules(options);
+}
+
+/**
+ * Rules preceded by the css2 @import of the selected family — for the
+ * render paths that carry no inlined @font-face CSS (the full-page path,
+ * and HTML renders whose font subsetting fail-softed to null). A
+ * nonexistent family just 400s the import and the generic fallback is used;
+ * the conversion itself never fails on a font.
+ */
+export function buildPrintCssWithFontImport(options: RenderOptions): string {
+  return `
+  /* Must stay the first rule in this stylesheet (CSS drops later @imports).
+     Injected via addStyleTag after page load, so a target page's CSP may
+     block it — an accepted degradation, like the colophon script below. */
+  @import url("${fontCssEndpoint(options.font)}");
+${buildPrintRules(options)}`;
+}
+
+// Fixed default-options variants; test/pdf.test.ts pins their exact text
+// (the @import placement and the top-level font-family rule).
+export const X3_PRINT_CSS = buildPrintCssWithFontImport(DEFAULT_RENDER_OPTIONS);
+export const X3_PRINT_CSS_NO_FONT_IMPORT = buildPrintRules(DEFAULT_RENDER_OPTIONS);
 
 /**
  * User agent the rendering browser announces when fetching the target page.
@@ -740,12 +705,16 @@ const PDF_OPTIONS = {
   timeout: 300_000,
 } as const;
 
-export function renderPdf(env: Env, url: string): Promise<Response> {
+export function renderPdf(
+  env: Env,
+  url: string,
+  options: RenderOptions = DEFAULT_RENDER_OPTIONS,
+): Promise<Response> {
   const convertedAt = formatJstTimestamp(new Date());
   return env.BROWSER.quickAction("pdf", {
     url,
     userAgent: RENDER_USER_AGENT,
-    addStyleTag: [{ content: X3_PRINT_CSS }],
+    addStyleTag: [{ content: buildPrintCssWithFontImport(options) }],
     // First coax lazy images into loading, then append the colophon page to
     // the DOM — both run after load, before the waitForTimeout grace and the
     // PDF capture. A page CSP can block either script (fail-soft by design).
@@ -774,19 +743,16 @@ export function renderPdfFromHtml(
   env: Env,
   html: string,
   fontCss: string | null = null,
-  preset: PrintPreset = "x3",
+  options: RenderOptions = DEFAULT_RENDER_OPTIONS,
 ): Promise<Response> {
-  // Preset selection. On the "aozora" preset a missing fontCss deliberately
-  // does NOT fall back to an @import stylesheet: the remote fetch is
-  // probabilistic at capture time (see the fonts.ts investigation notes), so
-  // the vertical path degrades straight to the serif fallback stack instead.
-  const rules = preset === "aozora" ? AOZORA_PRINT_RULES : X3_PRINT_CSS_NO_FONT_IMPORT;
+  // With inlined font CSS the rules ride without an @import (a remote fetch
+  // of the same family would only race the data: faces); on font fail-soft
+  // (null) the @import variant is the best remaining effort — probabilistic
+  // like the full path, worst case the generic/WenQuanYi fallback.
   const styles =
     fontCss !== null
-      ? [{ content: fontCss }, { content: rules }]
-      : preset === "aozora"
-        ? [{ content: AOZORA_PRINT_RULES }]
-        : [{ content: X3_PRINT_CSS }];
+      ? [{ content: fontCss }, { content: buildPrintRules(options) }]
+      : [{ content: buildPrintCssWithFontImport(options) }];
   return env.BROWSER.quickAction("pdf", {
     html,
     // The browser still fetches the article's images from their origin;
@@ -797,7 +763,7 @@ export function renderPdfFromHtml(
     // addStyleTag — the injection path the custom-fonts docs document for
     // quick actions. Order matters: the faces first, then the rules that
     // reference the family. What actually makes the font take effect is the
-    // font-family rule sitting OUTSIDE @media print (see X3_PRINT_RULES):
+    // font-family rule sitting OUTSIDE @media print (see the print rules):
     // an earlier claim that "html mode ignores document-level data:
     // @font-face" was a misattribution — those probes had the family inside
     // @media print, so the lazy loader never fired. On font fail-soft

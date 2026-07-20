@@ -405,15 +405,21 @@ export function printableText(
  * the custom-font path the quick-action docs document — so a reference here
  * would be either dead weight or a duplicate fetch racing the injected
  * faces. (What makes the font apply at all is the top-level font-family
- * rule in X3_PRINT_RULES, outside @media print — see pdf.ts.)
+ * rule in the print rules, outside @media print — see pdf.ts.)
  *
  * The <title> is always present: the Container reads the PDF title metadata
  * into X-Xtc-Title, which becomes the download filename (pipeline.ts).
+ *
+ * `documentCss` (optional) is embedded as a <style> in the head — for
+ * markup-specific rules that belong to THIS document regardless of the
+ * layout selected at render time (e.g. the Aozora structure CSS,
+ * src/aozora.ts). Static, trusted CSS only; never page-derived text.
  */
 export function buildPrintHtml(
   article: ExtractedArticle,
   sourceUrl: string,
   convertedAt: string,
+  documentCss?: string,
 ): string {
   const { document } = parseHTML(
     "<!doctype html><html><head></head><body></body></html>",
@@ -442,6 +448,12 @@ export function buildPrintHtml(
   // original text — element textContent IS escaped on serialization.
   titleEl.textContent = title.replace(/[<>]/g, " ");
   document.head.appendChild(titleEl);
+
+  if (documentCss !== undefined) {
+    const style = document.createElement("style");
+    style.textContent = documentCss;
+    document.head.appendChild(style);
+  }
 
   const heading = document.createElement("h1");
   heading.textContent = title;

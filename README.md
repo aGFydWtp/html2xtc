@@ -49,10 +49,14 @@ Worker
 非同期変換ジョブを作成する。長いドキュメントはこちらを使う（xtctool 最大 600 秒）。
 
 ```json
-{ "url": "https://example.com/article", "mode": "extract" }
+{ "url": "https://example.com/article", "mode": "extract", "layout": "vertical", "font": "BIZ UDMincho" }
 ```
 
 - `mode`（任意）: `"full"`（既定。ページを丸ごとレンダリング）または `"extract"`（本文抽出モード。`src/extract.ts` が通常 fetch + Readability で本文だけのクリーン HTML を作って変換する。抽出できないページは Browser Rendering の `content` アクションで再試行し、それでも駄目なら full と同じ丸ごとレンダリングに自動劣化する — 必ず何かしらの出力は得られる）。`"full"`/`"extract"` 以外は 400。
+- `layout`（任意）: `"horizontal"`（横書き）または `"vertical"`（縦書き `writing-mode: vertical-rl`）。未指定・不正値は既定値へフェイルソフト（400 にはならない）。既定は horizontal、ただし**青空文庫の XHTML**（`https://www.aozora.gr.jp/cards/{6桁}/files/{n}_{m}.html`、`src/sitepresets.ts`）は vertical。
+- `font`（任意）: Google Fonts のファミリー名をそのまま指定する文字列（例 `"BIZ UDMincho"`, `"Noto Serif JP"`, `"Zen Old Mincho"`）。英数字・スペース・ハイフンのみ・64 文字以内（それ以外は既定値へフェイルソフト）。既定は `BIZ UDPGothic`、青空文庫 URL では `BIZ UDMincho`。既定 2 書体は 400/700 の 2 ウェイトを取得し、それ以外のファミリーは regular のみ取得（css2 API は存在しないウェイトを含むリクエストを丸ごと拒否するため）。存在しないファミリー名や取得失敗時は変換を失敗させず、汎用フォールバック書体（horizontal は sans-serif、vertical は serif）で続行する。
+
+青空文庫 URL は layout/font の既定値に加えて専用の前処理が入る（`src/aozora.ts`: Shift_JIS デコード・Readability バイパスで `div.main_text` を直接抽出・ルビ構造の保持・傍点の text-emphasis 置換・字下げ/地付きの論理プロパティ化・外字/挿絵 URL の絶対化・底本情報の付加）。明示的に `layout: "horizontal"` を指定すれば青空文庫でも横書きになる。逆に一般サイトへ `layout: "vertical"` を指定した縦書き変換も可能。
 
 どちらのモードも lazy-load 画像への対策を持つ。extract は `src/printhtml.ts` の sanitize 時に lazy 属性を正規化する（プレースホルダ `src` の検出、`data-src`/`data-lazy-src`/`data-original` の `src` への昇格、`srcset` からの 528px 出力に適した候補選択、`loading="lazy"` の除去。昇格した URL も既存のスキーム検査を通る）。full は PDF 化前に注入するスクリプト（`src/pdf.ts` の `LAZY_IMAGE_SCRIPT`）で `loading=lazy` の eager 化・`data-src` 昇格・ページ全体の段階スクロール（6 秒上限）を行い、`waitForTimeout` で画像読み込みの猶予を取る（ページの CSP でスクリプトが遮断された場合は従来同等の出力に劣化）。`<picture>/<source>` のみに実 URL を持つパターンは extract では救済できない（既知の制限）。
 
@@ -93,7 +97,7 @@ R2 上の XTC（`jobs/{jobId}/output.xtc`）を attachment で返す。未完了
 { "url": "https://example.com/article", "mode": "extract" }
 ```
 
-`mode` は POST /jobs と同じ（任意、既定 `"full"`）。
+`mode` / `layout` / `font` は POST /jobs と同じ（いずれも任意。`mode` の既定は `"full"`、`layout`/`font` は URL に応じた既定値へ解決）。
 
 成功時 200:
 
@@ -186,11 +190,13 @@ src/
   index.ts       ルーティング・エラーハンドリング
   workflow.ts    ConvertWorkflow（[extract-content →] render-pdf → convert-xtc → delete-intermediate-pdf）
   jobs.ts        ジョブ状態写像・R2 キー導出・上限解決（純関数、vitest 対象）
-  pdf.ts         X3_PRINT_CSS + Browser Run quickAction("pdf") 呼び出し（LAZY_IMAGE_SCRIPT・奥付注入含む）
+  pdf.ts         印刷 CSS 生成（layout/font オプション駆動、横書き/縦書き）+ Browser Run quickAction("pdf") 呼び出し（LAZY_IMAGE_SCRIPT・奥付注入含む）
   extract.ts     extract モードの本文抽出（Readability + Browser Rendering フォールバック）
+  aozora.ts      青空文庫 XHTML 専用の前処理（main_text 抽出・ルビ保持・傍点/字下げ CSS）
+  sitepresets.ts サイト別デフォルト解決（青空文庫 URL 判定 → vertical + BIZ UDMincho）
   printhtml.ts   抽出本文の印刷用 HTML 生成・sanitize（lazy 画像正規化含む、vitest 対象）
   pipeline.ts    XTC 出力の R2 保存などモード共通処理
-  fonts.ts       PDF 本文フォント（BIZ UDPGothic）の指定
+  fonts.ts       PDF 本文フォントのサブセット取得・インライン化（ファミリー名は font オプションで可変、既定 BIZ UDPGothic）
   container.ts   XtcConverterContainer + convertInContainer（@cloudflare/containers）
   ratelimit.ts   レート制限の純関数（IP キー正規化・固定窓判定、vitest 対象）
   ratelimiter.ts RateLimiter Durable Object + enforceRateLimit（429 応答）
@@ -208,6 +214,7 @@ test/
   extract.test.ts         vitest（本文抽出）
   printhtml.test.ts       vitest（sanitize・lazy 画像正規化）
   fonts.test.ts           vitest
+  aozora.test.ts          vitest（青空文庫抽出・オプション解決・縦書き CSS のピン留め）
   ratelimit.test.ts       vitest（IP キー正規化・固定窓判定・上限パース）
   converter/test_app.py   pytest
 ```

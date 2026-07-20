@@ -405,15 +405,23 @@ export function printableText(
  * the custom-font path the quick-action docs document — so a reference here
  * would be either dead weight or a duplicate fetch racing the injected
  * faces. (What makes the font apply at all is the top-level font-family
- * rule in X3_PRINT_RULES, outside @media print — see pdf.ts.)
+ * rule in the print rules, outside @media print — see pdf.ts.)
  *
  * The <title> is always present: the Container reads the PDF title metadata
  * into X-Xtc-Title, which becomes the download filename (pipeline.ts).
+ *
+ * `documentCss` (optional) is embedded as a <style> in the head — for
+ * markup-specific rules that belong to THIS document regardless of the
+ * layout selected at render time (e.g. the Aozora structure CSS,
+ * src/aozora.ts). Static, trusted CSS only; never page-derived text — and
+ * angle brackets are stripped anyway as defense in depth (see below), so
+ * the CSS must not rely on the child combinator ">".
  */
 export function buildPrintHtml(
   article: ExtractedArticle,
   sourceUrl: string,
   convertedAt: string,
+  documentCss?: string,
 ): string {
   const { document } = parseHTML(
     "<!doctype html><html><head></head><body></body></html>",
@@ -442,6 +450,18 @@ export function buildPrintHtml(
   // original text — element textContent IS escaped on serialization.
   titleEl.textContent = title.replace(/[<>]/g, " ");
   document.head.appendChild(titleEl);
+
+  if (documentCss !== undefined) {
+    const style = document.createElement("style");
+    // linkedom serializes <style> children verbatim (no entity escaping) —
+    // same hazard as <title> above: a "</style>" sequence inside the CSS
+    // would break out of the element into the head, and the rendering
+    // browser executes scripts. The CSS used here never needs angle
+    // brackets (descendant selectors only — no child combinator ">"), so
+    // strip them outright rather than trusting the caller.
+    style.textContent = documentCss.replace(/[<>]/g, " ");
+    document.head.appendChild(style);
+  }
 
   const heading = document.createElement("h1");
   heading.textContent = title;

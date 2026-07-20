@@ -15,6 +15,7 @@ import {
 } from "./jobs";
 import { renderPdf, renderPdfFromHtml } from "./pdf";
 import { storeXtcOutput } from "./pipeline";
+import { isAozoraBunkoUrl, resolveRenderOptions } from "./sitepresets";
 import type { ConvertJobParams, Env } from "./types";
 
 // xtctool may run up to 600s (XTC_TIMEOUT_SECONDS in container.ts); allow a
@@ -23,7 +24,8 @@ import type { ConvertJobParams, Env } from "./types";
 const CONVERTER_FETCH_TIMEOUT_MS = 630_000;
 
 /**
- * Conversion pipeline behind POST /jobs (extract mode only: extract-content
+ * Conversion pipeline behind POST /jobs (extract mode and Aozora Bunko URLs
+ * run extract-content first
  * → then always render-pdf → convert-xtc → delete-intermediate-pdf). The
  * instance ID doubles as
  * the public jobId, and the R2 keys are derived from it, so no extra job
@@ -48,7 +50,16 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
     // step return value (step outputs are capped at 1 MiB).
     let articleKey: string | null = null;
     let fontsKey: string | null = null;
-    if (mode === "extract") {
+    // Render options resolved deterministically from the params (explicit
+    // layout/font win; blanks fall back to per-site defaults — Aozora
+    // Bunko: vertical + BIZ UDMincho). Pure derivation, so it needs no step
+    // and every step attempt computes the same value.
+    const target = new URL(url);
+    const options = resolveRenderOptions(target, event.payload.layout, event.payload.font);
+    // Aozora Bunko URLs run the extract-content step regardless of mode:
+    // their dedicated extraction lives behind prepareRenderInput, which for
+    // mode "full" degrades back to the plain URL render on any problem.
+    if (mode === "extract" || isAozoraBunkoUrl(target)) {
       ({ articleKey, fontsKey } = await step.do(
         "extract-content",
         {
@@ -64,6 +75,10 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
             this.env,
             new URL(url),
             jobId,
+            undefined,
+            undefined,
+            mode,
+            options,
           );
           if (input.kind === "url") {
             return { articleKey: null, fontsKey: null };
@@ -152,9 +167,10 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
             this.env,
             await article.text(),
             fontCss,
+            options,
           );
         } else {
-          response = await renderPdf(this.env, url);
+          response = await renderPdf(this.env, url, options);
         }
         if (!response.ok) {
           // Upstream detail goes to logs only; the thrown message surfaces

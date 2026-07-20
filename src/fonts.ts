@@ -31,8 +31,56 @@
  * behavior (worst case: Noto rendering, never a failed job).
  */
 
-const FONT_CSS_ENDPOINT =
-  "https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&display=swap";
+/**
+ * Default body family (the pre-options behavior). The request's `font`
+ * option may name any Google Fonts family; resolveRenderOptions
+ * (src/sitepresets.ts) falls back to this — or to BIZ UDMincho for Aozora
+ * Bunko URLs — when the option is absent or fails sanitization.
+ */
+export const DEFAULT_FONT_FAMILY = "BIZ UDPGothic";
+
+/**
+ * Families requested at 400;700. css2 rejects the whole request when ANY
+ * listed weight is missing from the family, so the dual-weight axis is only
+ * safe for families whose weights are known. Arbitrary user-supplied
+ * families are requested without a weight axis instead — css2 then serves
+ * regular (400) only, which every family has; bold text falls back to
+ * synthetic bold. Both defaults ship exactly 400/700 on Google Fonts.
+ */
+const DUAL_WEIGHT_FAMILIES = new Set(["BIZ UDPGothic", "BIZ UDMincho"]);
+
+/**
+ * css2 stylesheet URL for `family`; spaces become + per the css2 URL
+ * convention. Callers must pass a sanitizeFontFamily()-clean name — the
+ * character allowlist is what keeps this interpolation URL-safe.
+ */
+export function fontCssEndpoint(family: string): string {
+  const axis = DUAL_WEIGHT_FAMILIES.has(family) ? ":wght@400;700" : "";
+  return `https://fonts.googleapis.com/css2?family=${family.replace(/ /g, "+")}${axis}&display=swap`;
+}
+
+/**
+ * Validates a user-supplied Google Fonts family name; undefined for
+ * anything unusable (the caller then falls back to the default family).
+ * The name gets embedded in a quoted CSS font-family declaration AND in the
+ * css2 request URL, so this is injection control, not just tidiness: ASCII
+ * letters/digits/spaces/hyphens only (every Google Fonts family name fits),
+ * must start with a letter or digit, 64 chars max. Notably excluded:
+ * quotes, semicolons, braces, parentheses, slashes, "&", "#" and non-ASCII.
+ */
+export function sanitizeFontFamily(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || trimmed.length > 64) {
+    return undefined;
+  }
+  if (!/^[A-Za-z0-9][A-Za-z0-9 -]*$/.test(trimmed)) {
+    return undefined;
+  }
+  return trimmed;
+}
 
 /**
  * Sent to fonts.googleapis.com / fonts.gstatic.com ONLY. Google Fonts keys
@@ -82,6 +130,7 @@ export async function buildInlineFontCss(
   text: string,
   jobId: string,
   fetchFn: FontFetcher = fetch,
+  family: string = DEFAULT_FONT_FAMILY,
 ): Promise<string | null> {
   try {
     const chars = uniqueChars(text);
@@ -105,7 +154,7 @@ export async function buildInlineFontCss(
     }
 
     const cssChunks = await Promise.all(
-      chunks.map((chunk) => fetchFontCss(chunk, fetchFn)),
+      chunks.map((chunk) => fetchFontCss(chunk, fetchFn, family)),
     );
     const faces = cssChunks.flatMap((css) => parseFontFaces(css));
     if (faces.length === 0) {
@@ -123,10 +172,10 @@ export async function buildInlineFontCss(
     }
 
     const css = faces
-      .map((face, i) => inlineFontFace(face, fonts[i] as Uint8Array))
+      .map((face, i) => inlineFontFace(face, fonts[i] as Uint8Array, family))
       .join("\n");
     console.log(
-      `[${jobId}] font: inline (${faces.length} faces, ${Math.round(totalBytes / 1024)}KB woff2, ${covered} unique chars)`,
+      `[${jobId}] font: inline (${family}, ${faces.length} faces, ${Math.round(totalBytes / 1024)}KB woff2, ${covered} unique chars)`,
     );
     return css;
   } catch (error) {
@@ -154,8 +203,9 @@ function uniqueChars(text: string): string[] {
 async function fetchFontCss(
   chunk: string,
   fetchFn: FontFetcher,
+  family: string,
 ): Promise<string> {
-  const url = `${FONT_CSS_ENDPOINT}&text=${encodeURIComponent(chunk)}`;
+  const url = `${fontCssEndpoint(family)}&text=${encodeURIComponent(chunk)}`;
   const response = await fetchFn(url, {
     headers: { "User-Agent": FONT_FETCH_USER_AGENT },
     signal: AbortSignal.timeout(FONT_FETCH_TIMEOUT_MS),
@@ -205,11 +255,15 @@ function parseFontFaces(css: string): ParsedFontFace[] {
   return faces;
 }
 
-function inlineFontFace(face: ParsedFontFace, bytes: Uint8Array): string {
+function inlineFontFace(
+  face: ParsedFontFace,
+  bytes: Uint8Array,
+  family: string,
+): string {
   const range =
     face.unicodeRange === null ? "" : `unicode-range:${face.unicodeRange};`;
   return (
-    `@font-face{font-family:'BIZ UDPGothic';font-style:${face.fontStyle};` +
+    `@font-face{font-family:'${family}';font-style:${face.fontStyle};` +
     `font-weight:${face.fontWeight};font-display:swap;` +
     `src:url(data:font/woff2;base64,${base64Encode(bytes)}) format('woff2');${range}}`
   );

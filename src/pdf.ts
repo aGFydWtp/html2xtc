@@ -1,87 +1,74 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 aGFydWtp
 
-import type { Env } from "./types";
+import { DEFAULT_FONT_FAMILY, fontCssEndpoint } from "./fonts";
+import type { Env, RenderOptions } from "./types";
 
 /**
- * Google Fonts stylesheet for BIZ UDPGothic (SIL OFL), the preferred body
- * font: a UD (universal design) gothic tuned for legibility at small sizes,
- * which suits 10pt text on the X3's 1-bit e-paper. The CSS defines @font-face
- * rules split into many unicode-range subsets, so the browser downloads only
- * the few woff2 slices a given page actually uses — this is why the CSS is
- * referenced by URL instead of being inlined (inlining all JP subsets would
- * bloat the injected style by ~100 KB while still fetching from
- * fonts.gstatic.com). display=swap keeps text readable via the fallback
- * stack whenever the fetch is slow or blocked.
+ * Baseline render options — the pre-options behavior: horizontal layout,
+ * BIZ UDPGothic (SIL OFL), a UD (universal design) gothic tuned for
+ * legibility at small sizes, which suits 10pt text on the X3's 1-bit
+ * e-paper. Requests may override both axes (layout/font); callers that
+ * predate the options — and Workflow steps replaying old params — get this.
  */
-export const PRINT_FONT_CSS_URL =
-  "https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&display=swap";
+export const DEFAULT_RENDER_OPTIONS: RenderOptions = {
+  layout: "horizontal",
+  font: DEFAULT_FONT_FAMILY,
+};
 
-// Print CSS for the Xteink X3 page geometry (66mm x 99mm at 4mm margins).
-// Body text prefers BIZ UDPGothic (web font, PRINT_FONT_CSS_URL above).
-// NOTE: Browser Run ships NO Japanese font — when the web font is not
-// applied, CJK text falls back to WenQuanYi Zen Hei (a Chinese font with
-// Chinese-style glyphs for 学/編 etc.), which is why the web font matters.
-// "Noto Sans JP" / "Hiragino Sans" in the stack do not exist in that
-// environment; they are kept because they are harmless there and pick the
-// right face if the runtime image ever gains them (or for local previews).
-//
-// Shared rule block (everything except the web-font @import): the extract
-// path injects these rules together with the inlined @font-face CSS
-// (renderPdfFromHtml), so re-importing the same family here would only add
-// a pointless network fetch at render time.
-const X3_PRINT_RULES = `
-  /* The body font-family is declared at TOP LEVEL — outside @media print —
-     deliberately, and it must stay there. Chromium loads web fonts lazily:
-     a @font-face only loads once some element uses its family under the
-     CURRENT media. Inside @media print, nothing references "BIZ UDPGothic"
-     during the normal (screen) rendering, the face stays "unloaded", and
-     Chromium's print path does NOT wait for font loads — it captures with
-     the fallback. Verified with minimal probes: identical font payloads
-     failed with this rule inside @media print and succeeded outside,
-     regardless of injection route, payload size or waits (see the font
-     investigation notes). test/pdf.test.ts pins this placement. */
-  body {
-    font-family:
-      "BIZ UDPGothic",
-      "Noto Sans JP",
-      "Hiragino Sans",
-      sans-serif !important;
-  }
+/**
+ * Body font stack for the given options: the (sanitized) Google Fonts
+ * family first, then a bare generic keyed on the layout — serif suits
+ * vertical literary text, sans-serif the default horizontal article layout.
+ * Deliberately no named intermediate fallbacks: for a user-chosen family
+ * they would be arbitrary, and Browser Run ships no Japanese font anyway
+ * (its only CJK face is WenQuanYi Zen Hei, whatever we list).
+ */
+function fontStack(options: RenderOptions): string {
+  return `"${options.font}", ${options.layout === "vertical" ? "serif" : "sans-serif"}`;
+}
 
-  @page {
-    size: 66mm 99mm;
-    margin: 4mm;
-  }
+/**
+ * Google Fonts stylesheet URL for the default family, kept for the tests
+ * that pin the @import placement. The css2 CSS defines @font-face rules
+ * split into many unicode-range subsets, so the browser downloads only the
+ * few woff2 slices a given page actually uses — this is why the full-page
+ * path references the CSS by URL instead of inlining it (inlining all JP
+ * subsets would bloat the injected style by ~100 KB while still fetching
+ * from fonts.gstatic.com). display=swap keeps text readable via the
+ * fallback stack whenever the fetch is slow or blocked.
+ */
+export const PRINT_FONT_CSS_URL = fontCssEndpoint(DEFAULT_FONT_FAMILY);
 
-  @media print {
-    html,
-    body {
-      margin: 0 !important;
-      padding: 0 !important;
-      background: white !important;
-      color: black !important;
-    }
+// ---------------------------------------------------------------------------
+// Blocks shared by the horizontal AND vertical rule sets. All of these were
+// added for real overflow/size bugs on ordinary sites (webgenron.com /
+// synodos.jp / omocoro.jp — rationale in the comments below), and a request
+// may render ANY site vertically (layout option), so the vertical set needs
+// the same defenses. Physical left/right properties are correct in both
+// layouts on purpose: Chromium's print-layout "contents width" expansion and
+// paper-edge clipping are physically horizontal regardless of writing-mode,
+// so the paper-width guards stay physical. The blocks are inert on documents
+// this service authors itself (extract/Aozora print HTML): those carry no
+// page chrome, no pinned widths and no competing font sizing — and the
+// Aozora structure CSS wins against them on !important + class specificity
+// where it must (jisage margins, gaiji/illustration sizing, 底本 8pt).
+// ---------------------------------------------------------------------------
 
-    body {
-      font-size: 10pt !important;
-      line-height: 1.55 !important;
-    }
-
-    /* Normalize body-text size with direct element selectors: the body rule
-       above only works through inheritance, so a site rule that targets a
-       container (e.g. synodos.jp's .content { font-size: 1.13rem } = ~18px)
-       or an inline style bypasses it and the whole article prints oversized.
-       Absolute 10pt on each element, NOT html { font-size: 10pt } + 1rem:
-       rem is a shared layout unit (padding/width/gap), so resizing the root
-       would rescale every rem dimension — sites on the
-       html { font-size: 62.5% } convention would inflate ~1.33x and re-cause
-       the overflow clipping handled below. h1-h6 are deliberately NOT listed
-       so headings/titles keep the site's sizing. Trade-off: intentional
-       non-heading size differences (lead paragraphs, notes) flatten to 10pt;
-       a stable body size wins on a 58mm page. header/footer/nav/aside are
-       omitted because the hide rules below display:none them anyway. */
-    div,
+/* Normalize body-text size with direct element selectors: a body rule only
+   works through inheritance, so a site rule that targets a container (e.g.
+   synodos.jp's .content { font-size: 1.13rem } = ~18px) or an inline style
+   bypasses it and the whole article prints oversized. Absolute 10pt on each
+   element, NOT html { font-size: 10pt } + 1rem: rem is a shared layout unit
+   (padding/width/gap), so resizing the root would rescale every rem
+   dimension — sites on the html { font-size: 62.5% } convention would
+   inflate ~1.33x and re-cause the overflow clipping handled below. h1-h6
+   are deliberately NOT listed so headings/titles keep their sizing (the
+   vertical set sizes them explicitly). Trade-off: intentional non-heading
+   size differences (lead paragraphs, notes) flatten to 10pt; a stable body
+   size wins on a 58mm page. header/footer/nav/aside are omitted because
+   the hide rules display:none them anyway. */
+const BODY_TEXT_SIZE_RULES = `div,
     section,
     article,
     main,
@@ -112,7 +99,155 @@ const X3_PRINT_RULES = `
     kbd,
     samp {
       font-size: 0.9em !important;
+    }`;
+
+/* Layout-wrapper resets. main/article: unclamp the article column a site
+   centers at a fixed max-width. div/section: Chromium evaluates print media
+   queries at ~816px (US Letter), not at the @page size, so sites keep their
+   desktop/tablet shell when printed — padded, centered layout wrappers get
+   flowed into the 58mm content box and push the article column past the
+   right paper edge (verified on webgenron.com: a grid wrapper with 20px
+   side padding shifted all body text ~3.5mm right, clipping ~2mm off every
+   line on every page). Divs/sections are layout chrome, not prose, so drop
+   their horizontal padding and (auto-)centering margins; the @page margin
+   is the only gutter the X3 page can afford. Lists, blockquotes, pre and
+   table cells are untouched and keep their indentation. The max-width
+   clamp catches script-pinned wrapper widths (verified on omocoro.jp: a
+   slider-pro carousel set width: 800px on its track div, growing the whole
+   print layout ~10% past the paper); max-width rather than width: auto so
+   deliberately narrow UI bits keep their intended width. */
+const LAYOUT_RESET_RULES = `main,
+    article {
+      width: 100% !important;
+      max-width: none !important;
+      margin: 0 !important;
+      padding: 0 !important;
     }
+
+    div,
+    section {
+      padding-left: 0 !important;
+      padding-right: 0 !important;
+      margin-left: 0 !important;
+      margin-right: 0 !important;
+    }
+
+    div,
+    section {
+      max-width: 100% !important;
+    }`;
+
+/* Keep replaced/embedded media inside the page. A fixed-width image or
+   iframe would widen the print layout and clip the page at the right edge
+   (same "contents width" mechanism as above), and height: auto preserves
+   the aspect ratio when width/height attributes would otherwise squash a
+   shrunken image. */
+const MEDIA_FIT_RULES = `img,
+    svg,
+    video,
+    iframe,
+    canvas,
+    embed,
+    table,
+    pre {
+      max-width: 100% !important;
+    }
+
+    img,
+    svg,
+    video,
+    iframe,
+    canvas,
+    embed {
+      height: auto !important;
+    }`;
+
+// Page-chrome hide rules shared by the horizontal and vertical rule sets
+// (the long rationale for the selector choices sits at the usage site in
+// horizontalPrintRules; the vertical set reuses the block because full-page
+// vertical renders of ordinary sites meet the same nav/consent/share
+// chrome, and the selectors are inert on documents we author ourselves).
+const HIDE_CHROME_RULES = `body header,
+    body nav,
+    body footer,
+    body aside,
+    body [role="navigation"],
+    body [class~="sidebar"],
+    body [class~="advert"],
+    body [class~="advertisement"],
+    body [class~="ad-container"],
+    body [class*="cookie-banner" i],
+    body [class*="cookie-consent" i],
+    body [class*="cookieconsent" i],
+    body [class*="cookie-notice" i],
+    body [class*="cookie-popup" i],
+    body [id*="cookie-banner" i],
+    body [id*="cookieconsent" i],
+    body [class~="share"],
+    body [class*="share-button"],
+    body [class*="social-share"],
+    body [class*="share-bar"],
+    body [class*="share-icons"],
+    body [class*="share-tools"],
+    body [class*="sharetools" i],
+    body #onetrust-banner-sdk,
+    body #CybotCookiebotDialog,
+    body .cc-window,
+    body .fc-consent-root,
+    body #cookie-law-info-bar,
+    body .cmplz-cookiebanner,
+    body .addthis_toolbox,
+    body .sharedaddy {
+      display: none !important;
+    }`;
+
+// Print CSS for the Xteink X3 page geometry (66mm x 99mm at 4mm margins),
+// horizontal layout. Body text prefers the web font the options selected.
+// NOTE: Browser Run ships NO Japanese font — when the web font is not
+// applied, CJK text falls back to WenQuanYi Zen Hei (a Chinese font with
+// Chinese-style glyphs for 学/編 etc.), which is why the web font matters.
+//
+// Rule block only (no web-font @import): the extract path injects these
+// rules together with the inlined @font-face CSS (renderPdfFromHtml), so
+// re-importing the same family here would only add a pointless network
+// fetch at render time. buildPrintCssWithFontImport prepends the @import
+// for the paths that have no inlined font.
+function horizontalPrintRules(options: RenderOptions): string {
+  return `
+  /* The body font-family is declared at TOP LEVEL — outside @media print —
+     deliberately, and it must stay there. Chromium loads web fonts lazily:
+     a @font-face only loads once some element uses its family under the
+     CURRENT media. Inside @media print, nothing references the family
+     during the normal (screen) rendering, the face stays "unloaded", and
+     Chromium's print path does NOT wait for font loads — it captures with
+     the fallback. Verified with minimal probes: identical font payloads
+     failed with this rule inside @media print and succeeded outside,
+     regardless of injection route, payload size or waits (see the font
+     investigation notes). test/pdf.test.ts pins this placement. */
+  body {
+    font-family: ${fontStack(options)} !important;
+  }
+
+  @page {
+    size: 66mm 99mm;
+    margin: 4mm;
+  }
+
+  @media print {
+    html,
+    body {
+      margin: 0 !important;
+      padding: 0 !important;
+      background: white !important;
+      color: black !important;
+    }
+
+    body {
+      font-size: 10pt !important;
+      line-height: 1.55 !important;
+    }
+
+    ${BODY_TEXT_SIZE_RULES}
 
     /* Force full-contrast text everywhere: sites commonly use gray body text
        (e.g. #6b7280) or light text on dark blocks; with printBackground off
@@ -164,86 +299,145 @@ const X3_PRINT_RULES = `
        their ids/classes are unique to those vendors so there is no misfire
        risk, and hiding them matters because position:fixed banners are
        repeated on every printed page by Chromium. */
-    body header,
-    body nav,
-    body footer,
-    body aside,
-    body [role="navigation"],
-    body [class~="sidebar"],
-    body [class~="advert"],
-    body [class~="advertisement"],
-    body [class~="ad-container"],
-    body [class*="cookie-banner" i],
-    body [class*="cookie-consent" i],
-    body [class*="cookieconsent" i],
-    body [class*="cookie-notice" i],
-    body [class*="cookie-popup" i],
-    body [id*="cookie-banner" i],
-    body [id*="cookieconsent" i],
-    body [class~="share"],
-    body [class*="share-button"],
-    body [class*="social-share"],
-    body [class*="share-bar"],
-    body [class*="share-icons"],
-    body [class*="share-tools"],
-    body [class*="sharetools" i],
-    body #onetrust-banner-sdk,
-    body #CybotCookiebotDialog,
-    body .cc-window,
-    body .fc-consent-root,
-    body #cookie-law-info-bar,
-    body .cmplz-cookiebanner,
-    body .addthis_toolbox,
-    body .sharedaddy {
+    ${HIDE_CHROME_RULES}
+
+    ${LAYOUT_RESET_RULES}
+
+    ${MEDIA_FIT_RULES}
+
+    pre {
+      white-space: pre-wrap !important;
+      overflow-wrap: anywhere !important;
+    }
+  }
+`;
+}
+
+/**
+ * Vertical-writing rule set. Purpose-built instead of deriving from the
+ * horizontal rules: those are horizontal-writing assumptions throughout
+ * (per-element font-size normalization and physical margin stripping target
+ * scraped web layouts flowing left-to-right). The page geometry (66mm x
+ * 99mm at 4mm margins — the Xteink X3 panel) is identical.
+ *
+ * Works for both sources of vertical renders: documents this service
+ * authors (extract mode, Aozora Bunko — whose structure-specific CSS is
+ * embedded in the document itself, see AOZORA_DOCUMENT_CSS in
+ * src/aozora.ts) and full-page renders of arbitrary sites, which is why
+ * the chrome-hide block rides along here too.
+ *
+ * Deliberate choices, mirroring the constraints documented on the
+ * horizontal rules:
+ * - writing-mode sits on html, not body: applying it below the root is a
+ *   known source of broken pagination in Chromium's print path. !important
+ *   so a site's own root rules cannot flip a requested vertical render.
+ * - font-family stays at TOP LEVEL (outside @media print) — same lazy-font
+ *   loading trap as the horizontal stylesheet; test/pdf.test.ts pins this.
+ *   Declared on html AND body so a site's body font rule cannot mask the
+ *   family at screen time.
+ * - No height:100%/100vh anywhere: a fixed block size on the body is the
+ *   classic way to collapse a vertical document into a single page.
+ * - 傍点 (Aozora emphasis marks) and 字下げ/地付き live in
+ *   AOZORA_DOCUMENT_CSS, not here: their class selectors (e.g. #contents)
+ *   could collide with ordinary sites' markup.
+ */
+function verticalPrintRules(options: RenderOptions): string {
+  return `
+  /* Root: vertical flow. */
+  html {
+    writing-mode: vertical-rl !important;
+    text-orientation: mixed !important;
+    line-height: 1.9;
+    line-break: strict;
+  }
+
+  /* Chosen family + serif generic; must stay OUTSIDE @media print (the
+     lazy-font-loading trap documented on the horizontal rules). */
+  html,
+  body {
+    font-family: ${fontStack(options)} !important;
+  }
+
+  @page {
+    size: 66mm 99mm;
+    margin: 4mm;
+  }
+
+  @media print {
+    html,
+    body {
+      margin: 0 !important;
+      padding: 0 !important;
+      background: white !important;
+      color: black !important;
+    }
+
+    body {
+      font-size: 10pt !important;
+    }
+
+    /* Full contrast plus the overflow guards: mid-token wraps and letting
+       flex/grid items shrink below min-content (min-width for the physical
+       paper-width axis, min-height for the inline axis, which is vertical
+       here) — same "contents width" clipping mechanism documented on the
+       shared blocks above. */
+    body * {
+      color: black !important;
+      -webkit-text-fill-color: black !important;
+      text-shadow: none !important;
+      overflow-wrap: anywhere !important;
+      min-width: 0 !important;
+      min-height: 0 !important;
+    }
+
+    ${BODY_TEXT_SIZE_RULES}
+
+    /* The title heading buildPrintHtml emits, plus the 見出し levels the
+       Aozora markup uses (h3.o-midashi / h4.naka-midashi / h5.ko-midashi).
+       Kept close to the body size: a 58mm-wide page has no room for large
+       display sizes. Sized AFTER the shared normalization on purpose — the
+       normalization skips h1-h6, and the vertical set pins them because a
+       site's display sizes have no room on this page. */
+    h1 {
+      font-size: 13pt !important;
+      font-weight: 700 !important;
+    }
+    h2 {
+      font-size: 11pt !important;
+      font-weight: 700 !important;
+    }
+    h3,
+    h4,
+    h5,
+    h6 {
+      font-size: 10.5pt !important;
+      font-weight: 700 !important;
+    }
+
+    /* Ruby: annotations on the right of the base text (over-position in
+       vertical-rl), readings upright, and the <rp> fallback parentheses
+       hidden — with real ruby layout they would print as stray （）. */
+    ruby {
+      ruby-position: over;
+    }
+    rt {
+      font-size: 0.5em !important;
+      text-orientation: upright;
+    }
+    rp {
       display: none !important;
     }
 
-    main,
-    article {
-      width: 100% !important;
-      max-width: none !important;
-      margin: 0 !important;
-      padding: 0 !important;
-    }
+    ${LAYOUT_RESET_RULES}
 
-    /* Chromium evaluates print media queries at ~816px (US Letter), not at
-       the @page size, so sites keep their desktop/tablet shell when printed:
-       padded, centered layout wrappers get flowed into the 58mm content box
-       and push the article column past the right paper edge (verified on
-       webgenron.com: a grid wrapper with 20px side padding shifted all body
-       text ~3.5mm right, clipping ~2mm off every line on every page).
-       Divs/sections are layout chrome, not prose, so drop their horizontal
-       padding and (auto-)centering margins; the @page margin is the only
-       gutter the X3 page can afford. Lists, blockquotes, pre and table cells
-       are untouched and keep their indentation. */
-    div,
-    section {
-      padding-left: 0 !important;
-      padding-right: 0 !important;
-      margin-left: 0 !important;
-      margin-right: 0 !important;
-    }
+    ${MEDIA_FIT_RULES}
 
-    /* Stripping padding/margin above is not enough when a script pins an
-       explicit width on a wrapper: carousel JS writes inline styles like
-       width: 800px on its track div (verified on omocoro.jp: a slider-pro
-       carousel set width: 800px on the track and width: 200px per slide),
-       which re-triggers the same contents-width expansion — the whole print
-       layout grows ~10% past the paper and every line loses its last 1-2
-       characters, while blockquote borders run off the right edge. Clamp
-       with max-width rather than width: auto so deliberately narrow UI
-       bits (e.g. a 180px "read more" button div) keep their intended width
-       instead of being inflated to full page width. */
-    div,
-    section {
-      max-width: 100% !important;
-    }
-
-    /* Keep replaced/embedded media inside the page. A fixed-width image or
-       iframe would widen the print layout and clip the page at the right
-       edge (same mechanism as the flex overflow handled above), and
-       height: auto preserves the aspect ratio when width/height attributes
-       would otherwise squash a shrunken image. */
+    /* On top of the shared physical clamps: logical limits so media also
+       stays inside the page along the vertical inline axis, and
+       max-block-size < 100% so a full-bleed image cannot swallow a whole
+       column (block size is the horizontal axis here). The Aozora document
+       CSS overrides these for gaiji/illustrations where it must (class
+       specificity + !important). */
     img,
     svg,
     video,
@@ -252,41 +446,51 @@ const X3_PRINT_RULES = `
     embed,
     table,
     pre {
-      max-width: 100% !important;
-    }
-
-    img,
-    svg,
-    video,
-    iframe,
-    canvas,
-    embed {
-      height: auto !important;
+      max-inline-size: 100% !important;
+      max-block-size: 90% !important;
     }
 
     pre {
       white-space: pre-wrap !important;
       overflow-wrap: anywhere !important;
     }
+
+    ${HIDE_CHROME_RULES}
   }
 `;
-
-// Full-page path variant: the font @import ahead of the shared rules.
-export const X3_PRINT_CSS = `
-  /* Must stay the first rule in this stylesheet (CSS drops later @imports).
-     Injected via addStyleTag after page load on the full-page path, so a
-     target page's CSP may block it — an accepted degradation, like the
-     colophon script below. */
-  @import url("${PRINT_FONT_CSS_URL}");
-${X3_PRINT_RULES}`;
+}
 
 /**
- * Extract-path variant: shared rules only, no @import — injected together
- * with the inlined @font-face CSS (renderPdfFromHtml), which already carries
- * the font as data: URLs, so this stylesheet must not start another network
- * fetch of the same family.
+ * Print rules for the given options (no font @import): the layout picks the
+ * rule set, the font fills the body stack. Injected next to the inlined
+ * @font-face CSS on the extract path.
  */
-export const X3_PRINT_CSS_NO_FONT_IMPORT = X3_PRINT_RULES;
+export function buildPrintRules(options: RenderOptions): string {
+  return options.layout === "vertical"
+    ? verticalPrintRules(options)
+    : horizontalPrintRules(options);
+}
+
+/**
+ * Rules preceded by the css2 @import of the selected family — for the
+ * render paths that carry no inlined @font-face CSS (the full-page path,
+ * and HTML renders whose font subsetting fail-softed to null). A
+ * nonexistent family just 400s the import and the generic fallback is used;
+ * the conversion itself never fails on a font.
+ */
+export function buildPrintCssWithFontImport(options: RenderOptions): string {
+  return `
+  /* Must stay the first rule in this stylesheet (CSS drops later @imports).
+     Injected via addStyleTag after page load, so a target page's CSP may
+     block it — an accepted degradation, like the colophon script below. */
+  @import url("${fontCssEndpoint(options.font)}");
+${buildPrintRules(options)}`;
+}
+
+// Fixed default-options variants; test/pdf.test.ts pins their exact text
+// (the @import placement and the top-level font-family rule).
+export const X3_PRINT_CSS = buildPrintCssWithFontImport(DEFAULT_RENDER_OPTIONS);
+export const X3_PRINT_CSS_NO_FONT_IMPORT = buildPrintRules(DEFAULT_RENDER_OPTIONS);
 
 /**
  * User agent the rendering browser announces when fetching the target page.
@@ -535,12 +739,16 @@ const PDF_OPTIONS = {
   timeout: 300_000,
 } as const;
 
-export function renderPdf(env: Env, url: string): Promise<Response> {
+export function renderPdf(
+  env: Env,
+  url: string,
+  options: RenderOptions = DEFAULT_RENDER_OPTIONS,
+): Promise<Response> {
   const convertedAt = formatJstTimestamp(new Date());
   return env.BROWSER.quickAction("pdf", {
     url,
     userAgent: RENDER_USER_AGENT,
-    addStyleTag: [{ content: X3_PRINT_CSS }],
+    addStyleTag: [{ content: buildPrintCssWithFontImport(options) }],
     // First coax lazy images into loading, then append the colophon page to
     // the DOM — both run after load, before the waitForTimeout grace and the
     // PDF capture. A page CSP can block either script (fail-soft by design).
@@ -569,7 +777,16 @@ export function renderPdfFromHtml(
   env: Env,
   html: string,
   fontCss: string | null = null,
+  options: RenderOptions = DEFAULT_RENDER_OPTIONS,
 ): Promise<Response> {
+  // With inlined font CSS the rules ride without an @import (a remote fetch
+  // of the same family would only race the data: faces); on font fail-soft
+  // (null) the @import variant is the best remaining effort — probabilistic
+  // like the full path, worst case the generic/WenQuanYi fallback.
+  const styles =
+    fontCss !== null
+      ? [{ content: fontCss }, { content: buildPrintRules(options) }]
+      : [{ content: buildPrintCssWithFontImport(options) }];
   return env.BROWSER.quickAction("pdf", {
     html,
     // The browser still fetches the article's images from their origin;
@@ -580,17 +797,14 @@ export function renderPdfFromHtml(
     // addStyleTag — the injection path the custom-fonts docs document for
     // quick actions. Order matters: the faces first, then the rules that
     // reference the family. What actually makes the font take effect is the
-    // font-family rule sitting OUTSIDE @media print (see X3_PRINT_RULES):
+    // font-family rule sitting OUTSIDE @media print (see the print rules):
     // an earlier claim that "html mode ignores document-level data:
     // @font-face" was a misattribution — those probes had the family inside
     // @media print, so the lazy loader never fired. On font fail-soft
     // (null) inject the @import variant instead — probabilistic like the
     // full path, worst case the WenQuanYi fallback, but never a second
     // fetch racing an inlined font.
-    addStyleTag:
-      fontCss !== null
-        ? [{ content: fontCss }, { content: X3_PRINT_CSS_NO_FONT_IMPORT }]
-        : [{ content: X3_PRINT_CSS }],
+    addStyleTag: styles,
     gotoOptions: PDF_GOTO_OPTIONS,
     // Probes show data: faces apply even without a wait once the family is
     // used at screen time; keep a safety margin for cold-instance decode of

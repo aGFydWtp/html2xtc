@@ -234,6 +234,34 @@ describe("buildPrintHtml", () => {
     expect(html).not.toContain("<img src=x");
   });
 
+  it("embeds documentCss as a head <style>", () => {
+    const html = buildPrintHtml(
+      article(),
+      BASE,
+      CONVERTED_AT,
+      ".jisage_2 { margin-inline-start: 2em !important; }",
+    );
+    expect(html).toContain("<style>");
+    expect(html).toContain(".jisage_2 { margin-inline-start: 2em !important; }");
+  });
+
+  it("neutralizes markup in documentCss (linkedom does not escape <style>)", () => {
+    // Defense in depth: the only current caller passes a static constant,
+    // but a "</style>" sequence must never escape into the head — the
+    // rendering browser executes scripts (quickAction("pdf")).
+    const html = buildPrintHtml(
+      article(),
+      BASE,
+      CONVERTED_AT,
+      'body { color: red } </style><script>alert(1)</script><style>',
+    );
+    expect(html).not.toContain("</style><script>");
+    expect(html).not.toContain("<script");
+    expect(html).not.toContain("alert(1)</script>");
+    // The sane part of the CSS survives.
+    expect(html).toContain("body { color: red }");
+  });
+
   it("carries no font reference at all (fonts travel via addStyleTag)", () => {
     // The inlined font CSS is injected at render time via addStyleTag; a
     // font <link>/<style> here would either be dead weight or a duplicate

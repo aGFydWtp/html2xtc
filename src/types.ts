@@ -11,11 +11,38 @@ import type { RateLimiter } from "./ratelimiter";
  */
 export type ConvertMode = "full" | "extract";
 
+/** Page-flow direction of the rendered PDF. */
+export type ConvertLayout = "horizontal" | "vertical";
+
+/**
+ * Resolved rendering options, produced by resolveRenderOptions()
+ * (src/sitepresets.ts) from the request's optional layout/font fields plus
+ * the per-site defaults (Aozora Bunko → vertical + BIZ UDMincho).
+ *
+ * INVARIANT: `font` is a sanitized Google Fonts family name — safe to embed
+ * in a quoted CSS font-family declaration and in the css2 URL. ALWAYS build
+ * this type via resolveRenderOptions() (or pass the value through
+ * sanitizeFontFamily, src/fonts.ts); never place raw request input here.
+ * (A branded type could enforce this at compile time; deliberately not
+ * introduced yet — reviewed and deferred.)
+ */
+export interface RenderOptions {
+  layout: ConvertLayout;
+  font: string;
+}
+
 /** Params handed to ConvertWorkflow via CONVERT_WORKFLOW.create(). */
 export interface ConvertJobParams {
   url: string;
   /** Absent on jobs created before extract mode existed; treated as "full". */
   mode?: ConvertMode;
+  /**
+   * Raw optional render options as submitted (loosely typed on purpose:
+   * params persist across deploys, so the Workflow re-validates them via
+   * resolveRenderOptions instead of trusting the stored shape).
+   */
+  layout?: string;
+  font?: string;
 }
 
 export interface Env {

@@ -123,6 +123,7 @@
 		// API paths always hit the Worker first, even if an asset with the
 		// same name ever appears under frontend/dist/.
 		"run_worker_first": [
+			"/api/*",
 			"/convert",
 			"/jobs",
 			"/jobs/*",

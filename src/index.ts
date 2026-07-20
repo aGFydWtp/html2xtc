@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 aGFydWtp
 
+import {
+  clampBookSearchLimit,
+  normalizeBookSearchQuery,
+  searchBooks,
+} from "./catalog-db";
 import { convertInContainer } from "./container";
 import { prepareRenderInput } from "./extract";
 import {
@@ -101,6 +106,16 @@ async function route(request: Request, env: Env): Promise<Response> {
     return handleCreateJob(request, env);
   }
 
+  if (pathname === "/api/books") {
+    if (request.method !== "GET") {
+      return methodNotAllowed("GET");
+    }
+    // Read-only D1 lookup, no rate limit (like the other GET endpoints): the
+    // worst case is ~28ms / 17.8k rows_read, while the heavy POST /jobs path
+    // already carries the 50/h limit.
+    return handleBookSearch(request, env);
+  }
+
   const jobStatus = pathname.match(/^\/jobs\/([^/]+)$/);
   if (jobStatus) {
     if (request.method !== "GET") {
@@ -132,6 +147,38 @@ function methodNotAllowed(allow: string): Response {
   return Response.json(
     { error: "method not allowed" },
     { status: 405, headers: { Allow: allow } },
+  );
+}
+
+// The catalogue updates at most daily, so search responses are safe to cache
+// briefly at the edge / in the browser.
+const BOOK_SEARCH_CACHE_CONTROL = "public, max-age=300";
+
+/**
+ * GET /api/books?q=<query>&limit=<n> — substring search over the active Aozora
+ * catalogue generation. q is normalized with normalizeCatalogText; a missing,
+ * blank, or punctuation-only q returns 200 {books:[]} without touching D1.
+ * limit defaults to 50, capped at 50 (invalid values fall back to the
+ * default). Rows without HTML are excluded, so every hit has a non-empty
+ * htmlUrl. Responses carry a 5-minute cache.
+ */
+async function handleBookSearch(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const { searchParams } = new URL(request.url);
+  const query = normalizeBookSearchQuery(searchParams.get("q"));
+  if (query === "") {
+    return Response.json(
+      { books: [] },
+      { headers: { "Cache-Control": BOOK_SEARCH_CACHE_CONTROL } },
+    );
+  }
+  const limit = clampBookSearchLimit(searchParams.get("limit"));
+  const books = await searchBooks(env.AOZORA_DB, query, limit);
+  return Response.json(
+    { books },
+    { headers: { "Cache-Control": BOOK_SEARCH_CACHE_CONTROL } },
   );
 }
 

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 aGFydWtp
 
+import { normalizeCatalogText } from "./catalog";
 import type { AozoraBookRow, AozoraContributorRow } from "./catalog";
 
 /**
@@ -540,4 +541,121 @@ export async function deleteOldGenerations(
     .prepare(`DELETE FROM aozora_books WHERE generation <> ?`)
     .bind(keepGeneration)
     .run();
+}
+
+/**
+ * A single GET /api/books hit, camelCased for the JSON response. htmlUrl is
+ * always a non-empty string: searchBooks filters out catalogue rows without
+ * HTML (~0.5%, unconvertible), so every hit points at real body text.
+ */
+export interface BookSearchResult {
+  workId: string;
+  title: string;
+  subtitle: string | null;
+  author: string;
+  htmlUrl: string;
+  cardUrl: string;
+  copyrighted: boolean;
+}
+
+/** Raw column shape returned by BOOK_SEARCH_SQL (snake_case, D1 integers). */
+interface BookSearchRow {
+  work_id: string;
+  title: string;
+  subtitle: string | null;
+  contributor_names: string;
+  copyrighted: number;
+  html_url: string;
+  card_url: string;
+}
+
+/**
+ * Pure snake_case -> camelCase row mapper. author is contributor_names
+ * verbatim (already display-formatted at sync time); copyrighted is the D1
+ * integer flag as a boolean. Split out from searchBooks so it is
+ * unit-testable without a D1 binding.
+ */
+export function mapBookRow(row: BookSearchRow): BookSearchResult {
+  return {
+    workId: row.work_id,
+    title: row.title,
+    subtitle: row.subtitle,
+    author: row.contributor_names,
+    htmlUrl: row.html_url,
+    cardUrl: row.card_url,
+    copyrighted: row.copyrighted === 1,
+  };
+}
+
+export const DEFAULT_BOOK_SEARCH_LIMIT = 50;
+export const MAX_BOOK_SEARCH_LIMIT = 50;
+
+/**
+ * Parses ?limit=. Absent, blank, or invalid (non-numeric, non-integer, < 1)
+ * falls back to DEFAULT_BOOK_SEARCH_LIMIT; anything above
+ * MAX_BOOK_SEARCH_LIMIT is clamped down to it.
+ */
+export function clampBookSearchLimit(raw: string | null): number {
+  if (raw === null || raw.trim() === "") {
+    return DEFAULT_BOOK_SEARCH_LIMIT;
+  }
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 1) {
+    return DEFAULT_BOOK_SEARCH_LIMIT;
+  }
+  return Math.min(value, MAX_BOOK_SEARCH_LIMIT);
+}
+
+/**
+ * Normalizes a raw ?q= value with normalizeCatalogText -- the same rule that
+ * built the search_text / *_normalized columns, so a query matches iff its
+ * normalized form is a substring. Returns "" when the query is missing or
+ * reduces to nothing (blank, punctuation- or symbol-only); the handler turns
+ * that into an empty result set without touching D1. Because normalization
+ * strips LIKE metacharacters (% _), the value is safe to concatenate into the
+ * pattern without ESCAPE.
+ */
+export function normalizeBookSearchQuery(raw: string | null): string {
+  return normalizeCatalogText(raw);
+}
+
+/**
+ * Substring search over aozora_books_active (always the view, so a
+ * half-loaded sync generation is invisible). The normalized query is bound as
+ * ?1 and reused three times: the search_text substring filter plus two prefix
+ * probes that rank title-prefix matches (0) above author-prefix matches (1)
+ * above plain substring hits (2), then shortest normalized title, then
+ * title order. Rows without HTML (html_url null/empty) are excluded so
+ * htmlUrl is always present. ?2 is the row limit.
+ */
+export const BOOK_SEARCH_SQL =
+  "SELECT work_id, title, subtitle, contributor_names, copyrighted, html_url, card_url " +
+  "FROM aozora_books_active " +
+  "WHERE search_text LIKE '%' || ?1 || '%' " +
+  "  AND html_url IS NOT NULL AND html_url <> '' " +
+  "ORDER BY " +
+  "  CASE " +
+  "    WHEN title_normalized LIKE ?1 || '%' THEN 0 " +
+  "    WHEN contributor_names_normalized LIKE ?1 || '%' THEN 1 " +
+  "    ELSE 2 " +
+  "  END, " +
+  "  length(title_normalized), " +
+  "  title_normalized " +
+  "LIMIT ?2";
+
+/**
+ * Runs BOOK_SEARCH_SQL against the active generation. normalizedQuery must
+ * already be normalized (normalizeBookSearchQuery) and non-empty -- the caller
+ * short-circuits the empty case before reaching D1. Returns camelCased hits.
+ */
+export async function searchBooks(
+  db: D1Database,
+  normalizedQuery: string,
+  limit: number,
+): Promise<BookSearchResult[]> {
+  const result = await db
+    .prepare(BOOK_SEARCH_SQL)
+    .bind(normalizedQuery, limit)
+    .all<BookSearchRow>();
+  return result.results.map(mapBookRow);
 }

@@ -25,6 +25,7 @@ Worker
 - Container は固定プール名（`converter-0` / `converter-1`、`max_instances: 2` に対応）に jobId のハッシュで振り分け、ウォームインスタンスを再利用する。
 - 変換設定は `converter/config-x3.toml`（528×792、1-bit xtg、日本語メタデータ）。
 - PDF の最終ページに奥付（タイトル・サイト名・著者・URL・変換日時・個人利用の注記）を追加する（`src/pdf.ts` の `buildColophonScript`。addScriptTag による DOM 注入。ページの CSP でブロックされた場合は奥付なしで変換される）。
+- 変換パイプラインとは別に、青空文庫の公式書誌カタログを 1 日 1 回 Cron で D1（`AOZORA_DB`）へ同期する（`src/catalog-workflow.ts` の `AozoraCatalogSyncWorkflow`）。`scheduled()` は Workflow を起動するだけで、ZIP 取得・CSV 解析・D1 投入は Workflow の各 step が担う。全書誌を新しい `generation` として投入・検証しきってから `active_generation` を 1 回の UPDATE で切り替えるため、検索側（`aozora_books_active` / `aozora_book_contributors_active` ビュー）が中途半端なデータを見ることはない。詳細は「青空文庫カタログ同期（D1）」を参照。この同期は既存の変換 API（`/convert` `/jobs` `/download`）には一切ルートを追加しない。
 
 ## WebUI
 
@@ -132,6 +133,21 @@ R2 上の XTC を `application/octet-stream` + `Content-Length` + `Content-Dispo
 | 同時変換数（Container 内） | 2 | Container の env `MAX_CONCURRENT_CONVERSIONS`（Semaphore で制限） |
 | 変換リクエストのレート制限（IP ごと・1 時間固定窓） | 50 件 | Worker の var `RATE_LIMIT_PER_HOUR`（「レート制限」参照） |
 
+## 青空文庫カタログ同期（D1）
+
+青空文庫の公式書誌 CSV（「公開中 作家別作品一覧拡充版：全て」UTF-8・zip）を 1 日 1 回取得し、`html2xtc` から検索可能な形で D1（binding `AOZORA_DB`、DB 名 `html2xtc-aozora-catalog`）へ保存する。現フェーズは同期のみで、書誌検索 API・WebUI はまだ含まない。
+
+- **起動**: Cron Trigger（`wrangler.jsonc` の `triggers.crons`）で `scheduled()` を叩き、`AOZORA_SYNC_WORKFLOW` を起動する。Cron は UTC 指定で、既定は `30 18 * * *`（= 03:30 JST）の 1 日 1 回。同期のたびに青空文庫へアクセスするのは ZIP 1 ファイルのみ。
+- **未変更検出**: 保存済みの `ETag` / `Last-Modified` で条件付き GET し、304 か、本文の SHA-256 が前回と同じなら投入せず `unchanged` で終了する。
+- **世代管理**: 全書誌に `generation`（例 `20260720T183000Z-<sha12>`）を付けて投入し、件数・図書カード URL 保有率などの検証を通過してから `aozora_catalog_state.active_generation` を 1 回の UPDATE で切り替える。切り替え後に旧世代を削除する。検索側はテーブルではなくビュー（`aozora_books_active` / `aozora_book_contributors_active`）を読むため、投入途中のデータや切り替え失敗が結果に混ざらない。
+- **重い処理の分割**: ZIP 展開・CSV 解析結果は R2（既存の `XTC_BUCKET`、キー接頭辞 `aozora-sync/<runId>/`）へ小さな JSON チャンク（200 行/チャンク）として置き、Workflow の各 step でチャンク単位に D1 へ UPSERT する。step の戻り値は小さなメタデータのみ（1 MiB 上限）。同期中間ファイルは切り替え後に削除する。
+- **ロック**: `aozora_catalog_state` の 1 行を条件付き UPDATE で排他ロックし、二重同期を防ぐ。ロックには有効期限（既定 120 分）があり、step が強制終了してもロックが残り続けない。
+- **ID の保持**: 作品 ID・人物 ID はゼロ埋め（例 `000773`）のため、先頭ゼロを失わないよう D1 では TEXT で保持する。列はヘッダー名で参照し、公式 CSV の列追加・並び替えに耐える（必須ヘッダー欠損時は同期を失敗させる）。
+- **履歴**: 各同期の状態（`running` / `unchanged` / `completed` / `failed` / `skipped_locked`）・件数・エラーは `aozora_catalog_sync_runs` に記録する。現フェーズでは同期状態を返す公開 API は設けない。
+- **依存**: ZIP 展開に `fflate`、CSV 解析に `papaparse`（いずれも純 JS。`nodejs_compat` は不要）。純粋ロジック（正規化・集約・チャンク分割・検証）は `src/catalog.ts` に分離し `test/catalog.test.ts` でテストする。D1 操作は `src/catalog-db.ts`、R2 キー生成は `src/catalog-keys.ts`。
+
+D1 の作成・migration 適用は「ローカル開発」を参照。
+
 ## URL 検証（SSRF 対策）と既知の限界
 
 `src/validate.ts`。
@@ -177,6 +193,23 @@ docker build --platform linux/amd64 -f converter/Dockerfile converter/
 npm install --prefix frontend
 npm run build --prefix frontend
 
+# 青空文庫カタログ用 D1 の作成（初回のみ。出力の database_id を
+# wrangler.jsonc の d1_databases[].database_id へ設定する）
+npx wrangler d1 create html2xtc-aozora-catalog
+
+# migration の適用（マイグレーションは migrations/aozora 配下）
+npx wrangler d1 migrations apply html2xtc-aozora-catalog --local    # ローカル
+npx wrangler d1 migrations apply html2xtc-aozora-catalog --remote   # 本番（デプロイ時）
+
+# 適用確認（singleton state 行が 1 行できる）
+npx wrangler d1 execute html2xtc-aozora-catalog --local \
+  --command "SELECT * FROM aozora_catalog_state"
+
+# Cron（青空文庫カタログ同期）のローカル起動確認
+npx wrangler dev
+# 別ターミナルで:
+# curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=30+18+*+*+*&format=json"
+
 # ローカル実行（Browser Run は remote:true のため Cloudflare 認証が必要）
 npx wrangler dev
 
@@ -218,7 +251,14 @@ src/
   ratelimit.ts   レート制限の純関数（IP キー正規化・固定窓判定、vitest 対象）
   ratelimiter.ts RateLimiter Durable Object + enforceRateLimit（429 応答）
   validate.ts    SSRF 対策の URL 検証（DoH 事前解決含む）
-  types.ts       Env 型・ConvertJobParams
+  types.ts       Env 型・ConvertJobParams・AozoraCatalogSyncParams
+  catalog.ts        青空文庫 CSV の純粋ロジック（ヘッダー検証・正規化・作品/人物集約・チャンク分割・整合性検証、vitest 対象）
+  catalog-db.ts     青空文庫カタログの D1 操作（ロック・run 記録・世代付き UPSERT・件数検証・active 切替・旧世代削除）
+  catalog-keys.ts   同期中間ファイルの R2 キー生成（aozora-sync/<runId>/…）
+  catalog-workflow.ts AozoraCatalogSyncWorkflow（ZIP 取得 → CSV 解析 → R2 チャンク → D1 投入 → 検証 → active 切替 → 後始末）
+migrations/
+  aozora/
+    0001_init.sql   青空文庫カタログの D1 スキーマ（state / sync_runs / books / contributors + active ビュー）
 converter/
   Dockerfile     マルチステージ（builder で xtctool を venv へ）+ 非 root 実行
   app.py         POST /convert（PDF bytes → XTC bytes）/ GET /healthz
@@ -233,6 +273,9 @@ test/
   fonts.test.ts           vitest
   aozora.test.ts          vitest（青空文庫抽出・オプション解決・縦書き CSS のピン留め）
   ratelimit.test.ts       vitest（IP キー正規化・固定窓判定・上限パース）
+  catalog.test.ts         vitest（青空文庫 CSV の正規化・集約・重複排除・整合性検証・チャンク分割）
+  fixtures/
+    aozora-catalog-small.csv  catalog.test.ts 用の小さな書誌 CSV
   converter/test_app.py   pytest
 ```
 

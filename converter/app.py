@@ -40,21 +40,46 @@ MAX_PDF_BYTES = int(os.environ.get("MAX_PDF_BYTES", str(50 * 1024 * 1024)))
 # compromised or misconfigured Worker); far above any normal operating limit.
 HARD_MAX_PDF_BYTES = 512 * 1024 * 1024
 MAX_CONCURRENT_CONVERSIONS = int(os.environ.get("MAX_CONCURRENT_CONVERSIONS", "2"))
+
+logger = logging.getLogger("converter")
+
+
+def _positive_env_int(name: str, default: int) -> int:
+    """Environment override that must be a positive integer; anything else
+    falls back to the default with a warning (a zero/negative chunk size or
+    threshold would break the chunking arithmetic, and container startup must
+    never be blocked by a bad env var)."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if value <= 0:
+        logger.warning(
+            "%s=%r is not a positive integer; using default %d", name, raw, default
+        )
+        return default
+    return value
+
+
 # xtctool rasterizes every selected page into memory before packing (~1.7MB
 # per page measured), so long PDFs are converted in page-range chunks and the
 # chunk XTCs are repacked into the final container. PDFs at or below the
 # threshold use the original single-pass conversion.
-CHUNK_THRESHOLD_PAGES = int(os.environ.get("XTC_CHUNK_THRESHOLD_PAGES", "150"))
-CHUNK_SIZE_PAGES = int(os.environ.get("XTC_CHUNK_SIZE_PAGES", "100"))
-
-logger = logging.getLogger("converter")
+CHUNK_THRESHOLD_PAGES = _positive_env_int("XTC_CHUNK_THRESHOLD_PAGES", 150)
+CHUNK_SIZE_PAGES = _positive_env_int("XTC_CHUNK_SIZE_PAGES", 100)
 
 if pymupdf is None:  # pragma: no cover - always present in the container image
     logger.warning("pymupdf is unavailable; PDF title extraction is disabled")
 
 # Bounds concurrent xtctool subprocesses (each rasterizes up to
 # CHUNK_THRESHOLD_PAGES, or one chunk of a long PDF, into memory); excess
-# requests queue on their handler threads.
+# requests queue on their handler threads. Two concurrent chunked conversions
+# of the 665-page reference PDF peak at ~750MiB total (measured under
+# docker --memory=1g), leaving ~27% headroom on a basic (1GiB) instance, so
+# the chunked path needs no extra serialization beyond this semaphore.
 CONVERSION_SLOTS = threading.Semaphore(MAX_CONCURRENT_CONVERSIONS)
 
 
@@ -114,21 +139,33 @@ class ConversionError(Exception):
 MAX_TITLE_CHARS = 100
 
 
-def extract_pdf_title(pdf_bytes: bytes) -> str:
-    """Best-effort read of the PDF /Title metadata (Chromium's print-to-PDF
-    stores the page <title> there). Returns "" when unavailable."""
+def read_pdf_metadata(pdf_bytes: bytes) -> tuple[str, int | None]:
+    """Best-effort single-pass read of the PDF /Title metadata (Chromium's
+    print-to-PDF stores the page <title> there) and the page count. Returns
+    ("", None) when unavailable."""
     if pymupdf is None:
-        return ""
+        return "", None
     try:
         with pymupdf.open(stream=pdf_bytes, filetype="pdf") as doc:
             title = (doc.metadata or {}).get("title") or ""
+            page_count = doc.page_count
     except Exception:  # noqa: BLE001 - metadata is optional, never fatal
-        logger.exception("failed to read PDF title metadata")
-        return ""
+        logger.exception("failed to read PDF metadata")
+        return "", None
     # Collapse whitespace/control characters and cap the length.
     title = "".join(" " if ord(c) < 0x20 or ord(c) == 0x7F else c for c in title)
     title = " ".join(title.split())
-    return title[:MAX_TITLE_CHARS].strip()
+    return title[:MAX_TITLE_CHARS].strip(), page_count
+
+
+def extract_pdf_title(pdf_bytes: bytes) -> str:
+    """PDF /Title metadata, or "" when unavailable."""
+    return read_pdf_metadata(pdf_bytes)[0]
+
+
+def count_pdf_pages(pdf_bytes: bytes) -> int | None:
+    """Page count of the PDF, or None when it cannot be determined."""
+    return read_pdf_metadata(pdf_bytes)[1]
 
 
 def _toml_value(value) -> str:
@@ -155,18 +192,6 @@ def config_with_title(title: str) -> str:
             lines.append(f"{key} = {_toml_value(value)}")
         lines.append("")
     return "\n".join(lines)
-
-
-def count_pdf_pages(pdf_bytes: bytes) -> int | None:
-    """Page count of the PDF, or None when it cannot be determined."""
-    if pymupdf is None:
-        return None
-    try:
-        with pymupdf.open(stream=pdf_bytes, filetype="pdf") as doc:
-            return doc.page_count
-    except Exception:  # noqa: BLE001 - fall back to single-pass conversion
-        logger.exception("failed to count PDF pages")
-        return None
 
 
 def _run_xtctool(
@@ -214,8 +239,16 @@ def _run_xtctool(
         )
 
 
+# Sentinel distinguishing "caller did not count pages" (count them here) from
+# an explicit page_count=None ("counting already failed; do not parse again").
+_UNCOUNTED = object()
+
+
 def convert_pdf(
-    pdf_bytes: bytes, title: str = "", timeout_seconds: int = CONVERT_TIMEOUT_SECONDS
+    pdf_bytes: bytes,
+    title: str = "",
+    timeout_seconds: int = CONVERT_TIMEOUT_SECONDS,
+    page_count: int | None | object = _UNCOUNTED,
 ) -> bytes:
     """Run xtctool over the given PDF bytes and return the XTC bytes.
 
@@ -242,13 +275,16 @@ def convert_pdf(
                 merged_path.write_text(merged, encoding="utf-8")
                 config_path = str(merged_path)
 
-        page_count = count_pdf_pages(pdf_bytes)
+        if page_count is _UNCOUNTED:
+            page_count = count_pdf_pages(pdf_bytes)
         if page_count is None or page_count <= CHUNK_THRESHOLD_PAGES:
+            # A single subprocess gets the whole budget, exactly as before
+            # chunking existed.
             _run_xtctool(
                 [str(pdf_path)],
                 xtc_path,
                 config_path,
-                deadline - time.monotonic(),
+                timeout_seconds,
                 timeout_seconds,
                 "single-pass",
             )
@@ -391,8 +427,10 @@ class Handler(BaseHTTPRequestHandler):
             # always a PDF we rendered ourselves via Chromium, not arbitrary
             # client bytes.
             with CONVERSION_SLOTS:
-                title = extract_pdf_title(pdf_bytes)
-                xtc_bytes = convert_pdf(pdf_bytes, title, timeout_seconds)
+                # Single pymupdf pass supplies both the title and the page
+                # count convert_pdf uses for its chunking decision.
+                title, page_count = read_pdf_metadata(pdf_bytes)
+                xtc_bytes = convert_pdf(pdf_bytes, title, timeout_seconds, page_count)
         except ConversionError as exc:
             logger.error("conversion failed: %s; stderr: %s", exc, exc.stderr)
             self._send_json(500, {"error": str(exc)})

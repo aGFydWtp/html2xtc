@@ -29,9 +29,16 @@ RUN pip install --no-cache-dir --require-hashes -r /tmp/requirements.lock
 # unconditionally imports jinja2, which only the markdown extra pulls in.
 # --no-deps: every dependency (extras included) is already installed from
 # requirements.lock above, so nothing unpinned can slip in here.
+# xtctool-packbits.patch: build-time performance patch (see the patch header
+# for details). Replaces the pure-Python per-pixel bitmap packing loop in
+# xtctool/core/xtg.py with np.packbits; output is byte-identical (verified
+# against commit d7bff34) but ~2000x faster per page, which keeps long PDFs
+# (600+ pages) well inside the conversion timeout on 1/4 vCPU.
+COPY xtctool-packbits.patch /tmp/xtctool-packbits.patch
 RUN git clone https://github.com/chazeon/xtctool.git /opt/xtctool \
     && git -C /opt/xtctool checkout d7bff34ff835889e158ca8ff2253de06a3e825cf \
     && sed -i '/force-include/,+1d' /opt/xtctool/pyproject.toml \
+    && git -C /opt/xtctool apply --stat --apply /tmp/xtctool-packbits.patch \
     && pip install --no-cache-dir --no-deps "/opt/xtctool[performance,markdown]"
 
 # --- runtime: slim image without git or the source checkout ---------------
@@ -41,6 +48,14 @@ COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 RUN useradd -m -u 10001 appuser
+
+# numba's @njit(cache=True) (used by xtctool's dithering) writes its compiled
+# cache next to the source files under /opt/venv, which appuser cannot write —
+# without this every xtctool subprocess silently re-JIT-compiles (several
+# seconds each on 1/4 vCPU). Point the cache at a directory appuser owns.
+# /tmp may be wiped between runs; numba recreates the directory as needed.
+ENV NUMBA_CACHE_DIR=/tmp/numba-cache
+RUN mkdir -p /tmp/numba-cache && chown appuser:appuser /tmp/numba-cache
 
 WORKDIR /app
 

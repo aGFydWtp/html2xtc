@@ -2,15 +2,17 @@
 
 本プロジェクト（html-to-xtc）は **Xteink 社とは無関係な非公式ツール**です。Xteink・X3 は各権利者の商標であり、本プロジェクトはそれらの権利者による承認・提携・保証を受けていません。
 
-本リポジトリ自体のコードは [GNU AGPL-3.0-or-later](LICENSE) です。リポジトリにはサードパーティのソースコードは含まれませんが、Docker イメージのビルド時・実行時に以下のソフトウェアを取得・使用します。**この Docker イメージを第三者に配布する場合**（レジストリでの公開、イメージファイルの受け渡し、変換サーバー一式の納品などを含む）は、以下の各ライセンスの条件（ライセンス本文・著作権表示・対応ソースの提供等）に従う必要があります。サーバー上で実行し変換結果のみをネットワーク越しに提供する現在の形態では、GPL-3.0 のいう「convey」には通常該当しません（ネットワーク条項を持つ AGPL-3.0 の PyMuPDF については下記の項を参照）。
+本リポジトリ自体のコードは [GNU AGPL-3.0-or-later](LICENSE) です。リポジトリにはサードパーティのソースコード本体は含まれませんが（ビルド時に適用するパッチファイル内の変更対象箇所の diff 引用を除く）、Docker イメージのビルド時・実行時に以下のソフトウェアを取得・使用します。**この Docker イメージを第三者に配布する場合**（レジストリでの公開、イメージファイルの受け渡し、変換サーバー一式の納品などを含む）は、以下の各ライセンスの条件（ライセンス本文・著作権表示・対応ソースの提供等）に従う必要があります。サーバー上で実行し変換結果のみをネットワーク越しに提供する現在の形態では、GPL-3.0 のいう「convey」には通常該当しません（ネットワーク条項を持つ AGPL-3.0 の PyMuPDF については下記の項を参照）。
 
 ## xtctool
 
 - リポジトリ: https://github.com/chazeon/xtctool
 - 使用コミット: `d7bff34ff835889e158ca8ff2253de06a3e825cf`（2026-07-17 検証）
 - ライセンス: リポジトリの `LICENSE` ファイルは **GPL-3.0**。ただし同コミットの `pyproject.toml` は `license = {text = "MIT"}` と宣言しており、両者は矛盾している。本プロジェクトでは保守的に **GPL-3.0 として扱う**。
-- 利用形態: `converter/Dockerfile` のビルド時に上記コミットを clone し venv へ `pip install --no-deps`（extras: `[performance,markdown]`）。依存パッケージは事前に [converter/requirements.lock](converter/requirements.lock) からバージョン・ハッシュ固定でインストールされる。実行時はコンテナ内で CLI として subprocess 起動する（`converter/app.py`）。本リポジトリに xtctool のコードは含まれない。
-- ビルド時に加えている変更: `pyproject.toml` の `[tool.hatch.build.targets.wheel.force-include]` セクション（2 行）を `sed` で削除している。新しめの hatchling が `packages = ["xtctool"]` と重複する include を拒否するための、パッケージング設定のみの変更であり、**ソースコード本体は改変していない**。
+- 利用形態: `converter/Dockerfile` のビルド時に上記コミットを clone し venv へ `pip install --no-deps`（extras: `[performance,markdown]`）。依存パッケージは事前に [converter/requirements.lock](converter/requirements.lock) からバージョン・ハッシュ固定でインストールされる。実行時はコンテナ内で CLI として subprocess 起動する（`converter/app.py`）。本リポジトリに xtctool のコード本体は含まれない（ビルド時パッチ [converter/xtctool-packbits.patch](converter/xtctool-packbits.patch) に変更対象箇所の diff 引用が含まれる）。
+- ビルド時に加えている変更:
+  - `pyproject.toml` の `[tool.hatch.build.targets.wheel.force-include]` セクション（2 行）を `sed` で削除している。新しめの hatchling が `packages = ["xtctool"]` と重複する include を拒否するための、パッケージング設定のみの変更。
+  - [converter/xtctool-packbits.patch](converter/xtctool-packbits.patch) を `git apply` で適用し、`xtctool/core/xtg.py` の `_encode_bitmap` を `np.packbits` ベースの実装に置換している（出力バイト列は不変のままエンコードを高速化する改変。詳細はパッチファイルのヘッダコメント参照）。**改変後のソースは本リポジトリ（パッチ + pin コミット）から完全に再構成できる**ため、GPL-3.0 の対応ソース提供は本リポジトリの公開で満たされる。
 
 ## PyMuPDF
 

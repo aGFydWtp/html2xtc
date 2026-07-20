@@ -15,13 +15,6 @@
 
 <section class="convert">
   <p class="intro">{t("intro")}</p>
-  <details class="x3-note">
-    <summary>
-      <b>{t("x3_title")}</b>
-      <span class="caret" aria-hidden="true">▼</span>
-    </summary>
-    <span class="x3-body">{t("x3_body")}</span>
-  </details>
   <form {onsubmit}>
     <div class="input-row">
       <input
@@ -52,19 +45,6 @@
 <style>
   section.convert { padding: 30px 0 30px; border-bottom: 1px solid var(--line); }
   .intro { margin: 0 0 16px; color: var(--muted2); line-height: 1.8; }
-  .x3-note {
-    margin: 0 0 24px; background: var(--panel); border-radius: 4px;
-    font-size: 14px; color: var(--muted2); line-height: 1.9;
-  }
-  .x3-note summary {
-    display: flex; align-items: center; justify-content: space-between; gap: 12px;
-    padding: 14px 18px; cursor: pointer; list-style: none;
-  }
-  .x3-note summary::-webkit-details-marker { display: none; }
-  .x3-note summary b { font-weight: 700; color: #4d4a42; }
-  .x3-note .caret { color: var(--muted); font-size: 12px; transition: transform .15s ease; }
-  .x3-note[open] .caret { transform: rotate(180deg); }
-  .x3-note .x3-body { display: block; padding: 0 18px 14px; }
   form .input-row {
     display: flex; border: 1.5px solid var(--ink); background: var(--card);
     border-radius: 4px; overflow: hidden;

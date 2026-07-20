@@ -21,6 +21,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import tomllib
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -39,14 +40,21 @@ MAX_PDF_BYTES = int(os.environ.get("MAX_PDF_BYTES", str(50 * 1024 * 1024)))
 # compromised or misconfigured Worker); far above any normal operating limit.
 HARD_MAX_PDF_BYTES = 512 * 1024 * 1024
 MAX_CONCURRENT_CONVERSIONS = int(os.environ.get("MAX_CONCURRENT_CONVERSIONS", "2"))
+# xtctool rasterizes every selected page into memory before packing (~1.7MB
+# per page measured), so long PDFs are converted in page-range chunks and the
+# chunk XTCs are repacked into the final container. PDFs at or below the
+# threshold use the original single-pass conversion.
+CHUNK_THRESHOLD_PAGES = int(os.environ.get("XTC_CHUNK_THRESHOLD_PAGES", "150"))
+CHUNK_SIZE_PAGES = int(os.environ.get("XTC_CHUNK_SIZE_PAGES", "100"))
 
 logger = logging.getLogger("converter")
 
 if pymupdf is None:  # pragma: no cover - always present in the container image
     logger.warning("pymupdf is unavailable; PDF title extraction is disabled")
 
-# Bounds concurrent xtctool subprocesses (each rasterizes a whole PDF into
-# memory); excess requests queue on their handler threads.
+# Bounds concurrent xtctool subprocesses (each rasterizes up to
+# CHUNK_THRESHOLD_PAGES, or one chunk of a long PDF, into memory); excess
+# requests queue on their handler threads.
 CONVERSION_SLOTS = threading.Semaphore(MAX_CONCURRENT_CONVERSIONS)
 
 
@@ -149,10 +157,75 @@ def config_with_title(title: str) -> str:
     return "\n".join(lines)
 
 
+def count_pdf_pages(pdf_bytes: bytes) -> int | None:
+    """Page count of the PDF, or None when it cannot be determined."""
+    if pymupdf is None:
+        return None
+    try:
+        with pymupdf.open(stream=pdf_bytes, filetype="pdf") as doc:
+            return doc.page_count
+    except Exception:  # noqa: BLE001 - fall back to single-pass conversion
+        logger.exception("failed to count PDF pages")
+        return None
+
+
+def _run_xtctool(
+    sources: list[str],
+    out_path: Path,
+    config_path: str,
+    timeout_seconds: float,
+    total_timeout_seconds: int,
+    stage: str,
+) -> None:
+    """Run one `xtctool convert` invocation and validate its output file.
+
+    timeout_seconds is the remaining share of the request's total budget
+    (total_timeout_seconds), which is what error messages report."""
+    if timeout_seconds <= 0:
+        raise ConversionError(f"conversion timed out after {total_timeout_seconds}s")
+    command = ["xtctool", "convert", *sources, "-o", str(out_path), "-c", config_path]
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise ConversionError(
+            f"conversion timed out after {total_timeout_seconds}s ({stage})"
+        ) from exc
+
+    if result.returncode != 0:
+        raise ConversionError(
+            f"xtctool exited with code {result.returncode} ({stage})",
+            stderr=result.stderr,
+        )
+    if not out_path.is_file():
+        raise ConversionError(
+            f"xtctool reported success but produced no output ({stage})",
+            stderr=result.stderr,
+        )
+    if out_path.stat().st_size == 0:
+        raise ConversionError(
+            f"xtctool reported success but produced an empty output file ({stage})",
+            stderr=result.stderr,
+        )
+
+
 def convert_pdf(
     pdf_bytes: bytes, title: str = "", timeout_seconds: int = CONVERT_TIMEOUT_SECONDS
 ) -> bytes:
-    """Run xtctool over the given PDF bytes and return the XTC bytes."""
+    """Run xtctool over the given PDF bytes and return the XTC bytes.
+
+    PDFs longer than CHUNK_THRESHOLD_PAGES are converted sequentially in
+    CHUNK_SIZE_PAGES page-range chunks and the chunk XTCs repacked into one
+    container, keeping peak memory proportional to the chunk size instead of
+    the full document (xtctool preloads every selected page as a PIL image).
+    The repacked output is byte-identical to a single-pass conversion.
+    timeout_seconds is the total budget across all chunks plus the repack."""
+    deadline = time.monotonic() + timeout_seconds
     with tempfile.TemporaryDirectory() as workdir:
         pdf_path = Path(workdir) / "source.pdf"
         xtc_path = Path(workdir) / "output.xtc"
@@ -169,43 +242,58 @@ def convert_pdf(
                 merged_path.write_text(merged, encoding="utf-8")
                 config_path = str(merged_path)
 
-        command = [
-            "xtctool",
-            "convert",
-            str(pdf_path),
-            "-o",
-            str(xtc_path),
-            "-c",
-            config_path,
-        ]
-        try:
-            result = subprocess.run(
-                command,
-                capture_output=True,
-                text=True,
-                timeout=timeout_seconds,
-                check=False,
+        page_count = count_pdf_pages(pdf_bytes)
+        if page_count is None or page_count <= CHUNK_THRESHOLD_PAGES:
+            _run_xtctool(
+                [str(pdf_path)],
+                xtc_path,
+                config_path,
+                deadline - time.monotonic(),
+                timeout_seconds,
+                "single-pass",
             )
-        except subprocess.TimeoutExpired as exc:
-            raise ConversionError(
-                f"conversion timed out after {timeout_seconds}s"
-            ) from exc
+            return xtc_path.read_bytes()
 
-        if result.returncode != 0:
-            raise ConversionError(
-                f"xtctool exited with code {result.returncode}",
-                stderr=result.stderr,
+        # Chunks run sequentially on purpose: parallel chunks inside one
+        # instance would multiply peak memory and defeat the point. Cross-
+        # request parallelism stays bounded by CONVERSION_SLOTS.
+        ranges = [
+            (start, min(start + CHUNK_SIZE_PAGES - 1, page_count))
+            for start in range(1, page_count + 1, CHUNK_SIZE_PAGES)
+        ]
+        logger.info(
+            "chunked conversion: %d pages in %d chunks of up to %d pages",
+            page_count,
+            len(ranges),
+            CHUNK_SIZE_PAGES,
+        )
+        chunk_paths: list[Path] = []
+        for index, (start, end) in enumerate(ranges, 1):
+            chunk_path = Path(workdir) / f"chunk{index:04d}.xtc"
+            _run_xtctool(
+                [f"{pdf_path}:{start}-{end}"],
+                chunk_path,
+                config_path,
+                deadline - time.monotonic(),
+                timeout_seconds,
+                f"chunk {index}/{len(ranges)} pages {start}-{end}",
             )
-        if not xtc_path.is_file():
-            raise ConversionError(
-                "xtctool reported success but produced no output",
-                stderr=result.stderr,
+            logger.info(
+                "chunk %d/%d (pages %d-%d) converted", index, len(ranges), start, end
             )
-        if xtc_path.stat().st_size == 0:
-            raise ConversionError(
-                "xtctool reported success but produced an empty output file",
-                stderr=result.stderr,
-            )
+            chunk_paths.append(chunk_path)
+
+        # Repack the chunk XTCs into the final container; the config (with the
+        # merged title, when present) supplies the output metadata.
+        _run_xtctool(
+            [str(path) for path in chunk_paths],
+            xtc_path,
+            config_path,
+            deadline - time.monotonic(),
+            timeout_seconds,
+            f"repack of {len(chunk_paths)} chunks",
+        )
+        logger.info("chunked conversion complete: %d pages", page_count)
         return xtc_path.read_bytes()
 
 

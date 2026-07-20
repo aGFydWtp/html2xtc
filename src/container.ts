@@ -19,7 +19,7 @@ export class XtcConverterContainer extends Container {
 // Must match containers.max_instances in wrangler.jsonc: a fixed pool of
 // names keeps requests landing on warm containers instead of cold-starting
 // a new instance per jobId.
-const CONVERTER_POOL_SIZE = 4;
+const CONVERTER_POOL_SIZE = 2;
 
 // The container must abort its xtctool subprocess before this fetch aborts, so
 // it frees its conversion slot instead of running to XTC_TIMEOUT_SECONDS. Give

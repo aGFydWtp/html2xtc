@@ -33,14 +33,21 @@ if ! git merge-base --is-ancestor HEAD origin/main; then
   exit 1
 fi
 
-# 検証通過後: 稼働コミットを WebUI に表示するための version.json を生成
-# （public/version.json は .gitignore 済みのため検証1のクリーン判定には影響しない。
+# 検証通過後: フロントエンド（Vite + Svelte）をビルドする
+# （frontend/node_modules・frontend/dist は .gitignore 済みのため
+#   検証1のクリーン判定には影響しない）
+npm ci --prefix frontend
+npm run build --prefix frontend
+
+# ビルド後: 稼働コミットを WebUI に表示するための version.json を dist へ生成
+# （ビルドは dist を作り直すため、必ずビルドの後に書く。frontend/dist は
+#   .gitignore 済みのためクリーン判定には影響しない。
 #   AGPL-3.0 第 13 条対応: 利用者が稼働中バージョンに対応するソースを特定できるようにする）
 HEAD_HASH="$(git rev-parse HEAD)"
 SHORT_HASH="$(git rev-parse --short HEAD)"
 DEPLOYED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 printf '{"commit":"%s","short":"%s","deployedAt":"%s"}\n' \
-  "${HEAD_HASH}" "${SHORT_HASH}" "${DEPLOYED_AT}" > public/version.json
+  "${HEAD_HASH}" "${SHORT_HASH}" "${DEPLOYED_AT}" > frontend/dist/version.json
 
 # デプロイ本体
 npx wrangler deploy

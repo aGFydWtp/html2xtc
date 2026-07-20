@@ -4,8 +4,11 @@ dist/
 .dev.vars
 worker-configuration.d.ts
 
-# デプロイ時に scripts/deploy.sh が生成（稼働コミットの表示用）
-public/version.json
+# フロントエンド（Vite + Svelte）のビルド成果物と依存。
+# version.json はデプロイ時に scripts/deploy.sh が frontend/dist/ 内へ生成する
+# （稼働コミットの表示用）ため、dist ごと ignore される。
+frontend/node_modules/
+frontend/dist/
 
 .venv/
 __pycache__/

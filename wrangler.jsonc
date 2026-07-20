@@ -31,8 +31,7 @@
 		{
 			"class_name": "XtcConverterContainer",
 			"image": "./converter/Dockerfile",
-			// src/container.ts の CONVERTER_POOL_SIZE と一致させること。
-			"max_instances": 4,
+			"max_instances": 2,
 			// Default is "lite" (256MiB); PyMuPDF rasterization needs more headroom.
 			// basic (1GiB) suffices: converter/app.py splits long PDFs into
 			// page-range chunks, so peak memory tracks the chunk size (100p ≈
@@ -83,11 +82,13 @@
 		}
 	],
 	"assets": {
-		// Mobile WebUI (single page, no build step). Served directly by the
-		// edge without invoking the Worker.
-		"directory": "./public",
+		// Mobile WebUI (Vite + Svelte 5 SPA under frontend/). Built by
+		// scripts/deploy.sh (`npm run build --prefix frontend`) before
+		// `wrangler deploy`; served directly by the edge without invoking
+		// the Worker.
+		"directory": "./frontend/dist",
 		// API paths always hit the Worker first, even if an asset with the
-		// same name ever appears under public/.
+		// same name ever appears under frontend/dist/.
 		"run_worker_first": [
 			"/convert",
 			"/jobs",

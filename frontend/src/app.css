@@ -1,0 +1,43 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+/* 共通スタイル（旧 public/index.html のインライン CSS のうち、複数コンポーネントで
+   共有するものと文書全体のベース）。それ以外は各コンポーネントの scoped style へ。 */
+:root {
+  --bg: #f4f1ea;
+  --card: #fdfcf9;
+  --panel: #ece8dd;
+  --text: #1c1a17;
+  --muted: #8a857b;
+  --muted2: #6b665c;
+  --faint: #a39d90;
+  --disabled: #c4beb0;
+  --line: #ddd6c8;
+  --ink: #1c1a17;
+  --ink-text: #f4f1ea;
+  --error: #8a3d33;
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Zen Kaku Gothic New", system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  font-size: 16px;
+}
+a { color: var(--text); }
+a:hover { color: #555; }
+
+/* CurrentJob と PreviewDialog で共用 */
+.badge {
+  font-family: var(--mono); font-size: 14px; padding: 3px 10px; border-radius: 4px;
+  background: #e8e3d6; color: #4d4a42; white-space: nowrap;
+}
+.badge.err { background: none; border: 1px solid var(--error); color: var(--error); }
+.spinner {
+  width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--ink);
+  border-radius: 50%; animation: spin .9s linear infinite; flex: none;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.error-text { color: var(--error); font-size: 14px; margin-top: 8px; word-break: break-all; }

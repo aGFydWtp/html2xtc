@@ -102,33 +102,32 @@
 </script>
 
 <section class="history">
-  <div class="history-head">
-    <h2>{t("history")}</h2>
-    <button type="button" onclick={clearAll}>{t("clear_all")}</button>
-  </div>
-  <ul class="jobs">
-    {#each jobsStore.list as j (j.jobId)}
-      {@const status = effectiveStatus(j)}
-      {@const done = status === "completed"}
-      <li>
-        <div class="info">
-          <div class="job-title" class:dim={!done}>{j.title || j.url}</div>
-          <div class="date">{formatDate(j.createdAt ?? "")}{done ? "" : ` · ${statusLabel(status)}`}</div>
-        </div>
-        <button
-          type="button"
-          class="more-btn"
-          aria-haspopup="true"
-          aria-label={t("menu_label")}
-          onclick={(event) => void openJobMenu(event.currentTarget, j.jobId)}
-        >
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5.5" r="1.7" /><circle cx="12" cy="12" r="1.7" /><circle cx="12" cy="18.5" r="1.7" /></svg>
-        </button>
-      </li>
-    {/each}
-  </ul>
-  {#if !jobsStore.list.length}
-    <p class="empty">{t("empty")}</p>
+  {#if jobsStore.list.length}
+    <div class="history-head">
+      <h2>{t("history")}</h2>
+      <button type="button" onclick={clearAll}>{t("clear_all")}</button>
+    </div>
+    <ul class="jobs">
+      {#each jobsStore.list as j (j.jobId)}
+        {@const status = effectiveStatus(j)}
+        {@const done = status === "completed"}
+        <li>
+          <div class="info">
+            <div class="job-title" class:dim={!done}>{j.title || j.url}</div>
+            <div class="date">{formatDate(j.createdAt ?? "")}{done ? "" : ` · ${statusLabel(status)}`}</div>
+          </div>
+          <button
+            type="button"
+            class="more-btn"
+            aria-haspopup="true"
+            aria-label={t("menu_label")}
+            onclick={(event) => void openJobMenu(event.currentTarget, j.jobId)}
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5.5" r="1.7" /><circle cx="12" cy="12" r="1.7" /><circle cx="12" cy="18.5" r="1.7" /></svg>
+          </button>
+        </li>
+      {/each}
+    </ul>
   {/if}
   <footer class="site">
     <a href="/about">{t("about_link")}</a><br />
@@ -184,7 +183,6 @@
   }
   .job-menu button:hover:not(:disabled) { background: var(--panel); }
   .job-menu button:disabled { color: var(--disabled); cursor: default; }
-  .empty { color: var(--muted); font-size: 14px; margin-top: 12px; }
   footer.site {
     margin-top: 26px; padding-top: 16px; border-top: 1.5px solid var(--ink);
     font-size: 14px; color: var(--muted); line-height: 1.8;

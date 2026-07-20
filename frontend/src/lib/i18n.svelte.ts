@@ -16,7 +16,6 @@ export interface Messages {
   agree_after: string;
   history: string;
   clear_all: string;
-  empty: string;
   about_link: string;
   copyright_line: string;
   dl: string;
@@ -64,7 +63,6 @@ export const I18N: Record<Lang, Messages> = {
     agree_after: "に同意したものとします。",
     history: "履歴",
     clear_all: "すべて削除",
-    empty: "まだ履歴はありません。",
     about_link: "このサービスについて",
     copyright_line: "© 2026 aGFydWtp",
     dl: "XTC をダウンロード",
@@ -110,7 +108,6 @@ export const I18N: Record<Lang, Messages> = {
     agree_after: ".",
     history: "History",
     clear_all: "Clear all",
-    empty: "No history yet.",
     about_link: "About this service",
     copyright_line: "© 2026 aGFydWtp",
     dl: "Download XTC",

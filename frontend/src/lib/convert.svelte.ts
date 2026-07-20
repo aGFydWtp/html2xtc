@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // ジョブの送信（POST /jobs）と状態ポーリング。
 // 複数ジョブを jobId ごとに並行してポーリングし、画面上部（旧 #current）へ
-// in-flight + 直近完了のジョブをまとめて表示する。
+// in-flight のジョブと直近の完了 / 失敗エントリ（上限あり）をまとめて表示する。
 
 import type { Note } from "./i18n.svelte";
 import { IN_FLIGHT, jobsStore, type JobEntry } from "./jobs.svelte";
 
 const POLL_MS = 4000;
 const MAX_POLL_FAILURES = 5;
+const MAX_CURRENT = 10; // 現在表示に積むエントリ上限（in-flight は上限超過でも間引かない）
 
 interface JobsPostResponse {
   jobId?: string;
@@ -30,14 +31,29 @@ export interface CurrentEntry {
 }
 
 // 画面上部に表示中のエントリ群。新しいものを先頭に積む（履歴と同じ並び）。
-// 一度追加したエントリはセッション中そのまま残す（完了後もダウンロード導線を維持）。
+// 完了 / 失敗エントリは MAX_CURRENT 件を上限に直近ぶんを残し、超過時は古いものから
+// 間引く（追跡中の in-flight ジョブは間引き対象外。ライブ表示が壊れるため）。
 class CurrentView {
   entries = $state<CurrentEntry[]>([]);
 
   upsert(key: string, job: JobEntry, note: Note | null): void {
     const i = this.entries.findIndex((e) => e.key === key);
-    if (i === -1) this.entries.unshift({ key, job, note });
-    else this.entries[i] = { key, job, note };
+    if (i === -1) {
+      this.entries.unshift({ key, job, note });
+      this.prune();
+    } else {
+      this.entries[i] = { key, job, note };
+    }
+  }
+
+  // 上限超過ぶんを末尾（古い順）から間引く。ただし in-flight ジョブは残す。
+  private prune(): void {
+    let over = this.entries.length - MAX_CURRENT;
+    for (let i = this.entries.length - 1; i >= 0 && over > 0; i--) {
+      if (IN_FLIGHT.includes(this.entries[i].job.status)) continue;
+      this.entries.splice(i, 1);
+      over--;
+    }
   }
 
   markExpired(jobId: string): void {

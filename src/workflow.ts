@@ -164,12 +164,18 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
           );
           throw new Error("PDF generation failed");
         }
+        // Deliberately buffered, not streamed: the size gate needs the byte
+        // count, Browser Rendering's response has no Content-Length we could
+        // trust for a pre-check (and R2 put would need a known length to
+        // accept a stream anyway). One PDF-sized buffer (<= MAX_PDF_BYTES,
+        // 48 MiB in production) fits comfortably in the Worker's 128 MB
+        // memory; R2 put consumes it without another JS-visible copy.
         const pdfBytes = await response.arrayBuffer();
         const maxPdfBytes = resolveMaxPdfBytes(this.env);
         if (pdfBytes.byteLength > maxPdfBytes) {
           // Deterministic failure: retrying would render the same PDF.
           throw new NonRetryableError(
-            `rendered PDF exceeds the ${maxPdfBytes} byte limit; try a shorter page`,
+            `rendered PDF exceeds the ${maxPdfBytes} byte limit; try a shorter page or the layout-preserving (full) mode`,
           );
         }
         const key = intermediatePdfKey(jobId);
@@ -198,10 +204,18 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
           }
           let response: Response;
           try {
+            // Stream R2 -> container instead of buffering the whole PDF:
+            // FixedLengthStream (length known exactly from the R2 object)
+            // makes fetch send Content-Length, which the container's
+            // http.server requires — a bare stream would arrive chunked and
+            // be rejected. Keeps this step's memory at chunk size instead of
+            // a full PDF buffer (48 MiB at the production limit). On a
+            // mid-stream failure the step retries from the R2 get, so the
+            // consumed body is not a problem.
             response = await convertInContainer(
               this.env,
               jobId,
-              await source.arrayBuffer(),
+              source.body.pipeThrough(new FixedLengthStream(source.size)),
               CONVERTER_FETCH_TIMEOUT_MS,
             );
           } catch (error) {
@@ -224,7 +238,7 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
             // hit the same limit, so fail non-retryably with a size message.
             if (response.status === 413) {
               throw new NonRetryableError(
-                `rendered PDF exceeds the ${resolveMaxPdfBytes(this.env)} byte limit; try a shorter page`,
+                `rendered PDF exceeds the ${resolveMaxPdfBytes(this.env)} byte limit; try a shorter page or the layout-preserving (full) mode`,
               );
             }
             throw new Error("XTC conversion failed");

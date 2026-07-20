@@ -21,14 +21,16 @@ Worker
   └─ ダウンロードURLを返す
 ```
 
-- PDF/XTC のバイト列は Worker ↔ Container 間で直接送受信する。R2 への読み書きは Worker の binding に一元化し、Container には R2 クレデンシャルもユーザー入力 URL も渡さない。
+- PDF/XTC のバイト列は Worker ↔ Container 間で直接送受信する（Workflow パスの PDF 送信は R2 からの stream。メモリに全量を置かない）。R2 への読み書きは Worker の binding に一元化し、Container には R2 クレデンシャルもユーザー入力 URL も渡さない。
 - Container は固定プール名（`converter-0` / `converter-1`、`max_instances: 2` に対応）に jobId のハッシュで振り分け、ウォームインスタンスを再利用する。
 - 変換設定は `converter/config-x3.toml`（528×792、1-bit xtg、日本語メタデータ）。
 - PDF の最終ページに奥付（タイトル・サイト名・著者・URL・変換日時・個人利用の注記）を追加する（`src/pdf.ts` の `buildColophonScript`。addScriptTag による DOM 注入。ページの CSP でブロックされた場合は奥付なしで変換される）。
 
 ## WebUI
 
-`public/index.html`（依存なしの 1 ページ、スマホファースト）を Workers static assets として `/` で配信する。URL を入力すると `POST /jobs` → 数秒間隔のポーリングで進捗（待機中 → PDF 生成中 → XTC 変換中）を表示し、完了するとダウンロードリンクが出る。変換モードは「レイアウトを保持して変換する」チェックボックスで選び、**未チェック（既定）が本文抽出（extract）、チェックありがページ丸ごと（full）**。WebUI は常に `mode` を明示送信する（API 自体の `mode` 省略時既定は full のまま）。履歴はブラウザの localStorage に保存（最大 50 件。サーバー上のファイルは約 24 時間で自動削除される旨を表示）。サービス概要・利用規約・クローラー情報・連絡先は `/about`（`public/about.html`、静的配信）に掲示し、フッターからリンクする。
+`public/index.html`（依存なしの 1 ページ、スマホファースト）を Workers static assets として `/` で配信する。URL を入力すると `POST /jobs` → 数秒間隔のポーリングで進捗（待機中 → PDF 生成中 → XTC 変換中）を表示し、完了するとダウンロードリンクとプレビューボタンが出る。変換モードは「レイアウトを保持して変換する」チェックボックスで選び、**未チェック（既定）が本文抽出（extract）、チェックありがページ丸ごと（full）**。WebUI は常に `mode` を明示送信する（API 自体の `mode` 省略時既定は full のまま）。履歴はブラウザの localStorage に保存（最大 50 件。サーバー上のファイルは約 24 時間で自動削除される旨を表示）。
+
+**XTC プレビュー**: 生成済み XTC をブラウザ内でデコードしてモーダルダイアログ（ネイティブ `<dialog>`）の canvas に描画する。XTC コンテナ（48B ヘッダー + 16B/ページのインデックス）と 1-bit XTG フレーム（22B ヘッダー、行方向 MSB 詰め）のパーサーを WebUI 内に持ち、fetch した ArrayBuffer はジョブ ID キーでキャッシュ（上限 5 件）してページ送りで再取得しない。マジック・version・colorMode・compression が想定外のファイルはプレビューのみ無効化してダウンロードリンクは維持する（将来 xtctool の出力形式が変わった場合のフォールバック）。履歴の各行には ⋮ ボタンがあり、ポップオーバーメニュー（Popover API、非対応ブラウザはクラス切替にフォールバック）から XTC ダウンロード / プレビューを選べる。サービス概要・利用規約・クローラー情報・連絡先は `/about`（`public/about.html`、静的配信）に掲示し、フッターからリンクする。
 
 静的アセットの配信は Worker を通らず、エッジから直接配信される。
 
@@ -51,6 +53,8 @@ Worker
 ```
 
 - `mode`（任意）: `"full"`（既定。ページを丸ごとレンダリング）または `"extract"`（本文抽出モード。`src/extract.ts` が通常 fetch + Readability で本文だけのクリーン HTML を作って変換する。抽出できないページは Browser Rendering の `content` アクションで再試行し、それでも駄目なら full と同じ丸ごとレンダリングに自動劣化する — 必ず何かしらの出力は得られる）。`"full"`/`"extract"` 以外は 400。
+
+どちらのモードも lazy-load 画像への対策を持つ。extract は `src/printhtml.ts` の sanitize 時に lazy 属性を正規化する（プレースホルダ `src` の検出、`data-src`/`data-lazy-src`/`data-original` の `src` への昇格、`srcset` からの 528px 出力に適した候補選択、`loading="lazy"` の除去。昇格した URL も既存のスキーム検査を通る）。full は PDF 化前に注入するスクリプト（`src/pdf.ts` の `LAZY_IMAGE_SCRIPT`）で `loading=lazy` の eager 化・`data-src` 昇格・ページ全体の段階スクロール（6 秒上限）を行い、`waitForTimeout` で画像読み込みの猶予を取る（ページの CSP でスクリプトが遮断された場合は従来同等の出力に劣化）。`<picture>/<source>` のみに実 URL を持つパターンは extract では救済できない（既知の制限）。
 
 成功時 202:
 
@@ -118,7 +122,7 @@ R2 上の XTC を `application/octet-stream` + `Content-Length` + `Content-Dispo
 
 | 項目 | 既定値 | 変更方法 |
 |---|---|---|
-| 生成 PDF の上限（Worker） | 20 MiB | Worker の var `MAX_PDF_BYTES`（バイト数） |
+| 生成 PDF の上限（Worker） | 48 MiB（`wrangler.jsonc` の var `MAX_PDF_BYTES`。コード上の既定は 20 MiB） | Worker の var `MAX_PDF_BYTES`（バイト数） |
 | 受信 PDF の上限（Container） | 50 MiB | Container の env `MAX_PDF_BYTES`（超過は 413） |
 | xtctool タイムアウト | 600 秒 | Container の env `XTC_TIMEOUT_SECONDS`（`src/container.ts` の `envVars` で設定） |
 | 同時変換数（Container 内） | 2 | Container の env `MAX_CONCURRENT_CONVERSIONS`（Semaphore で制限） |
@@ -176,13 +180,17 @@ npm run deploy
 
 ```
 public/
-  index.html     スマホ向け WebUI（vanilla 1 ページ、Workers static assets で配信）
+  index.html     スマホ向け WebUI（vanilla 1 ページ、Workers static assets で配信。XTC プレビューのデコーダ含む）
   about.html     サービス概要・利用規約・クローラー情報・連絡先（/about、静的配信）
 src/
   index.ts       ルーティング・エラーハンドリング
-  workflow.ts    ConvertWorkflow（render-pdf → convert-xtc → delete-intermediate-pdf の 3 ステップ）
-  jobs.ts        ジョブ状態写像・R2 キー導出（純関数、vitest 対象）
-  pdf.ts         X3_PRINT_CSS + Browser Run quickAction("pdf") 呼び出し
+  workflow.ts    ConvertWorkflow（[extract-content →] render-pdf → convert-xtc → delete-intermediate-pdf）
+  jobs.ts        ジョブ状態写像・R2 キー導出・上限解決（純関数、vitest 対象）
+  pdf.ts         X3_PRINT_CSS + Browser Run quickAction("pdf") 呼び出し（LAZY_IMAGE_SCRIPT・奥付注入含む）
+  extract.ts     extract モードの本文抽出（Readability + Browser Rendering フォールバック）
+  printhtml.ts   抽出本文の印刷用 HTML 生成・sanitize（lazy 画像正規化含む、vitest 対象）
+  pipeline.ts    XTC 出力の R2 保存などモード共通処理
+  fonts.ts       PDF 本文フォント（BIZ UDPGothic）の指定
   container.ts   XtcConverterContainer + convertInContainer（@cloudflare/containers）
   ratelimit.ts   レート制限の純関数（IP キー正規化・固定窓判定、vitest 対象）
   ratelimiter.ts RateLimiter Durable Object + enforceRateLimit（429 応答）
@@ -196,6 +204,10 @@ converter/
 test/
   validate.test.ts        vitest
   jobs.test.ts            vitest（状態写像・キー導出の単体テスト）
+  pdf.test.ts             vitest（印刷 CSS・quickAction オプションのピン留め）
+  extract.test.ts         vitest（本文抽出）
+  printhtml.test.ts       vitest（sanitize・lazy 画像正規化）
+  fonts.test.ts           vitest
   ratelimit.test.ts       vitest（IP キー正規化・固定窓判定・上限パース）
   converter/test_app.py   pytest
 ```

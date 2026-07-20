@@ -35,26 +35,37 @@ function loadFromStorage(): JobEntry[] {
   }
 }
 
+// マルチタブ整合性: 各ミューテーションの冒頭で localStorage から再読込し、
+// 最新のスナップショットに対して変更・保存する（旧 public/index.html と同じ
+// 整合モデル）。メモリ上の古いリストを書き戻すと、別タブでの履歴クリアや追加を
+// このタブのポーリング由来の upsert が上書きしてしまうため。
 class JobsStore {
   list = $state<JobEntry[]>(loadFromStorage());
 
-  private save(): void {
-    if (this.list.length > MAX_ENTRIES) this.list.length = MAX_ENTRIES;
-    localStorage.setItem(STORE_KEY, JSON.stringify(this.list));
+  // 変更後のリストをメモリ（$state）と localStorage の両方へ反映する。
+  private commit(list: JobEntry[]): void {
+    if (list.length > MAX_ENTRIES) list.length = MAX_ENTRIES;
+    this.list = list;
+    localStorage.setItem(STORE_KEY, JSON.stringify(list));
   }
 
   upsert(entry: JobEntry): void {
-    const i = this.list.findIndex((j) => j.jobId === entry.jobId);
-    if (i === -1) this.list.unshift(entry);
-    else this.list[i] = { ...this.list[i], ...entry };
-    this.save();
+    const list = loadFromStorage();
+    const i = list.findIndex((j) => j.jobId === entry.jobId);
+    if (i === -1) list.unshift(entry);
+    else list[i] = { ...list[i], ...entry };
+    this.commit(list);
   }
 
   markExpired(jobId: string): void {
-    const j = this.list.find((x) => x.jobId === jobId);
+    const list = loadFromStorage();
+    const j = list.find((x) => x.jobId === jobId);
     if (j) {
       j.status = "expired";
-      this.save();
+      this.commit(list);
+    } else {
+      // 対象が見つからなくても（別タブでクリア済み等）、再読込結果は表示へ反映する。
+      this.list = list;
     }
   }
 
@@ -65,6 +76,13 @@ class JobsStore {
 }
 
 export const jobsStore = new JobsStore();
+
+// 別タブによる書き込みをリアルタイムに表示へ反映する。storage イベントは
+// 「他のタブ」でのみ発火するため、自タブの commit とループにはならない。
+// key === null は localStorage.clear() を示す。
+window.addEventListener("storage", (e) => {
+  if (e.key === null || e.key === STORE_KEY) jobsStore.list = loadFromStorage();
+});
 
 export function effectiveStatus(j: JobEntry): string {
   if (j.status === "completed") {

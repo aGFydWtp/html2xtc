@@ -25,8 +25,9 @@ npm run deploy
 ## デプロイ時の動作
 
 1. 上記 2 つの事前条件を検証（満たさなければデプロイせずエラー終了）
-2. 稼働コミットを WebUI フッターに表示するための `public/version.json`（`{"commit","short","deployedAt"}`、gitignore 済み）を生成
-3. `npx wrangler deploy` を実行
+2. フロントエンド（Vite + Svelte 5）を `npm ci --prefix frontend && npm run build --prefix frontend` でビルド
+3. 稼働コミットを WebUI フッターに表示するための `frontend/dist/version.json`（`{"commit","short","deployedAt"}`、dist ごと gitignore 済み）をビルド後に生成
+4. `npx wrangler deploy` を実行
 
 ## 成功時の動作
 

@@ -58,6 +58,7 @@ export async function openPreview(jobId: string): Promise<void> {
     }
     if (!preview.state || preview.state.jobId !== jobId) return;
     try {
+      // 上限超過時は挿入順で最古のエントリを evict（FIFO。LRU ではない。旧実装踏襲）。
       if (previewCache.size >= PREVIEW_CACHE_MAX) previewCache.delete(previewCache.keys().next().value!);
       previewCache.set(jobId, parseXtc(buf));
     } catch {

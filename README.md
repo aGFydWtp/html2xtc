@@ -171,6 +171,12 @@ python3 -m venv .venv && .venv/bin/pip install pytest   # 初回のみ
 # Container イメージのビルド確認（linux/amd64 必須）
 docker build --platform linux/amd64 -f converter/Dockerfile converter/
 
+# フロントエンドのビルド（初回は npm install も必要）。
+# wrangler.jsonc の assets.directory が frontend/dist（gitignore 済み）を指すため、
+# 未ビルドのまま npx wrangler dev を実行すると起動に失敗する。
+npm install --prefix frontend
+npm run build --prefix frontend
+
 # ローカル実行（Browser Run は remote:true のため Cloudflare 認証が必要）
 npx wrangler dev
 

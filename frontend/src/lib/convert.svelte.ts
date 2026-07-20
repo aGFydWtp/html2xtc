@@ -174,6 +174,8 @@ export async function refreshStale(): Promise<void> {
 }
 
 // タブ非表示中はポーリングを止め、再表示時に新しい世代で再開する。
+// module スコープでの登録: このモジュールは SPA で 1 ページにつき 1 回しか
+// import されないシングルトン前提のため、teardown（removeEventListener）は不要。
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState !== "visible") {
     clearTimeout(pollTimer);

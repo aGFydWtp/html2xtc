@@ -8,17 +8,16 @@
   import LibraryItem from "./LibraryItem.svelte";
   import RowMenu, { type RowMenuItem } from "./RowMenu.svelte";
 
+  // タブ表示（マウント）のたびに再取得して常に最新を表示する。タブは
+  // App.svelte の {#if} で破棄されるため、マウント＝タブ切り替え 1 回に対応。
+  // 既にデータがある場合は load() が既存表示を維持したまま裏で更新する。
   $effect(() => {
-    if (authStore.account && libraryStore.loadState === "idle") {
-      void libraryStore.load();
-    }
+    if (authStore.account) void libraryStore.load();
   });
 
   // 「端末に追加」（一括バー・各行メニュー）の対象端末一覧のため、端末も読み込む。
   $effect(() => {
-    if (authStore.account && devicesStore.loadState === "idle") {
-      void devicesStore.load();
-    }
+    if (authStore.account) void devicesStore.load();
   });
 
   // 選択状態（itemId の集合）。items との積集合を導出して使うことで、

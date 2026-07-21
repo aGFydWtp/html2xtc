@@ -57,6 +57,11 @@ export type ServerErrorKey = keyof Pick<
 
 /** サーバーのエラー文字列から対応する i18n キーを解決する。未知のものは null。 */
 export function resolveServerErrorKey(err: string): ServerErrorKey | null {
+  // Workflows ランタイムはエラー文言に "NonRetryableError: " のようなクラス名
+  // プレフィックスを付ける。サーバー側（src/jobs.ts#stripWorkflowErrorPrefix）でも
+  // 除去するが、修正前に localStorage 履歴へ保存されたジョブにはプレフィックス付き
+  // 文字列が残っているため、こちらでも除去してから照合する。
+  err = err.replace(/^[A-Za-z]*Error:\s+/, "");
   // TXT側の「組版後PDFが大きすぎる」（末尾 "; reduce the font size or margins"）は、
   // 接頭辞が URL/PDF側の pdf_too_large 用メッセージと共通のため、より限定的な
   // こちらを先にチェックする（src/workflow.ts#runTextSource の render-text-pdf /

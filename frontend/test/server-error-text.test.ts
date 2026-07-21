@@ -55,6 +55,13 @@ describe("resolveServerErrorKey", () => {
     expect(resolveServerErrorKey("unable to determine the text encoding")).toBe("text_err_encoding_unknown");
     expect(resolveServerErrorKey("UTF-16 is not supported; convert the file to UTF-8")).toBe("text_err_utf16");
     expect(resolveServerErrorKey("uploaded file is not a plain text file")).toBe("text_err_binary");
+    // 修正前に localStorage 履歴へ保存された、Workflows のクラス名プレフィックス付き文字列
+    expect(
+      resolveServerErrorKey("NonRetryableError: uploaded file is not a plain text file"),
+    ).toBe("text_err_binary");
+    expect(resolveServerErrorKey("NonRetryableError: uploaded PDF is encrypted")).toBe(
+      "pdf_err_encrypted",
+    );
     expect(resolveServerErrorKey("text is too long to convert")).toBe("text_err_too_many_chars");
     expect(resolveServerErrorKey("line count exceeds the limit")).toBe("text_err_too_many_lines");
     expect(resolveServerErrorKey("a line exceeds the maximum line length")).toBe("text_err_line_too_long");

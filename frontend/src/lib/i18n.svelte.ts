@@ -159,8 +159,6 @@ export interface Messages {
   devices_edit_library: string;
   devices_revoke: string;
   devices_revoke_confirm: string;
-  devices_status_active: string;
-  devices_status_revoked: string;
   devices_last_seen_never: string;
 
   device_library_title: (name: string) => string;
@@ -334,8 +332,6 @@ export const I18N: Record<Lang, Messages> = {
     devices_edit_library: "配信リストを編集",
     devices_revoke: "解除",
     devices_revoke_confirm: "この端末を解除しますか？以後、この端末からのアクセスはできなくなります。",
-    devices_status_active: "有効",
-    devices_status_revoked: "解除済み",
     devices_last_seen_never: "未接続",
 
     device_library_title: (name) => `配信リストの編集 — ${name}`,
@@ -509,8 +505,6 @@ export const I18N: Record<Lang, Messages> = {
     devices_edit_library: "Edit reading list",
     devices_revoke: "Unpair",
     devices_revoke_confirm: "Unpair this device? It will no longer be able to connect.",
-    devices_status_active: "Active",
-    devices_status_revoked: "Unpaired",
     devices_last_seen_never: "Never connected",
 
     device_library_title: (name) => `Edit reading list — ${name}`,

@@ -79,9 +79,6 @@
             <div class="info">
               <div class="title">{device.name}</div>
               <div class="meta">
-                <span class:revoked={device.status === "revoked"}>
-                  {device.status === "revoked" ? t("devices_status_revoked") : t("devices_status_active")}
-                </span>
                 <span>{lastSeenText(device)}</span>
               </div>
             </div>
@@ -92,7 +89,7 @@
                 {
                   label: t("devices_revoke"),
                   danger: true,
-                  disabled: busyId === device.id || device.status === "revoked",
+                  disabled: busyId === device.id,
                   onSelect: () => void onRevoke(device),
                 },
               ]}
@@ -119,7 +116,6 @@
   .info { flex: 1; min-width: 0; }
   .info .title { font-weight: 600; }
   .info .meta { display: flex; gap: 10px; flex-wrap: wrap; font-family: var(--mono); font-size: 14px; color: var(--faint); margin-top: 4px; }
-  .info .meta .revoked { color: var(--error); }
   .edit-fields { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 0; }
   .edit-fields input {
     padding: 8px 10px; font: inherit; font-size: 14px; border: 1.5px solid var(--ink);

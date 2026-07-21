@@ -115,7 +115,6 @@
   {/if}
 
   <div class="dlg-actions">
-    <span class="dlg-credit">{t("aozora_credit")}</span>
     <div class="dlg-actions-right">
       <button type="button" class="dlg-cancel" onclick={() => aozora.hide()}>{t("cancel")}</button>
       <button
@@ -181,10 +180,9 @@
   .dlg-list-status { display: block; }
   .dlg-status { padding: 16px 2px; font-size: 14px; color: var(--muted); }
   .dlg-actions {
-    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    display: flex; align-items: center; justify-content: flex-end; gap: 12px;
     padding: 12px 22px 16px; flex: none;
   }
-  .dlg-credit { font-size: 12px; color: var(--muted); }
   .dlg-actions-right { display: flex; align-items: center; gap: 16px; }
   .dlg-cancel {
     border: 0; background: none; font: inherit; font-size: 14px; color: var(--muted);

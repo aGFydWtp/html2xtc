@@ -177,7 +177,13 @@ export async function startRegistration(
     // @simplewebauthn's Uint8Array_ = ReturnType<Uint8Array['slice']>) —
     // TextEncoder().encode() alone types as Uint8Array<ArrayBufferLike>.
     userID: new TextEncoder().encode(userId).slice(),
-    challenge: issued.challenge,
+    // Pass the DECODED bytes, not the base64url string: @simplewebauthn v13
+    // UTF-8-encodes string challenges and re-encodes them, so the value the
+    // browser echoes back in clientDataJSON.challenge would be a
+    // double-encoded string that no longer hashes to the stored
+    // challenge_hash. Decoding first makes options.challenge round-trip as
+    // exactly issued.challenge.
+    challenge: base64UrlDecode(issued.challenge).slice(),
     timeout: REGISTRATION_TIMEOUT_MS,
     attestationType: "none",
     authenticatorSelection: { residentKey: "required", userVerification: "required" },
@@ -302,7 +308,9 @@ export async function startLogin(
   const issued = await issueChallenge(env, "login", null, null);
   return generateAuthenticationOptions({
     rpID: rpId,
-    challenge: issued.challenge,
+    // Decoded bytes for the same reason as startRegistration: a string
+    // challenge would be double-encoded and break challenge_hash lookup.
+    challenge: base64UrlDecode(issued.challenge).slice(),
     timeout: AUTHENTICATION_TIMEOUT_MS,
     userVerification: "required",
   });

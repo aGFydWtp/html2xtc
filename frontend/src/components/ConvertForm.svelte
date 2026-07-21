@@ -45,9 +45,9 @@
   {#if pdfFile}
     <PdfInputPanel file={pdfFile} onRemove={onRemoveFile} />
   {:else}
+    <div class="form-note"><span>{t("agree_before")}</span><a href="/about#terms">{t("agree_link")}</a><span>{t("agree_after")}</span></div>
     <PdfDropZone onFileSelected={(f) => void onFileSelected(f)}>
       <form {onsubmit}>
-        <div class="form-note"><span>{t("agree_before")}</span><a href="/about#terms">{t("agree_link")}</a><span>{t("agree_after")}</span></div>
         <div class="input-row">
           <input
             type="url"
@@ -58,14 +58,16 @@
             autocomplete="off"
             spellcheck="false"
           />
-          <button class="primary" type="submit" disabled={submitting.busy}>{t("convert")}</button>
+          <button class="primary" type="submit" disabled={submitting.busy}>{t("convert_short")}</button>
         </div>
       </form>
+      {#snippet below()}
+        <div class="aozora-open-row">
+          <button type="button" class="secondary" onclick={() => aozora.show()}>{t("aozora_open")}</button>
+        </div>
+      {/snippet}
     </PdfDropZone>
     {#if fileError}<div class="error-text">{fileError}</div>{/if}
-    <div class="aozora-open-row">
-      <button type="button" class="secondary" onclick={() => aozora.show()}>{t("aozora_open")}</button>
-    </div>
   {/if}
 </section>
 

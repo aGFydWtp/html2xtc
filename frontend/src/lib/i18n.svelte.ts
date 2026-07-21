@@ -11,6 +11,7 @@ export interface Messages {
   brand: string;
   intro: string;
   convert: string;
+  convert_short: string;
   agree_before: string;
   agree_link: string;
   agree_after: string;
@@ -45,19 +46,25 @@ export interface Messages {
   pdf_file_label: string;
   pdf_size_label: string;
   pdf_pages_label: string;
+  pdf_meta_line: (size: string, pages: number | null) => string;
   pdf_remove_file: string;
   pdf_preview_note: string;
+  pdf_preview_label: string;
   pdf_mode_source: string;
   pdf_mode_x3: string;
+  pdf_mode_compare: string;
   pdf_page_indicator: (n: number, total: number) => string;
   pdf_target_pages: string;
-  pdf_pages_hint: string;
+  pdf_page_start: string;
+  pdf_page_end: string;
   pdf_rotation: string;
-  pdf_fit: string;
   pdf_fit_contain: string;
   pdf_fit_cover: string;
   pdf_margin: string;
+  pdf_output_margin: string;
   pdf_advanced: string;
+  pdf_advanced_note: string;
+  pdf_advanced_summary: (fitLabel: string, marginPx: number, ditherLabel: string) => string;
   pdf_crop: string;
   pdf_crop_top: string;
   pdf_crop_right: string;
@@ -189,6 +196,7 @@ export const I18N: Record<Lang, Messages> = {
     brand: "XTC 変換",
     intro: "公開されているWebサイトやコンテンツを、電子ペーパー端末 Xteink X3 用の XTC ファイルに変換します。",
     convert: "変換する",
+    convert_short: "変換",
     agree_before: "「変換する」を押すことで、",
     agree_link: "利用規約",
     agree_after: "に同意したものとします。",
@@ -216,26 +224,32 @@ export const I18N: Record<Lang, Messages> = {
     http_error: (s) => `エラー (HTTP ${s})`,
     pdf_too_large: "生成された PDF がサイズ上限を超えました。「レイアウトを保持して変換する」を有効にすると変換できる場合があります。",
 
-    pdf_or_drop: "または PDF をドラッグ＆ドロップ",
+    pdf_or_drop: "または PDF をここにドラッグ＆ドロップ ／ ",
     pdf_pick_file: "ファイルを選択",
     pdf_drop_active: "ここにドロップ",
     pdf_file_label: "ファイル",
     pdf_size_label: "サイズ",
     pdf_pages_label: "ページ数",
+    pdf_meta_line: (size, pages) => (pages ? `${size} ・ ${pages} ページ` : size),
     pdf_remove_file: "ファイルを解除",
     pdf_preview_note: "プレビューは変換結果の目安です。PDFの描画方式の違いにより、実際のXTCとわずかに異なる場合があります。",
+    pdf_preview_label: "表示プレビュー",
     pdf_mode_source: "元PDF",
     pdf_mode_x3: "X3プレビュー",
+    pdf_mode_compare: "比較",
     pdf_page_indicator: (n, total) => `${n} / ${total}`,
-    pdf_target_pages: "対象ページ",
-    pdf_pages_hint: "例: 1-10, 1,3,5-8",
+    pdf_target_pages: "ページ範囲",
+    pdf_page_start: "開始",
+    pdf_page_end: "終了",
     pdf_rotation: "回転",
-    pdf_fit: "収め方",
     pdf_fit_contain: "全体を収める",
-    pdf_fit_cover: "画面を埋める",
+    pdf_fit_cover: "横幅に合わせる",
     pdf_margin: "余白",
+    pdf_output_margin: "出力余白",
     pdf_advanced: "詳細設定",
-    pdf_crop: "クロップ（上/右/下/左）",
+    pdf_advanced_note: "PDF はページレイアウトが確定しているため、フォント・文字サイズ・組方向・行間は変更できません。",
+    pdf_advanced_summary: (fitLabel, marginPx, ditherLabel) => `${fitLabel} ・ 余白${marginPx}px ・ ディザ${ditherLabel}`,
+    pdf_crop: "クロップ（%）",
     pdf_crop_top: "上",
     pdf_crop_right: "右",
     pdf_crop_bottom: "下",
@@ -363,6 +377,7 @@ export const I18N: Record<Lang, Messages> = {
     brand: "XTC Converter",
     intro: "Converts publicly available websites and content into XTC files for the Xteink X3 e-paper reader.",
     convert: "Convert",
+    convert_short: "Convert",
     agree_before: "By pressing “Convert”, you agree to the ",
     agree_link: "Terms of Use",
     agree_after: ". ",
@@ -390,26 +405,32 @@ export const I18N: Record<Lang, Messages> = {
     http_error: (s) => `Error (HTTP ${s})`,
     pdf_too_large: "The rendered PDF exceeds the size limit. Enabling “Keep the page layout” may allow the conversion to succeed.",
 
-    pdf_or_drop: "or drag and drop a PDF",
+    pdf_or_drop: "or drag & drop a PDF here / ",
     pdf_pick_file: "Choose file",
     pdf_drop_active: "Drop here",
     pdf_file_label: "File",
     pdf_size_label: "Size",
     pdf_pages_label: "Pages",
+    pdf_meta_line: (size, pages) => (pages ? `${size} · ${pages} pages` : size),
     pdf_remove_file: "Remove file",
     pdf_preview_note: "The preview is only an approximation of the conversion result. Because the browser and server render PDFs differently, the final XTC file may look slightly different.",
+    pdf_preview_label: "Preview",
     pdf_mode_source: "Original PDF",
     pdf_mode_x3: "X3 preview",
+    pdf_mode_compare: "Compare",
     pdf_page_indicator: (n, total) => `${n} / ${total}`,
     pdf_target_pages: "Pages",
-    pdf_pages_hint: "e.g. 1-10, 1,3,5-8",
+    pdf_page_start: "Start",
+    pdf_page_end: "End",
     pdf_rotation: "Rotation",
-    pdf_fit: "Fit",
     pdf_fit_contain: "Fit inside",
-    pdf_fit_cover: "Fill screen",
+    pdf_fit_cover: "Fit to width",
     pdf_margin: "Margin",
+    pdf_output_margin: "Output margin",
     pdf_advanced: "Advanced settings",
-    pdf_crop: "Crop (top/right/bottom/left)",
+    pdf_advanced_note: "PDF page layout is fixed, so font, text size, direction and line spacing cannot be changed.",
+    pdf_advanced_summary: (fitLabel, marginPx, ditherLabel) => `${fitLabel} · Margin ${marginPx}px · Dither ${ditherLabel}`,
+    pdf_crop: "Crop (%)",
     pdf_crop_top: "Top",
     pdf_crop_right: "Right",
     pdf_crop_bottom: "Bottom",

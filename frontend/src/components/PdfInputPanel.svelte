@@ -106,86 +106,74 @@
 </script>
 
 <div class="pdf-panel">
-  <div class="panel-grid">
-    <div class="preview-col">
-      {#if status === "ready" && pdfDocument}
-        <PdfPreview {pdfDocument} {options} bind:currentPage {pageCount} />
-      {:else if status === "loading"}
-        <div class="preview-placeholder"><span class="spinner"></span></div>
-      {:else if status === "error" && errorKind}
-        <div class="preview-placeholder error-text">{loadErrorText(errorKind)}</div>
-      {/if}
+  <div class="att-row">
+    <span class="att-badge">PDF</span>
+    <div class="att-info">
+      <div class="att-name">{file.name}</div>
+      <div class="att-meta">{t("pdf_meta_line")(formatSize(file.size), pageCount || null)}</div>
     </div>
-
-    <div class="settings-col">
-      <div class="att-row">
-        <span class="att-badge">PDF</span>
-        <div class="att-info">
-          <div class="att-name">{file.name}</div>
-          <div class="att-meta">
-            {t("pdf_size_label")}: {formatSize(file.size)}
-            {#if pageCount}· {t("pdf_pages_label")}: {pageCount}{/if}
-          </div>
-        </div>
-      </div>
-
-      {#if status === "ready"}
-        <PdfOptions bind:options />
-      {/if}
-
-      {#if uploading}
-        <div class="upload-row">
-          <div class="upload-bar"><div class="upload-fill" style="width:{uploadPercent ?? 0}%"></div></div>
-          <span class="upload-label">{uploadPercent === null ? t("pdf_uploading_indeterminate") : t("pdf_uploading")(uploadPercent)}</span>
-          <button type="button" class="secondary" onclick={cancelUpload}>{t("cancel")}</button>
-        </div>
-      {:else}
-        {#if uploadFailedText}<div class="error-text">{uploadFailedText}</div>{/if}
-        <!-- pagesErrorText はページ範囲入力欄側（PdfOptions.svelte）で既に表示される。
-             ここでは pages 以外（クロップ合計超過など §5.3 のその他バリデーション）で
-             optionsValid が false になったケースの理由表示を担う — レビュー指摘: 理由
-             表示なしに変換ボタンだけが無効化されるのを防ぐ。 -->
-        {#if status === "ready" && !pagesErrorText && !optionsValid}<div class="error-text">{t("pdf_options_invalid")}</div>{/if}
-        <div class="panel-actions">
-          <button type="button" class="secondary" onclick={onRemove}>{t("pdf_remove_file")}</button>
-          <button type="button" class="primary" disabled={!canSubmit} onclick={() => void onConvert()}>{t("convert")}</button>
-        </div>
-      {/if}
-    </div>
+    <button type="button" class="att-x" onclick={onRemove} aria-label={t("pdf_remove_file")}>×</button>
   </div>
+
+  {#if status === "ready" && pdfDocument}
+    <PdfPreview {pdfDocument} {options} bind:currentPage {pageCount} />
+  {:else if status === "loading"}
+    <div class="preview-placeholder"><span class="spinner"></span></div>
+  {:else if status === "error" && errorKind}
+    <div class="preview-placeholder error-text">{loadErrorText(errorKind)}</div>
+  {/if}
+
+  {#if status === "ready"}
+    <PdfOptions bind:options {pageCount} />
+  {/if}
+
+  {#if uploading}
+    <div class="upload-row">
+      <div class="upload-bar"><div class="upload-fill" style="width:{uploadPercent ?? 0}%"></div></div>
+      <span class="upload-label">{uploadPercent === null ? t("pdf_uploading_indeterminate") : t("pdf_uploading")(uploadPercent)}</span>
+      <button type="button" class="secondary" onclick={cancelUpload}>{t("cancel")}</button>
+    </div>
+  {:else}
+    {#if uploadFailedText}<div class="error-text">{uploadFailedText}</div>{/if}
+    <!-- pagesErrorText はページ範囲入力欄側（PdfOptions.svelte）で既に表示される。
+         ここでは pages 以外（クロップ合計超過など §5.3 のその他バリデーション）で
+         optionsValid が false になったケースの理由表示を担う — レビュー指摘: 理由
+         表示なしに変換ボタンだけが無効化されるのを防ぐ。 -->
+    {#if status === "ready" && !pagesErrorText && !optionsValid}<div class="error-text">{t("pdf_options_invalid")}</div>{/if}
+    <button type="button" class="primary convert-btn" disabled={!canSubmit} onclick={() => void onConvert()}>{t("convert")}</button>
+  {/if}
 </div>
 
 <style>
-  .pdf-panel { padding: 20px 0; }
-  .panel-grid { display: flex; flex-direction: column; gap: 24px; }
-  @media (min-width: 720px) {
-    .panel-grid { flex-direction: row; align-items: flex-start; }
-    .preview-col { flex: 0 0 240px; }
-    .settings-col { flex: 1; min-width: 0; }
-  }
+  .pdf-panel { padding: 20px 0; display: flex; flex-direction: column; gap: 16px; }
   .preview-placeholder {
     width: 100%; max-width: 220px; aspect-ratio: 528 / 792; display: flex; align-items: center;
     justify-content: center; background: #fff; border: 1.5px solid var(--ink); border-radius: 4px;
     box-shadow: 3px 3px 0 var(--line); margin: 0 auto; padding: 16px; text-align: center; font-size: 13px;
   }
-  .settings-col { display: flex; flex-direction: column; gap: 18px; }
   .att-row {
     display: flex; align-items: center; gap: 12px; border: 1px solid var(--line); border-radius: 4px;
-    background: var(--card); padding: 12px 16px;
+    background: var(--card); padding: 12px 16px; text-align: left;
   }
   .att-badge {
     flex: none; font-family: var(--mono); font-size: 12px; font-weight: 600; padding: 3px 8px;
     background: var(--panel); color: #4d4a42; border-radius: 4px;
   }
-  .att-info { min-width: 0; }
+  .att-info { flex: 1; min-width: 0; }
   .att-name { font-size: 14px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .att-meta { font-family: var(--mono); font-size: 12px; color: var(--faint); }
-  .panel-actions { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+  .att-meta { font-family: var(--mono); font-size: 12px; color: var(--faint); margin-top: 2px; }
+  .att-x {
+    flex: none; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;
+    border: 1px solid var(--line); border-radius: 4px; background: none; color: var(--muted);
+    font-size: 13px; line-height: 1; cursor: pointer; padding: 0; font-family: inherit;
+  }
+  .att-x:hover { background: var(--panel); }
   button.primary {
     padding: 12px 26px; font: inherit; font-size: 15px; font-weight: 700; letter-spacing: .08em;
     border: 0; border-radius: 4px; background: var(--ink); color: var(--ink-text); cursor: pointer;
   }
   button.primary:disabled { opacity: .55; cursor: default; }
+  button.primary.convert-btn { display: block; width: 100%; padding: 14px 0; }
   button.secondary {
     padding: 8px 18px; font: inherit; font-size: 14px; font-weight: 500; border-radius: 4px;
     border: 1px solid var(--ink); background: var(--card); color: var(--ink); cursor: pointer;

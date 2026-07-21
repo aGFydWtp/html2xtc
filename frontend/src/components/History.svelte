@@ -1,9 +1,11 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import { onMount, tick } from "svelte";
+  import { authStore } from "../lib/auth.svelte";
   import { markJobExpired } from "../lib/convert.svelte";
   import { statusLabel, t } from "../lib/i18n.svelte";
   import { effectiveStatus, formatDate, jobsStore } from "../lib/jobs.svelte";
+  import { libraryStore } from "../lib/library.svelte";
   import { openPreview, previewBroken } from "../lib/preview.svelte";
 
   // 全行で共有する操作メニュー（ポップオーバー）1 個。
@@ -96,6 +98,17 @@
     if (jobId) void openPreview(jobId);
   }
 
+  let savingMenuJob = $state(false);
+
+  async function menuSaveToLibrary(): Promise<void> {
+    const jobId = menuJobId;
+    if (!jobId || savingMenuJob || libraryStore.isSavedJob(jobId)) return;
+    const job = jobsStore.list.find((j) => j.jobId === jobId);
+    savingMenuJob = true;
+    await libraryStore.saveFromJob(jobId, job?.title);
+    savingMenuJob = false;
+  }
+
   function clearAll(): void {
     if (confirm(t("confirm_clear"))) jobsStore.clear();
   }
@@ -145,6 +158,14 @@
 >
   <button type="button" role="menuitem" disabled={!menuDone} onclick={() => void menuDownload()}>{t("menu_dl")}</button>
   <button type="button" role="menuitem" disabled={!menuDone || (menuJobId !== null && previewBroken.has(menuJobId))} onclick={menuPreview}>{t("menu_preview")}</button>
+  {#if authStore.account}
+    <button
+      type="button"
+      role="menuitem"
+      disabled={!menuDone || savingMenuJob || (menuJobId !== null && libraryStore.isSavedJob(menuJobId))}
+      onclick={() => void menuSaveToLibrary()}
+    >{menuJobId !== null && libraryStore.isSavedJob(menuJobId) ? t("library_saved") : t("library_save")}</button>
+  {/if}
 </div>
 
 <style>

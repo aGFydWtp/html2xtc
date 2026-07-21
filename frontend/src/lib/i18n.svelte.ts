@@ -49,6 +49,78 @@ export interface Messages {
   aozora_selected: (n: number, max: number) => string;
   aozora_convert: (n: number) => string;
   status: Record<JobStatus, string>;
+
+  // --- 端末別ライブラリ・パスキー認証・ペアリング（実装計画 §14） ---
+  save: string;
+  tab_convert: string;
+  tab_library: string;
+  tab_devices: string;
+
+  account_login: string;
+  account_logout: string;
+  account_login_prompt: string;
+  account_add_passkey: string;
+  account_add_passkey_intro: string;
+
+  login_dialog_title: string;
+  login_dialog_intro: string;
+  login_button: string;
+  login_failed: string;
+
+  register_dialog_title: string;
+  register_display_name_label: string;
+  register_display_name_placeholder: string;
+  register_submit: string;
+  register_failed: string;
+
+  library_loading: string;
+  library_load_failed: string;
+  library_empty: string;
+  library_download: string;
+  library_item_edit: string;
+  library_delete: string;
+  library_delete_confirm: string;
+  library_author_none: string;
+  library_save: string;
+  library_saving: string;
+  library_saved: string;
+  library_save_failed: string;
+
+  devices_load_failed: string;
+  devices_empty: string;
+  devices_rename: string;
+  devices_edit_library: string;
+  devices_rotate_token: string;
+  devices_rotate_confirm: string;
+  devices_revoke: string;
+  devices_revoke_confirm: string;
+  devices_status_active: string;
+  devices_status_revoked: string;
+  devices_last_seen_never: string;
+  devices_token_dialog_title: string;
+  devices_token_shown_once: string;
+  devices_token_copy: string;
+  devices_token_copied: string;
+  devices_token_close: string;
+
+  device_library_title: (name: string) => string;
+  device_library_select_all: string;
+  device_library_deselect_all: string;
+  device_library_move_up: string;
+  device_library_move_down: string;
+  device_library_save: string;
+  device_library_conflict: string;
+  device_library_reload: string;
+  device_library_empty: string;
+  device_library_save_failed: string;
+
+  pairing_dialog_title: string;
+  pairing_login_required: string;
+  pairing_requested_name_label: string;
+  pairing_approve: string;
+  pairing_reject: string;
+  pairing_not_found: string;
+  pairing_action_failed: string;
 }
 
 export const I18N: Record<Lang, Messages> = {
@@ -96,6 +168,77 @@ export const I18N: Record<Lang, Messages> = {
     aozora_selected: (n, max) => `${n} / ${max} 件選択中`,
     aozora_convert: (n) => n > 0 ? `${n} 件を変換する` : "変換する",
     status: { queued: "待機中", rendering: "PDF 生成中", converting: "XTC 変換中", completed: "✓ 完了", failed: "失敗", expired: "期限切れ" },
+
+    save: "保存する",
+    tab_convert: "変換",
+    tab_library: "ライブラリ",
+    tab_devices: "端末",
+
+    account_login: "ログイン",
+    account_logout: "ログアウト",
+    account_login_prompt: "この機能を使うにはログインしてください。",
+    account_add_passkey: "パスキーを追加登録",
+    account_add_passkey_intro: "この端末を新しいパスキーとして、今のアカウントに登録します。",
+
+    login_dialog_title: "ログイン",
+    login_dialog_intro: "登録済みのパスキーでログインします。",
+    login_button: "パスキーでログイン",
+    login_failed: "ログインに失敗しました。時間をおいてお試しください。",
+
+    register_dialog_title: "パスキーを登録",
+    register_display_name_label: "表示名",
+    register_display_name_placeholder: "例：Haruki",
+    register_submit: "パスキーを登録する",
+    register_failed: "登録に失敗しました。招待リンクの有効期限が切れている可能性があります。",
+
+    library_loading: "読み込み中…",
+    library_load_failed: "ライブラリの取得に失敗しました。",
+    library_empty: "保存されたXTCはまだありません。",
+    library_download: "ダウンロード",
+    library_item_edit: "編集",
+    library_delete: "削除",
+    library_delete_confirm: "このXTCをライブラリから削除しますか？（端末の配信リストからも外れます）",
+    library_author_none: "著者（任意）",
+    library_save: "ライブラリへ保存",
+    library_saving: "保存中…",
+    library_saved: "保存済み",
+    library_save_failed: "保存に失敗しました。",
+
+    devices_load_failed: "端末一覧の取得に失敗しました。",
+    devices_empty: "ペアリング済みの端末はまだありません。",
+    devices_rename: "名前を変更",
+    devices_edit_library: "配信リストを編集",
+    devices_rotate_token: "トークンを再発行",
+    devices_rotate_confirm: "トークンを再発行しますか？古いトークンは即座に無効になります。",
+    devices_revoke: "解除",
+    devices_revoke_confirm: "この端末を解除しますか？以後、この端末からのアクセスはできなくなります。",
+    devices_status_active: "有効",
+    devices_status_revoked: "解除済み",
+    devices_last_seen_never: "未接続",
+    devices_token_dialog_title: "新しいトークン",
+    devices_token_shown_once: "このトークンは今だけ表示されます。閉じると二度と表示できません。端末側の設定にコピーしてください。",
+    devices_token_copy: "コピー",
+    devices_token_copied: "コピーしました",
+    devices_token_close: "閉じる",
+
+    device_library_title: (name) => `配信リストの編集 — ${name}`,
+    device_library_select_all: "すべて追加",
+    device_library_deselect_all: "すべて解除",
+    device_library_move_up: "上へ",
+    device_library_move_down: "下へ",
+    device_library_save: "保存する",
+    device_library_conflict: "他の画面で更新されています。再読み込みしてください。",
+    device_library_reload: "再読み込み",
+    device_library_empty: "ライブラリにXTCがありません。先に変換してライブラリへ保存してください。",
+    device_library_save_failed: "配信リストの保存に失敗しました。",
+
+    pairing_dialog_title: "端末のペアリング承認",
+    pairing_login_required: "ペアリングを承認するにはログインしてください。",
+    pairing_requested_name_label: "端末の名前",
+    pairing_approve: "承認する",
+    pairing_reject: "拒否する",
+    pairing_not_found: "ペアリングが見つかりません。コードの有効期限が切れている可能性があります。",
+    pairing_action_failed: "操作に失敗しました。もう一度お試しください。",
   },
   en: {
     brand: "XTC Converter",
@@ -141,6 +284,77 @@ export const I18N: Record<Lang, Messages> = {
     aozora_selected: (n, max) => `${n} / ${max} selected`,
     aozora_convert: (n) => n > 0 ? `Convert ${n} selected` : "Convert",
     status: { queued: "Queued", rendering: "Rendering PDF", converting: "Converting to XTC", completed: "✓ Done", failed: "Failed", expired: "Expired" },
+
+    save: "Save",
+    tab_convert: "Convert",
+    tab_library: "Library",
+    tab_devices: "Devices",
+
+    account_login: "Log in",
+    account_logout: "Log out",
+    account_login_prompt: "Please log in to use this feature.",
+    account_add_passkey: "Register another passkey",
+    account_add_passkey_intro: "Register this device as a new passkey for your current account.",
+
+    login_dialog_title: "Log in",
+    login_dialog_intro: "Log in with one of your registered passkeys.",
+    login_button: "Log in with passkey",
+    login_failed: "Login failed. Please try again later.",
+
+    register_dialog_title: "Register a passkey",
+    register_display_name_label: "Display name",
+    register_display_name_placeholder: "e.g. Haruki",
+    register_submit: "Register passkey",
+    register_failed: "Registration failed. The invite link may have expired.",
+
+    library_loading: "Loading…",
+    library_load_failed: "Failed to load your library.",
+    library_empty: "You haven't saved any XTC files yet.",
+    library_download: "Download",
+    library_item_edit: "Edit",
+    library_delete: "Delete",
+    library_delete_confirm: "Remove this XTC from your library? (It will also be removed from every device's list.)",
+    library_author_none: "Author (optional)",
+    library_save: "Save to library",
+    library_saving: "Saving…",
+    library_saved: "Saved",
+    library_save_failed: "Failed to save.",
+
+    devices_load_failed: "Failed to load your devices.",
+    devices_empty: "No paired devices yet.",
+    devices_rename: "Rename",
+    devices_edit_library: "Edit reading list",
+    devices_rotate_token: "Rotate token",
+    devices_rotate_confirm: "Rotate the token? The old token stops working immediately.",
+    devices_revoke: "Unpair",
+    devices_revoke_confirm: "Unpair this device? It will no longer be able to connect.",
+    devices_status_active: "Active",
+    devices_status_revoked: "Unpaired",
+    devices_last_seen_never: "Never connected",
+    devices_token_dialog_title: "New token",
+    devices_token_shown_once: "This token is only shown now. Once you close this dialog it can't be shown again — copy it into your device's settings.",
+    devices_token_copy: "Copy",
+    devices_token_copied: "Copied",
+    devices_token_close: "Close",
+
+    device_library_title: (name) => `Edit reading list — ${name}`,
+    device_library_select_all: "Add all",
+    device_library_deselect_all: "Remove all",
+    device_library_move_up: "Move up",
+    device_library_move_down: "Move down",
+    device_library_save: "Save",
+    device_library_conflict: "This list was updated elsewhere. Please reload.",
+    device_library_reload: "Reload",
+    device_library_empty: "Your library has no XTC files yet. Convert something and save it to your library first.",
+    device_library_save_failed: "Failed to save the reading list.",
+
+    pairing_dialog_title: "Approve device pairing",
+    pairing_login_required: "Please log in to approve this pairing.",
+    pairing_requested_name_label: "Device name",
+    pairing_approve: "Approve",
+    pairing_reject: "Reject",
+    pairing_not_found: "Pairing not found. The code may have expired.",
+    pairing_action_failed: "The action failed. Please try again.",
   },
 };
 

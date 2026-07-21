@@ -115,6 +115,20 @@ class LibraryStore {
       return false;
     }
   }
+
+  /**
+   * Clears cached state so the next login re-fetches from scratch. Called
+   * by authStore on logout and on every successful login/register — without
+   * this, a same-tab account switch would keep showing the previous
+   * account's library (loadState stays "loaded" so the load-on-idle $effect
+   * in Library.svelte never re-fires) even though the server correctly
+   * scopes every request to the new account.
+   */
+  reset(): void {
+    this.items = [];
+    this.loadState = "idle";
+    this.savedJobIds = new Set();
+  }
 }
 
 export const libraryStore = new LibraryStore();

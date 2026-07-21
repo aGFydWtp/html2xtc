@@ -4,7 +4,22 @@
 // 初回取得が完了したかどうか（未確定の間はログインボタンを出さない）。
 
 import { apiGet, apiSend, ApiError } from "./api";
+import { devicesStore } from "./devices.svelte";
+import { libraryStore } from "./library.svelte";
 import { startAuthentication, startRegistration } from "./passkeys";
+
+/**
+ * Clears every other store's cached, account-scoped state. Called whenever
+ * the logged-in identity changes (logout, or a fresh login/register success)
+ * — without this, libraryStore/devicesStore keep loadState "loaded" from the
+ * previous account, so their load-on-idle $effect (Library.svelte,
+ * Devices.svelte) never re-fires and the new account's tab briefly shows the
+ * previous account's titles/devices until a manual reload.
+ */
+function resetAccountScopedStores(): void {
+  libraryStore.reset();
+  devicesStore.reset();
+}
 
 export interface Account {
   id: string;
@@ -112,7 +127,13 @@ class AuthStore {
         this.errorCode = "UNKNOWN";
         return false;
       }
+      // A plain "add a passkey" call (addPasskey below) re-verifies the same
+      // already-logged-in account, so only reset the other stores when the
+      // identity actually changes (new-account creation, or — belt and
+      // suspenders — a stale previous account somehow still cached).
+      const identityChanged = this.account?.id !== account.id;
       this.account = account;
+      if (identityChanged) resetAccountScopedStores();
       return true;
     } catch (e) {
       this.errorCode = errorCodeOf(e);
@@ -142,7 +163,9 @@ class AuthStore {
         this.errorCode = "UNKNOWN";
         return false;
       }
+      const identityChanged = this.account?.id !== account.id;
       this.account = account;
+      if (identityChanged) resetAccountScopedStores();
       return true;
     } catch (e) {
       this.errorCode = errorCodeOf(e);
@@ -160,6 +183,7 @@ class AuthStore {
     }
     this.account = null;
     this.sessions = [];
+    resetAccountScopedStores();
   }
 
   async loadSessions(): Promise<void> {

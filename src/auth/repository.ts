@@ -11,16 +11,28 @@ import type { Account } from "./sessions";
  * is the service layer that calls into this module.
  */
 
+/** Builds (without running) the accounts INSERT statement — used standalone by createAccount and as one leg of the atomic new-account db.batch() in finishRegistration (src/auth/webauthn.ts). */
+function buildCreateAccountStatement(
+  db: D1Database,
+  account: { id: string; displayName: string; createdAt: string },
+): D1PreparedStatement {
+  return db
+    .prepare(
+      `INSERT INTO accounts (id, display_name, created_at, updated_at) VALUES (?, ?, ?, ?)`,
+    )
+    .bind(account.id, account.displayName, account.createdAt, account.createdAt);
+}
+
 export async function createAccount(
   db: D1Database,
   account: { id: string; displayName: string; createdAt: string },
 ): Promise<void> {
-  await db
-    .prepare(
-      `INSERT INTO accounts (id, display_name, created_at, updated_at) VALUES (?, ?, ?, ?)`,
-    )
-    .bind(account.id, account.displayName, account.createdAt, account.createdAt)
-    .run();
+  await buildCreateAccountStatement(db, account).run();
+}
+
+/** Physically removes an account row (ON DELETE CASCADE also removes any credentials/sessions it picked up) — only used to unwind a new-account registration whose db.batch() failed partway in a way that itself didn't roll back (see finishRegistration's post-batch invite-race cleanup). */
+export async function deleteAccountById(db: D1Database, id: string): Promise<void> {
+  await db.prepare(`DELETE FROM accounts WHERE id = ?`).bind(id).run();
 }
 
 export async function getAccountById(db: D1Database, id: string): Promise<Account | null> {
@@ -93,9 +105,9 @@ export interface NewCredential {
   createdAt: string;
 }
 
-/** Inserts a new webauthn_credentials row. Throws (D1 UNIQUE violation) if credentialId is already registered to any account — callers must catch and translate. */
-export async function insertCredential(db: D1Database, cred: NewCredential): Promise<void> {
-  await db
+/** Builds (without running) the webauthn_credentials INSERT statement — shared by insertCredential and the atomic new-account db.batch() in finishRegistration (src/auth/webauthn.ts). */
+function buildInsertCredentialStatement(db: D1Database, cred: NewCredential): D1PreparedStatement {
+  return db
     .prepare(
       `INSERT INTO webauthn_credentials
          (id, account_id, credential_id, public_key, sign_count, transports_json, device_type, backed_up, created_at)
@@ -111,8 +123,12 @@ export async function insertCredential(db: D1Database, cred: NewCredential): Pro
       cred.deviceType,
       cred.backedUp ? 1 : 0,
       cred.createdAt,
-    )
-    .run();
+    );
+}
+
+/** Inserts a new webauthn_credentials row. Throws (D1 UNIQUE violation) if credentialId is already registered to any account — callers must catch and translate. */
+export async function insertCredential(db: D1Database, cred: NewCredential): Promise<void> {
+  await buildInsertCredentialStatement(db, cred).run();
 }
 
 export async function findCredentialByCredentialId(
@@ -183,11 +199,51 @@ export async function findInviteByTokenHash(db: D1Database, tokenHash: string): 
   return row !== null ? { id: row.id, expiresAt: row.expires_at, consumedAt: row.consumed_at } : null;
 }
 
+/** Builds (without running) the invite-consumption UPDATE statement — shared by consumeInvite and the atomic new-account db.batch() in finishRegistration (src/auth/webauthn.ts). */
+function buildConsumeInviteStatement(db: D1Database, id: string, consumedAt: string): D1PreparedStatement {
+  return db
+    .prepare(`UPDATE registration_invites SET consumed_at = ? WHERE id = ? AND consumed_at IS NULL`)
+    .bind(consumedAt, id);
+}
+
 /** Atomically marks an invite consumed; returns false if it was already consumed (caller must treat that as a conflict, not silently proceed). */
 export async function consumeInvite(db: D1Database, id: string, consumedAt: string): Promise<boolean> {
-  const result = await db
-    .prepare(`UPDATE registration_invites SET consumed_at = ? WHERE id = ? AND consumed_at IS NULL`)
-    .bind(consumedAt, id)
-    .run();
+  const result = await buildConsumeInviteStatement(db, id, consumedAt).run();
   return (result.meta.changes ?? 0) > 0;
+}
+
+export interface NewAccountRegistrationBatchResult {
+  /** false iff the invite had already been consumed by a concurrent request — caller must then undo the account+credential rows this same batch just committed (D1 batch() has no way to make a later statement conditional on an earlier one's affected-row count, so that undo happens as a separate follow-up call). */
+  inviteConsumed: boolean;
+}
+
+/**
+ * Atomically runs invite consumption + account creation + credential
+ * insertion as one D1 batch() (a single transaction): if the credential
+ * insert fails (e.g. a UNIQUE violation because that passkey is already
+ * registered elsewhere), the *entire* batch rolls back, so neither the
+ * invite nor the account is left behind — closing the orphan-account gap
+ * (invite consumed + account row with zero credentials, unusable) that
+ * running these as separate calls had. The one thing D1 batch() cannot do is
+ * make the account/credential inserts conditional on the invite UPDATE
+ * actually having matched a row; batch() only rolls back on a thrown error,
+ * and "0 rows updated" from a WHERE clause is not an error. So this can
+ * still commit an account+credential pair for an invite that a concurrent
+ * request consumed a moment earlier — inviteConsumed reports that (via the
+ * first statement's affected-row count) so the caller can clean up.
+ */
+export async function runNewAccountRegistrationBatch(
+  db: D1Database,
+  params: {
+    invite: { id: string; consumedAt: string };
+    account: { id: string; displayName: string; createdAt: string };
+    credential: NewCredential;
+  },
+): Promise<NewAccountRegistrationBatchResult> {
+  const [inviteResult] = await db.batch([
+    buildConsumeInviteStatement(db, params.invite.id, params.invite.consumedAt),
+    buildCreateAccountStatement(db, params.account),
+    buildInsertCredentialStatement(db, params.credential),
+  ]);
+  return { inviteConsumed: (inviteResult.meta.changes ?? 0) > 0 };
 }

@@ -187,6 +187,29 @@ export async function incrementDeviceLibraryVersion(
 }
 
 /**
+ * Unconditionally bumps library_version by 1 for each of the given device
+ * ids, in one D1 batch (one statement per device, same transaction) — used
+ * by src/library/service.ts's deleteLibrary after a device_library_items
+ * fan-out delete, so any device that lost an assignment gets the same
+ * "something changed, your expectedVersion is now stale" signal a normal PUT
+ * /api/devices/:deviceId/library would have produced. No-op for an empty
+ * list (nothing was assigned to any device).
+ */
+export async function bumpLibraryVersionForDevices(
+  db: D1Database,
+  deviceIds: string[],
+  updatedAt: string,
+): Promise<void> {
+  if (deviceIds.length === 0) {
+    return;
+  }
+  const statement = db.prepare(
+    `UPDATE devices SET library_version = library_version + 1, updated_at = ? WHERE id = ?`,
+  );
+  await db.batch(deviceIds.map((deviceId) => statement.bind(updatedAt, deviceId)));
+}
+
+/**
  * Device lookup for Basic-auth (src/devices/authentication.ts): unscoped by
  * design (the caller is authenticating *as* a device, not acting as an
  * already-known account) but still returns status so

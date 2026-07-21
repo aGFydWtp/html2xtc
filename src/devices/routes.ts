@@ -38,8 +38,10 @@ import {
  * Two distinct trust boundaries share this file:
  *  - /api/device-pairings* — unauthenticated, called by the Xteink device
  *    itself, authenticated only by the pairingSecret it was issued (plan
- *    §9.4 "端末から呼ぶ公開API"). Per-IP rate limiting is TODO'd for a later
- *    phase (plan §13) — these three routes intentionally have none yet.
+ *    §9.4 "端末から呼ぶ公開API"). POST (pairing start) is rate-limited
+ *    (20/h/IP, fail-closed, plan §13); GET :pairingId (device polling) and
+ *    POST :pairingId/complete are not yet — that's still TODO'd for a later
+ *    phase.
  *  - everything else — Cookie session (requireAccount), CSRF-checked on
  *    every mutation, exactly like the library and auth routes.
  */

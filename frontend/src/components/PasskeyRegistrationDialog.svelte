@@ -8,6 +8,12 @@
   let displayName = $state("");
 
   const isAddMode = $derived(registrationDialog.inviteToken === null);
+  // Opening a ?register=<token> invite link while already logged in must
+  // never silently add a passkey to the logged-in account instead of
+  // creating the new one the invite was meant for (plan §16 review M2) — so
+  // this state short-circuits both the submit handler and the normal
+  // new-account form below.
+  const loggedInConflict = $derived(registrationDialog.inviteToken !== null && authStore.account !== null);
 
   $effect(() => {
     if (!dlg) return;
@@ -28,10 +34,15 @@
 
   async function onSubmit(event: SubmitEvent): Promise<void> {
     event.preventDefault();
+    if (loggedInConflict) return;
     const ok = isAddMode
       ? await authStore.addPasskey()
       : await authStore.register(registrationDialog.inviteToken ?? undefined, displayName.trim());
     if (ok) closeRegistrationDialog();
+  }
+
+  async function onLogoutClick(): Promise<void> {
+    await authStore.logout();
   }
 </script>
 
@@ -48,7 +59,9 @@
   </div>
   <form onsubmit={(e) => void onSubmit(e)}>
     <div class="dlg-body">
-      {#if isAddMode}
+      {#if loggedInConflict}
+        <p class="reg-intro">{t("register_logged_in_conflict")(authStore.account?.displayName ?? "")}</p>
+      {:else if isAddMode}
         <p class="reg-intro">{t("account_add_passkey_intro")}</p>
       {:else}
         <label class="field">
@@ -59,8 +72,13 @@
       {#if authStore.errorCode}<div class="error-text">{t("register_failed")}</div>{/if}
     </div>
     <div class="dlg-actions">
-      <button type="button" class="dlg-cancel" onclick={() => closeRegistrationDialog()}>{t("cancel")}</button>
-      <button type="submit" class="dlg-submit" disabled={authStore.busy || (!isAddMode && !displayName.trim())}>{t("register_submit")}</button>
+      {#if loggedInConflict}
+        <button type="button" class="dlg-cancel" onclick={() => closeRegistrationDialog()}>{t("cancel")}</button>
+        <button type="button" class="dlg-submit" onclick={() => void onLogoutClick()}>{t("account_logout")}</button>
+      {:else}
+        <button type="button" class="dlg-cancel" onclick={() => closeRegistrationDialog()}>{t("cancel")}</button>
+        <button type="submit" class="dlg-submit" disabled={authStore.busy || (!isAddMode && !displayName.trim())}>{t("register_submit")}</button>
+      {/if}
     </div>
   </form>
 </dialog>

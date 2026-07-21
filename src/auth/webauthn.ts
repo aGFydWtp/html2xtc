@@ -19,14 +19,14 @@ import { Errors } from "../security/errors";
 import type { Env } from "../types";
 import { consumeChallenge, issueChallenge } from "./challenges";
 import {
-  consumeInvite,
-  createAccount,
+  deleteAccountById,
   findCredentialByCredentialId,
   findInviteByTokenHash,
   getAccountById,
   insertCredential,
   isInviteUsable,
   listCredentialsForAccount,
+  runNewAccountRegistrationBatch,
   updateCredentialAfterLogin,
 } from "./repository";
 import type { Account } from "./sessions";
@@ -231,48 +231,65 @@ export async function finishRegistration(
   const { registrationInfo } = verification;
 
   const nowIso = new Date().toISOString();
-  let accountId: string;
-  let displayName: string;
-  let isNewAccount = false;
+  const newCredential = {
+    id: crypto.randomUUID(),
+    credentialId: registrationInfo.credential.id,
+    publicKey: registrationInfo.credential.publicKey,
+    signCount: registrationInfo.credential.counter,
+    transports: registrationInfo.credential.transports ?? null,
+    deviceType: registrationInfo.credentialDeviceType,
+    backedUp: registrationInfo.credentialBackedUp,
+    createdAt: nowIso,
+  };
 
   if (metadata.kind === "new-account") {
-    const consumedInvite = await consumeInvite(env.APP_DB, metadata.inviteId, nowIso);
-    if (!consumedInvite) {
+    const accountId = metadata.pendingAccountId;
+    const displayName = metadata.displayName;
+    // Invite consumption + account creation + credential insertion run as
+    // one atomic D1 batch (src/auth/repository.ts's
+    // runNewAccountRegistrationBatch) so a credential-insert failure (e.g.
+    // this passkey is already registered to another account) rolls back the
+    // whole thing instead of leaving a used-invite, zero-credential orphan
+    // account behind.
+    let batchResult: { inviteConsumed: boolean };
+    try {
+      batchResult = await runNewAccountRegistrationBatch(env.APP_DB, {
+        invite: { id: metadata.inviteId, consumedAt: nowIso },
+        account: { id: accountId, displayName, createdAt: nowIso },
+        credential: { ...newCredential, accountId },
+      });
+    } catch (error) {
+      console.error("credential insert failed", error);
+      throw Errors.conflict("CREDENTIAL_ALREADY_REGISTERED", "this passkey is already registered");
+    }
+    if (!batchResult.inviteConsumed) {
+      // Lost a race against a concurrent request that consumed this same
+      // invite a moment earlier: the batch above still committed our
+      // account+credential (D1 batch() can't make those conditional on the
+      // invite UPDATE's affected-row count), so undo them now. ON DELETE
+      // CASCADE on webauthn_credentials.account_id removes the credential
+      // row too.
+      await deleteAccountById(env.APP_DB, accountId);
       throw Errors.conflict("INVITE_ALREADY_USED", "invite has already been used");
     }
-    accountId = metadata.pendingAccountId;
-    displayName = metadata.displayName;
-    await createAccount(env.APP_DB, { id: accountId, displayName, createdAt: nowIso });
-    isNewAccount = true;
-  } else {
-    accountId = metadata.accountId;
-    const existing = await getAccountById(env.APP_DB, accountId);
-    if (existing === null) {
-      throw Errors.notFound("ACCOUNT_NOT_FOUND", "account not found");
-    }
-    displayName = existing.displayName;
+    const account: Account = { id: accountId, displayName };
+    const session = await createSession(env, accountId, userAgent);
+    return { account, session };
   }
 
+  const accountId = metadata.accountId;
+  const existing = await getAccountById(env.APP_DB, accountId);
+  if (existing === null) {
+    throw Errors.notFound("ACCOUNT_NOT_FOUND", "account not found");
+  }
   try {
-    await insertCredential(env.APP_DB, {
-      id: crypto.randomUUID(),
-      accountId,
-      credentialId: registrationInfo.credential.id,
-      publicKey: registrationInfo.credential.publicKey,
-      signCount: registrationInfo.credential.counter,
-      transports: registrationInfo.credential.transports ?? null,
-      deviceType: registrationInfo.credentialDeviceType,
-      backedUp: registrationInfo.credentialBackedUp,
-      createdAt: nowIso,
-    });
+    await insertCredential(env.APP_DB, { ...newCredential, accountId });
   } catch (error) {
     console.error("credential insert failed", error);
     throw Errors.conflict("CREDENTIAL_ALREADY_REGISTERED", "this passkey is already registered");
   }
 
-  const account: Account = { id: accountId, displayName };
-  const session = isNewAccount ? await createSession(env, accountId, userAgent) : null;
-  return { account, session };
+  return { account: { id: accountId, displayName: existing.displayName }, session: null };
 }
 
 const AUTHENTICATION_TIMEOUT_MS = 60_000;

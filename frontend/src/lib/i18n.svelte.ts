@@ -72,6 +72,7 @@ export interface Messages {
   register_display_name_placeholder: string;
   register_submit: string;
   register_failed: string;
+  register_logged_in_conflict: (displayName: string) => string;
 
   library_loading: string;
   library_load_failed: string;
@@ -190,6 +191,7 @@ export const I18N: Record<Lang, Messages> = {
     register_display_name_placeholder: "例：Haruki",
     register_submit: "パスキーを登録する",
     register_failed: "登録に失敗しました。招待リンクの有効期限が切れている可能性があります。",
+    register_logged_in_conflict: (displayName) => `現在 ${displayName} でログイン中です。新しいアカウントを作成するには先にログアウトしてください。`,
 
     library_loading: "読み込み中…",
     library_load_failed: "ライブラリの取得に失敗しました。",
@@ -306,6 +308,7 @@ export const I18N: Record<Lang, Messages> = {
     register_display_name_placeholder: "e.g. Haruki",
     register_submit: "Register passkey",
     register_failed: "Registration failed. The invite link may have expired.",
+    register_logged_in_conflict: (displayName) => `You're currently logged in as ${displayName}. To create a new account, please log out first.`,
 
     library_loading: "Loading…",
     library_load_failed: "Failed to load your library.",

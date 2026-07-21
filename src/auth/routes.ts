@@ -117,6 +117,12 @@ export function registerAuthRoutes(router: Router): void {
   });
 
   router.post("/api/auth/registration/verify", async (request, env) => {
+    // Origin/Sec-Fetch-Site check even though no session exists yet: a
+    // completed ceremony here still *establishes* one (session-fixation /
+    // login-CSRF — plan §5.1's CSRF coverage was scoped to "変更系Cookie認証
+    // API", but a cross-site POST of a self-completed WebAuthn ceremony would
+    // otherwise silently log the victim into the attacker's account).
+    requireCsrf(request, env);
     const limited = await rateLimited(request, env);
     if (limited !== null) {
       return limited;
@@ -154,6 +160,9 @@ export function registerAuthRoutes(router: Router): void {
   });
 
   router.post("/api/auth/login/verify", async (request, env) => {
+    // Same login-CSRF defense as registration/verify above: this route also
+    // establishes a session (Set-Cookie) despite requiring no prior one.
+    requireCsrf(request, env);
     const body = await readJsonBody(request);
     const { response } = body;
     if (typeof response !== "object" || response === null) {

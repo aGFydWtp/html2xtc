@@ -199,9 +199,21 @@ export async function softDeleteLibraryItem(
   return (result.meta.changes ?? 0) > 0;
 }
 
-/** Removes itemId from every device's assigned list (plan §9.2 delete step 2). */
-export async function removeItemFromAllDeviceLibraries(db: D1Database, itemId: string): Promise<void> {
-  await db.prepare(`DELETE FROM device_library_items WHERE library_item_id = ?`).bind(itemId).run();
+/**
+ * Removes itemId from every device's assigned list (plan §9.2 delete step
+ * 2), returning the distinct device_ids it was actually assigned to so the
+ * caller (src/library/service.ts's deleteLibrary) can bump each of those
+ * devices' library_version — otherwise a DeviceLibraryEditor left open on
+ * one of them would keep offering a stale version number and never see the
+ * removal reflected as a 409 (plan §7.2's optimistic-lock contract assumes
+ * every device_library_items change bumps the version).
+ */
+export async function removeItemFromAllDeviceLibraries(db: D1Database, itemId: string): Promise<string[]> {
+  const { results } = await db
+    .prepare(`DELETE FROM device_library_items WHERE library_item_id = ? RETURNING device_id`)
+    .bind(itemId)
+    .all<{ device_id: string }>();
+  return [...new Set(results.map((row) => row.device_id))];
 }
 
 /** Physically removes the library_items row. Only call once the R2 object is confirmed deleted (plan §9.2 step 4). */

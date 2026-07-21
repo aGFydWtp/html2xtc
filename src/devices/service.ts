@@ -234,6 +234,12 @@ export async function replaceDeviceLibrary(
   request: ReplaceDeviceLibraryRequest,
 ): Promise<DeviceLibraryDto> {
   const device = await requireOwnedDevice(env, account, deviceId);
+  if (device.status !== "active") {
+    // A revoked device can never authenticate to fetch its OPDS feed again,
+    // so editing its delivery list is a no-op the UI shouldn't offer —
+    // same "revoked means frozen" rule as rotateDeviceToken above.
+    throw Errors.conflict("DEVICE_REVOKED", "device is revoked");
+  }
 
   if (!Number.isInteger(request.expectedVersion) || request.expectedVersion < 1) {
     throw Errors.badRequest("INVALID_VERSION", "expectedVersion must be a positive integer");

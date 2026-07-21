@@ -215,6 +215,16 @@ class DevicesStore {
       return false;
     }
   }
+
+  /**
+   * Clears cached state so the next login re-fetches from scratch — same
+   * rationale as libraryStore.reset() (frontend/src/lib/library.svelte.ts),
+   * called by authStore on logout and on every successful login/register.
+   */
+  reset(): void {
+    this.devices = [];
+    this.loadState = "idle";
+  }
 }
 
 export const devicesStore = new DevicesStore();

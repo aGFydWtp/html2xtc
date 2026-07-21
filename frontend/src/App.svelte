@@ -18,7 +18,23 @@
   import { t } from "./lib/i18n.svelte";
 
   type Tab = "convert" | "library" | "devices";
-  let tab = $state<Tab>("convert");
+
+  // パス⇔タブ対応表（History API ベースのルーティング）。
+  const PATH_TO_TAB: Record<string, Tab> = { "/": "convert", "/library": "library", "/devices": "devices" };
+  const TAB_TO_PATH: Record<Tab, string> = { convert: "/", library: "/library", devices: "/devices" };
+
+  function tabFromPath(pathname: string): Tab {
+    const p = pathname.replace(/\/+$/, "") || "/";
+    return PATH_TO_TAB[p] ?? "convert";
+  }
+
+  let tab = $state<Tab>(tabFromPath(location.pathname));
+
+  function selectTab(next: Tab) {
+    if (tab === next) return;
+    tab = next;
+    history.pushState(null, "", TAB_TO_PATH[next] + location.search + location.hash);
+  }
 
   // ?register=<token> はパスキー新規登録ダイアログを、?pair=<userCode> は端末
   // ペアリング承認ダイアログを開く（実装計画 §6 / §14）。両方とも起動後は
@@ -38,18 +54,25 @@
         params.delete("register");
         params.delete("pair");
         const qs = params.toString();
-        history.replaceState(null, "", location.pathname + (qs ? `?${qs}` : "") + location.hash);
+        const path = pairCode ? "/devices" : location.pathname;
+        history.replaceState(null, "", path + (qs ? `?${qs}` : "") + location.hash);
       }
     });
+
+    const onPopState = () => {
+      tab = tabFromPath(location.pathname);
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
   });
 </script>
 
 <main>
   <Header />
   <div class="tabs" role="tablist">
-    <button type="button" role="tab" aria-selected={tab === "convert"} onclick={() => (tab = "convert")}>{t("tab_convert")}</button>
-    <button type="button" role="tab" aria-selected={tab === "library"} onclick={() => (tab = "library")}>{t("tab_library")}</button>
-    <button type="button" role="tab" aria-selected={tab === "devices"} onclick={() => (tab = "devices")}>{t("tab_devices")}</button>
+    <button type="button" role="tab" aria-selected={tab === "convert"} onclick={() => selectTab("convert")}>{t("tab_convert")}</button>
+    <button type="button" role="tab" aria-selected={tab === "library"} onclick={() => selectTab("library")}>{t("tab_library")}</button>
+    <button type="button" role="tab" aria-selected={tab === "devices"} onclick={() => selectTab("devices")}>{t("tab_devices")}</button>
   </div>
   {#if tab === "convert"}
     <ConvertForm />

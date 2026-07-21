@@ -167,7 +167,7 @@ export const I18N: Record<Lang, Messages> = {
     pdf_too_large: "生成された PDF がサイズ上限を超えました。「レイアウトを保持して変換する」を有効にすると変換できる場合があります。",
     aozora_open: "青空文庫から選択",
     aozora_title: "青空文庫から選択",
-    aozora_hint: "タイトル・作者名で検索できます",
+    aozora_hint: "タイトル・作者名で検索",
     cancel: "キャンセル",
     aozora_start: "作品名か作者名を入力してください。",
     aozora_searching: "検索中…",

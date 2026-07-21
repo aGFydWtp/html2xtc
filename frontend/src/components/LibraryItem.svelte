@@ -7,8 +7,11 @@
 
   interface Props {
     item: LibraryItem;
+    selected: boolean;
+    selectDisabled: boolean;
+    onToggleSelect: () => void;
   }
-  const { item }: Props = $props();
+  const { item, selected, selectDisabled, onToggleSelect }: Props = $props();
 
   let editing = $state(false);
   // 編集開始時に startEdit() で必ず上書きするため、ここでの初期値は
@@ -53,6 +56,15 @@
       <button type="button" class="text-btn primary" disabled={busy || !titleInput.trim()} onclick={() => void saveEdit()}>{t("save")}</button>
     </div>
   {:else}
+    <label class="select">
+      <input
+        type="checkbox"
+        checked={selected}
+        disabled={selectDisabled}
+        aria-label={t("library_select_item")(item.title)}
+        onchange={onToggleSelect}
+      />
+    </label>
     <div class="info">
       <div class="title">{item.title}</div>
       <div class="meta">
@@ -74,6 +86,10 @@
 <style>
   .library-item { display: flex; align-items: center; gap: 14px; padding: 14px 0; }
   .library-item.editing { flex-direction: column; align-items: stretch; gap: 8px; }
+  /* タップターゲット確保: label の padding で当たり判定を広げつつ、行の高さは margin で相殺 */
+  .select { display: flex; align-items: center; padding: 12px; margin: -12px -6px -12px -12px; cursor: pointer; }
+  .select input { width: 18px; height: 18px; margin: 0; accent-color: var(--ink); cursor: pointer; }
+  .select input:disabled { cursor: default; }
   .info { flex: 1; min-width: 0; }
   .info .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
   .info .meta { display: flex; gap: 10px; flex-wrap: wrap; font-family: var(--mono); font-size: 14px; color: var(--faint); margin-top: 4px; }

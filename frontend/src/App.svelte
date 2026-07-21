@@ -24,7 +24,8 @@
   const TAB_TO_PATH: Record<Tab, string> = { convert: "/", library: "/library", devices: "/devices" };
 
   function tabFromPath(pathname: string): Tab {
-    return PATH_TO_TAB[pathname] ?? "convert";
+    const p = pathname.replace(/\/+$/, "") || "/";
+    return PATH_TO_TAB[p] ?? "convert";
   }
 
   let tab = $state<Tab>(tabFromPath(location.pathname));

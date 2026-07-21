@@ -136,9 +136,9 @@
 		// `wrangler deploy`; served directly by the edge without invoking
 		// the Worker.
 		"directory": "./frontend/dist",
-		// History API ルーティング（frontend/src/App.svelte）で /library・/devices
-		// に直接アクセス/リロードされても index.html を返し、クライアント側で
-		// タブを解決させるため。
+		// History API routing (frontend/src/App.svelte): fall back to
+		// index.html on direct access/reload of /library and /devices so the
+		// client can resolve the tab itself.
 		"not_found_handling": "single-page-application",
 		// API paths always hit the Worker first, even if an asset with the
 		// same name ever appears under frontend/dist/.

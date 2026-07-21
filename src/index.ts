@@ -12,11 +12,14 @@ import { cleanupAppDb } from "./db/cleanup";
 import { registerDeviceRoutes } from "./devices/routes";
 import { prepareRenderInput } from "./extract";
 import {
+  articleHtmlKey,
   decideMissingDownload,
   inputPdfKey,
+  inputTextKey,
   intermediatePdfKey,
   mapInstanceStatus,
   mapPdfInstanceStatus,
+  mapTextInstanceStatus,
   needsPhaseProbe,
   outputXtcKey,
   resolveMaxPdfBytes,
@@ -38,6 +41,13 @@ import { enforceRateLimit } from "./ratelimiter";
 import { Router } from "./router";
 import { newRequestId, withSecurityHeaders } from "./security/headers";
 import { isAozoraBunkoUrl, resolveRenderOptions } from "./sitepresets";
+import {
+  decodeTextFilenameHeader,
+  isAllowedTextContentType,
+  saveUploadedText,
+} from "./text-upload";
+import { MAX_TEXT_FILE_BYTES } from "./text-normalize";
+import { decodeTextOptionsHeader } from "./text-options";
 import type { AozoraCatalogSyncParams, ConvertJobParams, ConvertMode, Env } from "./types";
 import { UrlValidationError, validatePublicUrl } from "./validate";
 
@@ -160,6 +170,17 @@ async function route(request: Request, env: Env): Promise<Response> {
       return methodNotAllowed("POST");
     }
     return handleCreatePdfJob(request, env);
+  }
+
+  // Same reasoning as /jobs/pdf above: must come before /jobs/:jobId, and
+  // the rate limit is applied inside handleCreateTextJob (after its own
+  // cheap Content-Type/Content-Length checks) rather than at dispatch here
+  // (text-upload spec §13.1).
+  if (pathname === "/jobs/text") {
+    if (request.method !== "POST") {
+      return methodNotAllowed("POST");
+    }
+    return handleCreateTextJob(request, env);
   }
 
   if (pathname === "/api/books") {
@@ -426,6 +447,88 @@ async function handleCreatePdfJob(request: Request, env: Env): Promise<Response>
   return Response.json({ jobId, statusUrl: `/jobs/${jobId}` }, { status: 202 });
 }
 
+/**
+ * POST /jobs/text handler (text-upload spec §11/§13.1 order): Content-Type
+ * -> Content-Length -> rate limit -> X-File-Name -> X-Text-Options -> jobId
+ * -> stream request.body into R2 (never request.arrayBuffer(), spec §13.3,
+ * via saveUploadedText) -> create the Workflow -> 202. Mirrors
+ * handleCreatePdfJob's structure and its "rate limit after the cheap header
+ * checks" ordering.
+ */
+async function handleCreateTextJob(request: Request, env: Env): Promise<Response> {
+  if (!isAllowedTextContentType(request.headers.get("Content-Type"))) {
+    return Response.json(
+      { error: "Content-Type must be text/plain or application/octet-stream" },
+      { status: 415 },
+    );
+  }
+
+  const lengthCheck = checkContentLength(request.headers.get("Content-Length"), MAX_TEXT_FILE_BYTES);
+  if (lengthCheck.kind === "missing") {
+    return Response.json({ error: "Content-Length is required" }, { status: 411 });
+  }
+  if (lengthCheck.kind === "invalid") {
+    return Response.json(
+      { error: "Content-Length must be a positive integer" },
+      { status: 400 },
+    );
+  }
+  if (lengthCheck.kind === "too-large") {
+    return Response.json(
+      { error: `uploaded text file exceeds the ${MAX_TEXT_FILE_BYTES} byte limit` },
+      { status: 413 },
+    );
+  }
+
+  const limited = await enforceRateLimit(request, env);
+  if (limited) {
+    return limited;
+  }
+
+  const filename = decodeTextFilenameHeader(request.headers.get("X-File-Name"));
+
+  const optionsResult = decodeTextOptionsHeader(request.headers.get("X-Text-Options"));
+  if (!optionsResult.ok) {
+    return Response.json({ error: optionsResult.error }, { status: 400 });
+  }
+  const textOptions = optionsResult.options;
+
+  if (request.body === null) {
+    return Response.json({ error: "request body is required" }, { status: 400 });
+  }
+
+  const jobId = crypto.randomUUID();
+  const key = inputTextKey(jobId);
+  const declaredSize = lengthCheck.length;
+
+  const saveResult = await saveUploadedText(env, key, request.body, declaredSize, filename);
+  if (!saveResult.ok) {
+    return Response.json({ error: saveResult.error }, { status: saveResult.status });
+  }
+
+  const params: ConvertJobParams = {
+    source: { kind: "text", key, filename, size: declaredSize },
+    textOptions,
+  };
+
+  try {
+    await env.CONVERT_WORKFLOW.create({
+      id: jobId,
+      params,
+      retention: {
+        successRetention: "1 day",
+        errorRetention: "1 day",
+      },
+    });
+  } catch (error) {
+    console.error(`[${jobId}] workflow create failed`, error);
+    await deleteBestEffort(env, key);
+    return Response.json({ error: "failed to create job" }, { status: 500 });
+  }
+
+  return Response.json({ jobId, statusUrl: `/jobs/${jobId}` }, { status: 202 });
+}
+
 async function handleJobStatus(jobId: string, env: Env): Promise<Response> {
   if (!UUID_PATTERN.test(jobId)) {
     return Response.json({ error: "jobId must be a UUID" }, { status: 400 });
@@ -482,14 +585,29 @@ async function handleJobDownload(jobId: string, env: Env): Promise<Response> {
 /**
  * Maps an instance status to the API body. For the running family this
  * probes R2: first for the uploaded-PDF input (PDF jobs — no rendering
- * phase, see mapPdfInstanceStatus), then, only if that's absent, for the
- * intermediate PDF that tells a URL job's rendering from converting. A PDF
- * job whose input was already deleted (the brief window between the
- * Workflow's delete-uploaded-pdf step and its status turning "complete")
- * falls through to the same intermediate-PDF probe as a URL job; since
- * neither PDF exists at that point it reports "rendering" for that instant
- * — an accepted, self-correcting edge case (see
- * claudedocs/pdf-upload-investigation.md §5.5).
+ * phase, see mapPdfInstanceStatus), then for the uploaded-TXT input (TXT
+ * jobs — three phases, see mapTextInstanceStatus), then, only if both are
+ * absent, for the intermediate PDF that tells a URL job's rendering from
+ * converting. A PDF/TXT job whose input was already deleted (the brief
+ * window between the Workflow's delete step and its status turning
+ * "complete") falls through to the same intermediate-PDF probe as a URL job;
+ * since no PDF exists yet at that point it reports "rendering" for that
+ * instant — an accepted, self-correcting edge case (see
+ * claudedocs/pdf-upload-investigation.md §5.5, which applies identically
+ * here).
+ *
+ * All four R2 heads (input PDF, input TXT, article HTML, intermediate PDF)
+ * are fired concurrently via Promise.all rather than awaited one at a time:
+ * the decision logic below still applies them in the same PDF -> TXT -> URL
+ * priority order and only *uses* the article/intermediate results when a TXT
+ * (or URL) job actually needs them, but paying for up to 4 sequential R2
+ * round-trips per status poll (see claudedocs/text-upload-investigation.md
+ * §1.4) was an avoidable latency cost once none of the probes actually
+ * depend on each other's result.
+ *
+ * TODO: before adding another input format (which would mean a 5th+ R2 head
+ * fired on every poll), replace this per-key R2 fan-out with an explicit
+ * job-kind metadata read instead of growing this probe set further.
  */
 async function mapWithPhaseProbe(
   jobId: string,
@@ -499,11 +617,22 @@ async function mapWithPhaseProbe(
   if (!needsPhaseProbe(status.status)) {
     return mapInstanceStatus(jobId, status, false);
   }
-  const hasInputPdf = (await env.XTC_BUCKET.head(inputPdfKey(jobId))) !== null;
+  const [hasInputPdf, hasInputText, hasArticle, hasIntermediatePdf] = await Promise.all([
+    env.XTC_BUCKET.head(inputPdfKey(jobId)).then((object) => object !== null),
+    env.XTC_BUCKET.head(inputTextKey(jobId)).then((object) => object !== null),
+    env.XTC_BUCKET.head(articleHtmlKey(jobId)).then((object) => object !== null),
+    env.XTC_BUCKET.head(intermediatePdfKey(jobId)).then((object) => object !== null),
+  ]);
   if (hasInputPdf) {
     return mapPdfInstanceStatus(jobId, status);
   }
-  const hasIntermediatePdf = (await env.XTC_BUCKET.head(intermediatePdfKey(jobId))) !== null;
+  if (hasInputText) {
+    return mapTextInstanceStatus(
+      jobId,
+      status,
+      !hasArticle ? "preparing" : hasIntermediatePdf ? "converting" : "rendering",
+    );
+  }
   return mapInstanceStatus(jobId, status, hasIntermediatePdf);
 }
 

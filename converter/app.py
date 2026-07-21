@@ -16,6 +16,7 @@ Error responses carry generic JSON messages; xtctool stderr and tracebacks go
 to the process log only.
 """
 
+import base64
 import json
 import logging
 import os
@@ -142,6 +143,20 @@ class ConversionError(Exception):
 MAX_TITLE_CHARS = 100
 
 
+def decode_base64url_utf8(value: str) -> str:
+    """Decodes a base64url (no padding) UTF-8 header value, matching
+    src/base64url.ts#encodeBase64Url's encoding on the Worker side. Fail-soft
+    to "" on any malformed input (bad alphabet, wrong padding, invalid UTF-8)
+    -- metadata like the author name must never block a conversion the same
+    way a missing/garbled title never does."""
+    try:
+        padding = "=" * (-len(value) % 4)
+        raw = base64.urlsafe_b64decode(value + padding)
+        return raw.decode("utf-8")
+    except Exception:  # noqa: BLE001 - malformed header, not fatal
+        return ""
+
+
 def sanitize_title(raw: str) -> str:
     """Collapse whitespace/control characters in a PDF-metadata-sourced title
     and cap its length. Shared by the trusted /convert path (read_pdf_metadata
@@ -188,12 +203,24 @@ def _toml_value(value) -> str:
     raise ValueError(f"unsupported TOML value type: {type(value).__name__}")
 
 
-def config_with_title(title: str) -> str:
-    """TOML text of CONFIG_PATH with [output].title overridden, so xtctool
-    embeds the page title into the XTC container metadata."""
+def config_with_title_author(title: str, author: str = "") -> str:
+    """TOML text of CONFIG_PATH with [output].title (and, when given,
+    [output].author) overridden, so xtctool embeds them into the XTC
+    container metadata.
+
+    author defaults to "" and, when empty, is left untouched -- CONFIG_PATH's
+    own [output].author (config-x3.toml: "") governs, exactly as before this
+    parameter existed. This keeps /convert's existing callers (Browser-Run
+    PDFs from URL conversions, which never have an author) byte-for-byte
+    unaffected; only the TXT-upload pipeline (src/workflow.ts, via the
+    X-Xtc-Author request header decoded in _handle_convert below) ever passes
+    a non-empty author."""
     with open(CONFIG_PATH, "rb") as f:
         config = tomllib.load(f)
-    config.setdefault("output", {})["title"] = title
+    output = config.setdefault("output", {})
+    output["title"] = title
+    if author:
+        output["author"] = author
     lines = []
     for table, values in config.items():
         lines.append(f"[{table}]")
@@ -201,6 +228,13 @@ def config_with_title(title: str) -> str:
             lines.append(f"{key} = {_toml_value(value)}")
         lines.append("")
     return "\n".join(lines)
+
+
+def config_with_title(title: str) -> str:
+    """Backward-compatible alias for config_with_title_author(title, "").
+    Kept as its own name since it is part of this module's tested surface
+    (test/converter/test_app.py)."""
+    return config_with_title_author(title)
 
 
 def _run_xtctool(
@@ -258,6 +292,7 @@ def convert_pdf(
     title: str = "",
     timeout_seconds: int = CONVERT_TIMEOUT_SECONDS,
     page_count: int | None | object = _UNCOUNTED,
+    author: str = "",
 ) -> bytes:
     """Run xtctool over the given PDF bytes and return the XTC bytes.
 
@@ -266,7 +301,12 @@ def convert_pdf(
     container, keeping peak memory proportional to the chunk size instead of
     the full document (xtctool preloads every selected page as a PIL image).
     The repacked output is byte-identical to a single-pass conversion.
-    timeout_seconds is the total budget across all chunks plus the repack."""
+    timeout_seconds is the total budget across all chunks plus the repack.
+
+    author is only ever non-empty for the TXT-upload pipeline (see
+    _handle_convert's X-Xtc-Author handling below) -- the trusted /convert
+    path has no other source for it, unlike title (read from the PDF's own
+    metadata)."""
     deadline = time.monotonic() + timeout_seconds
     with tempfile.TemporaryDirectory() as workdir:
         pdf_path = Path(workdir) / "source.pdf"
@@ -274,9 +314,9 @@ def convert_pdf(
         pdf_path.write_bytes(pdf_bytes)
 
         config_path = CONFIG_PATH
-        if title:
+        if title or author:
             try:
-                merged = config_with_title(title)
+                merged = config_with_title_author(title, author)
             except Exception:  # noqa: BLE001 - metadata must never block conversion
                 logger.exception("config title merge failed; using base config")
             else:
@@ -450,11 +490,21 @@ class Handler(BaseHTTPRequestHandler):
             # the slot until it returns. Acceptable here because the input is
             # always a PDF we rendered ourselves via Chromium, not arbitrary
             # client bytes.
+            # X-Xtc-Author (spec: text-upload §16/§10): only ever sent by the
+            # TXT-upload pipeline (src/workflow.ts), base64url UTF-8 encoded
+            # like X-Pdf-Options/X-Source-Filename on the uploaded-pdf path.
+            # Absent for every other /convert caller, which is the pre-
+            # existing behavior (author stays config-x3.toml's own "").
+            raw_author = self.headers.get("X-Xtc-Author")
+            author = decode_base64url_utf8(raw_author) if raw_author else ""
+
             with CONVERSION_SLOTS:
                 # Single pymupdf pass supplies both the title and the page
                 # count convert_pdf uses for its chunking decision.
                 title, page_count = read_pdf_metadata(pdf_bytes)
-                xtc_bytes = convert_pdf(pdf_bytes, title, timeout_seconds, page_count)
+                xtc_bytes = convert_pdf(
+                    pdf_bytes, title, timeout_seconds, page_count, author
+                )
         except ConversionError as exc:
             logger.error("conversion failed: %s; stderr: %s", exc, exc.stderr)
             self._send_json(500, {"error": str(exc)})

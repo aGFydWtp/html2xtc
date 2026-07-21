@@ -39,11 +39,11 @@ Worker
 
 ## 認証
 
-認証は設けていない（一般公開）。API（`/convert` `/jobs` `/jobs/pdf` `/download`）・WebUI とも誰でも利用できる。悪用対策はレート制限（次節）と URL 検証（SSRF 対策）で行う。
+認証は設けていない（一般公開）。API（`/convert` `/jobs` `/jobs/pdf` `/jobs/text` `/download`）・WebUI とも誰でも利用できる。悪用対策はレート制限（次節）と URL 検証（SSRF 対策）で行う。
 
 ## レート制限
 
-変換を起動するエンドポイント（`POST /convert`・`POST /jobs`・`POST /jobs/pdf`）は IP ごとに **1 時間あたり 50 件**（固定窓、Worker の var `RATE_LIMIT_PER_HOUR` で変更可）に制限する（`src/ratelimit.ts` / `src/ratelimiter.ts`）。IP は Cloudflare エッジが設定する `CF-Connecting-IP` から取り、IPv6 は /64 プレフィックス単位で数える（プレフィックス内でアドレスを回すすり抜け対策）。超過時は 429 + `Retry-After`（窓リセットまでの秒数）を返す。カウントは IP キーごとの Durable Object が保持し、DO 呼び出しが失敗した場合はブロックせず通す（validate.ts の DoH 障害時と同じ可用性優先）。GET 系（状態確認・ダウンロード）は対象外。
+変換を起動するエンドポイント（`POST /convert`・`POST /jobs`・`POST /jobs/pdf`・`POST /jobs/text`）は IP ごとに **1 時間あたり 50 件**（固定窓、Worker の var `RATE_LIMIT_PER_HOUR` で変更可）に制限する（`src/ratelimit.ts` / `src/ratelimiter.ts`）。IP は Cloudflare エッジが設定する `CF-Connecting-IP` から取り、IPv6 は /64 プレフィックス単位で数える（プレフィックス内でアドレスを回すすり抜け対策）。超過時は 429 + `Retry-After`（窓リセットまでの秒数）を返す。カウントは IP キーごとの Durable Object が保持し、DO 呼び出しが失敗した場合はブロックせず通す（validate.ts の DoH 障害時と同じ可用性優先）。GET 系（状態確認・ダウンロード）は対象外。
 
 ## API
 
@@ -85,7 +85,7 @@ Worker
 { "jobId": "<uuid>", "status": "converting" }
 ```
 
-- `status`: URL ジョブは `queued` → `rendering` → `converting` → `completed` | `failed`。PDF ジョブ（下記 `POST /jobs/pdf`）には Browser Run による PDF 生成（rendering）が無いため `queued` → `converting` → `completed` | `failed` のみを取る。
+- `status`: URL ジョブは `queued` → `rendering` → `converting` → `completed` | `failed`。PDF ジョブ（下記 `POST /jobs/pdf`）には Browser Run による PDF 生成（rendering）が無いため `queued` → `converting` → `completed` | `failed` のみを取る。TXT ジョブ（下記 `POST /jobs/text`）は本文組版フェーズが独立してあるため `queued` → `preparing` → `rendering` → `converting` → `completed` | `failed` を取る。
 - `completed` 時は `downloadUrl`（`/jobs/{jobId}/download`）付き、`failed` 時は `error`（メッセージ）付き。PDF ジョブの失敗は原因を問わず一般化した文言（例: `"invalid or unsupported PDF"`, `"XTC conversion failed"`）のみを返し、PyMuPDF/xtctool 側の詳細はログにのみ記録する。
 - `rendering`/`converting` の区別は R2 上の中間 PDF（`intermediate/{jobId}/source.pdf`）の有無から導出する（Workflows の status() は実行中ステップ名を返さないため）。同じ仕組みで、まず入力アップロード PDF（`input/{jobId}/source.pdf`）の有無を見て PDF ジョブかどうかを判定し、PDF ジョブなら常に `converting` を返す（`src/jobs.ts` の `mapPdfInstanceStatus`）。
 - jobId が UUID 形式でなければ 400、不明・Workflows インスタンスの保持期限切れ（`retention` 指定により成功・失敗とも約 1 日）なら 404。なお成果物 XTC 自体は R2 lifecycle により約 24 時間で削除される（ダウンロード側で 404）。
@@ -132,6 +132,49 @@ X-Pdf-Options: <PdfConvertOptions の JSON を base64url エンコード>
 裏側は `POST /jobs` と同じ Cloudflare Workflow（`ConvertWorkflow`）の PDF 用分岐（`source.kind === "pdf"`）。extract-content・render-pdf ステップは skip し、`convert-uploaded-pdf` ステップ（2 回まで再試行、タイムアウト 12 分）で入力 PDF を Container の `POST /convert/uploaded-pdf` へストリーム転送する。暗号化 PDF・破損 PDF・ページ範囲/選択ページ数の不正・非 PDF・サイズ上限超過・変換タイムアウトは再試行なしで即 `failed`（同じ入力を再試行しても結果が変わらないため）。入力 PDF は成功・失敗を問わず最後に best-effort で削除する（削除に失敗しても `input/` の R2 lifecycle により約 1 日で自動削除される）。
 
 **対応しないもの（MVP）**: PDF 内テキストの再構成・フォント/文字サイズ/行間の変更・横書き⇄縦書きの再組版・OCR・パスワード付き/暗号化 PDF・ページごとの個別設定・見開き分割・変換開始後のジョブキャンセル・48 MiB を超えるアップロード。
+
+### POST /jobs/text
+
+手元のプレーンテキスト（.txt）ファイルをアップロードし、読書向けに再組版してから非同期変換ジョブを作成する（`frontend/` の TXT アップロード UI から使用）。本文は常にプレーンテキストとして扱い、HTML/Markdown としては一切解釈しない（`<script>`・`#見出し`・`**強調**` 等はすべてそのまま文字として表示する）。
+
+```http
+POST /jobs/text
+Content-Type: text/plain
+Content-Length: <bytes>
+X-File-Name: <UTF-8 ファイル名を base64url エンコード>
+X-Text-Options: <TextConvertOptions の JSON を base64url エンコード>
+
+<TXT バイト列>
+```
+
+- `Content-Type`: `text/plain` または `application/octet-stream`（メディアタイプパラメータは無視）のみ許可。それ以外は 415。バイナリ判定・文字コード検証自体は Workflow 側（下記 `prepare-text` ステップ）で行う — Worker 受付時は本文を一切バッファしない（後述）ため、ここでは実施できない。
+- `Content-Length`: 必須（未指定は 411）。0 以下・非数値は 400。上限（5 MiB = 5,242,880 バイト固定）超過は 413。
+- `X-File-Name`（任意）: `POST /jobs/pdf` と同じ規則（制御文字・パス区切り除去、NFC 正規化、255 文字まで切り詰め、空なら `document.txt`、拡張子が無ければ `.txt` を付与）。デコード失敗時も 400 にはせず既定ファイル名へフォールバックする。表示・XTC タイトル候補にのみ使う。
+- `X-Text-Options`（任意）: `TextConvertOptions`（文字コード指定・横書き/縦書き・フォント・文字サイズ・行間・段落間隔・余白・文字揃え・空行上限・空白保持・ページ番号・表題・著者。既定値・各項目の制約は `src/text-options.ts` の `DEFAULT_TEXT_OPTIONS`/`validateTextConvertOptions` を参照）を JSON 化して base64url エンコードした値。省略時は既定値を使う。デコード失敗・JSON 不正・スキーマ違反（値の暗黙補正はしない）はいずれも 400。
+- リクエストボディは Worker 側で `ArrayBuffer` へ全量展開せず、ストリームのまま R2（`input/{jobId}/source.txt`）へ保存する。保存後に R2 オブジェクトサイズと申告 `Content-Length` を比較し、不一致なら入力を削除して 400（Workflow は開始しない）。
+
+成功時 202:
+
+```json
+{ "jobId": "<uuid>", "statusUrl": "/jobs/<uuid>" }
+```
+
+| ステータス | 意味 |
+|---:|---|
+| 400 | `Content-Length` が 0 以下/非数値、`X-Text-Options` のデコード・JSON・スキーマ検証失敗、保存後サイズ不一致 |
+| 411 | `Content-Length` 未指定 |
+| 413 | 申告サイズが上限超過 |
+| 415 | `Content-Type` が `text/plain`/`application/octet-stream` 以外 |
+| 429 | IP ごとのレート制限超過（`POST /convert`・`POST /jobs`・`POST /jobs/pdf` と共通の窓。`Retry-After` ヘッダ付き） |
+| 500 | R2 保存失敗、または Workflow インスタンス作成失敗（いずれの場合も保存済み入力 TXT は best-effort で削除する） |
+
+裏側は `POST /jobs` と同じ Cloudflare Workflow（`ConvertWorkflow`）の TXT 用分岐（`source.kind === "text"`）。`prepare-text`（文字コード判定・デコード・バイナリ判定・文字数/行数/行長検証・正規化・読書用 HTML 生成・フォント CSS 生成）→ `render-text-pdf`（528×792 固定ページで PDF 生成。既存の URL/PDF 経路が使う `buildPrintRules` は注入しない — TXT の可変フォントサイズ・余白と衝突するため、HTML 自身の `<style>` とフォント CSS のみを使う専用レンダラーを使用）→ `convert-xtc`（既存の trusted `/convert` 経路をそのまま利用。表題は生成 HTML の `<title>` から Chromium の print-to-PDF メタデータ経由で既存どおり伝わるが、著者名だけは PDF メタデータに乗らないため `X-Xtc-Author` ヘッダで別途 Container へ伝える）の順に実行する。入力 TXT・中間 HTML・フォント CSS・中間 PDF はいずれも成功・失敗を問わず最後に best-effort で削除する（削除に失敗しても `input/`・`intermediate/` の R2 lifecycle により約 1 日で自動削除される）。
+
+**対応文字コード**: UTF-8・UTF-8 BOM・Shift_JIS/Windows-31J（内部的には CP932 としてデコード）。UTF-16・EUC-JP・ISO-2022-JP は非対応（UTF-16 BOM 検出時は明示的に拒否）。`encoding: "auto"` は UTF-8 の厳密デコードを先に試し、失敗した場合のみ CP932 へフォールバックする（`encoding-japanese` を固定バージョンで同梱。workerd の `TextDecoder("shift_jis")` には依存しない）。
+
+**上限**: ファイルサイズ 5 MiB・文字数 2,000,000・行数 200,000・1 行あたり 100,000 文字・生成 HTML 12 MiB。いずれかを超えると Workflow が `failed` になり、エラーメッセージから条件（文字コード不明・UTF-16・バイナリ・文字数超過・行数超過・空ファイル・変換後 PDF サイズ超過・変換失敗）を区別できる（`src/text-upload.ts` の `textPrepareErrorMessage`）。
+
+**対応しないもの（MVP）**: Markdown/HTML の解釈・青空文庫注記・ルビ/傍点/脚注/目次・OCR・画像埋め込み・外部画像/外部 CSS/外部 JavaScript の参照・複数 TXT の結合・ページ単位の個別書式・変換開始後のジョブキャンセル。
 
 ### POST /convert（短ページ用・非推奨。/jobs 推奨）
 
@@ -184,9 +227,12 @@ R2 上の XTC を `application/octet-stream` + `Content-Length` + `Content-Dispo
 | 生成 PDF の上限（Worker） | 48 MiB（`wrangler.jsonc` の var `MAX_PDF_BYTES`。コード上の既定は 20 MiB） | Worker の var `MAX_PDF_BYTES`（バイト数） |
 | 受信 PDF の上限（Container、`/convert`） | 50 MiB | Container の env `MAX_PDF_BYTES`（超過は 413） |
 | アップロード PDF の上限（`POST /jobs/pdf`） | 48 MiB（`wrangler.jsonc` の var `MAX_UPLOAD_PDF_BYTES`。`MAX_PDF_BYTES` とは別軸） | Worker の var `MAX_UPLOAD_PDF_BYTES`（バイト数。Container へ `X-Max-Pdf-Bytes` として転送され、Container 側の上限もこれに揃う） |
+| アップロード TXT の上限（`POST /jobs/text`） | 5 MiB（固定） | `src/text-normalize.ts` の `MAX_TEXT_FILE_BYTES`（コード定数、env var 化はしていない） |
+| TXT の文字数・行数・行長上限 | 2,000,000 文字・200,000 行・1 行 100,000 文字 | `src/text-normalize.ts` の `MAX_TEXT_CHARS`/`MAX_TEXT_LINES`/`MAX_LINE_CHARS` |
+| TXT から生成する HTML の上限 | 12 MiB | `src/text-normalize.ts` の `MAX_GENERATED_HTML_BYTES` |
 | xtctool タイムアウト | 600 秒 | Container の env `XTC_TIMEOUT_SECONDS`（`src/container.ts` の `envVars` で設定） |
 | 同時変換数（Container 内） | 2 | Container の env `MAX_CONCURRENT_CONVERSIONS`（Semaphore で制限） |
-| 変換リクエストのレート制限（IP ごと・1 時間固定窓） | 50 件 | Worker の var `RATE_LIMIT_PER_HOUR`（「レート制限」参照。`POST /convert`・`POST /jobs`・`POST /jobs/pdf` 共通） |
+| 変換リクエストのレート制限（IP ごと・1 時間固定窓） | 50 件 | Worker の var `RATE_LIMIT_PER_HOUR`（「レート制限」参照。`POST /convert`・`POST /jobs`・`POST /jobs/pdf`・`POST /jobs/text` 共通） |
 
 ## 青空文庫カタログ同期（D1）
 

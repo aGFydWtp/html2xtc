@@ -3,14 +3,14 @@
 // jobs.svelte.ts（$state を使うストア本体）から分離してあるのは、Svelte の
 // ルーン変換や DOM（localStorage 等）なしにテストできるようにするため。
 
-export type JobSourceType = "url" | "pdf";
+export type JobSourceType = "url" | "pdf" | "txt";
 
 export interface JobEntry {
   jobId: string;
   sourceType: JobSourceType;
-  /** 履歴・現在表示に出す短いラベル。URL ジョブは URL 文字列、PDF ジョブはファイル名。 */
+  /** 履歴・現在表示に出す短いラベル。URL ジョブは URL 文字列、PDF/TXT ジョブはファイル名。 */
   sourceLabel: string;
-  /** URL ジョブでのみ設定される。PDF ジョブには存在しない。 */
+  /** URL ジョブでのみ設定される。PDF/TXT ジョブには存在しない。 */
   url?: string;
   status: string;
   createdAt?: string;
@@ -30,7 +30,7 @@ export function migrateJobEntry(raw: unknown): JobEntry | null {
   const title = typeof j.title === "string" ? j.title : undefined;
   const error = typeof j.error === "string" ? j.error : undefined;
 
-  if (j.sourceType === "url" || j.sourceType === "pdf") {
+  if (j.sourceType === "url" || j.sourceType === "pdf" || j.sourceType === "txt") {
     if (typeof j.sourceLabel !== "string") return null;
     return {
       jobId: j.jobId,

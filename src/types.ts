@@ -3,6 +3,7 @@
 
 import type { XtcConverterContainer } from "./container";
 import type { RateLimiter } from "./ratelimiter";
+import type { TextConvertOptions } from "./text-options";
 
 /**
  * Conversion mode: "full" renders the page as-is (the original behavior);
@@ -21,11 +22,15 @@ export type ConvertLayout = "horizontal" | "vertical";
  * the uploaded PDF (input/{jobId}/source.pdf, src/jobs.ts#inputPdfKey),
  * filename is the sanitized display name from X-File-Name (never a path),
  * size is the declared Content-Length the Worker verified against the
- * stored R2 object.
+ * stored R2 object. "text" is the uploaded-TXT pipeline (POST /jobs/text,
+ * src/text-upload.ts): same key/filename/size shape as "pdf", but the R2
+ * object lives at input/{jobId}/source.txt (src/jobs.ts#inputTextKey) and is
+ * plain-text bytes, never HTML/Markdown-interpreted (text-upload spec §4.1).
  */
 export type ConvertSource =
   | { kind: "url"; url: string }
-  | { kind: "pdf"; key: string; filename: string; size: number };
+  | { kind: "pdf"; key: string; filename: string; size: number }
+  | { kind: "text"; key: string; filename: string; size: number };
 
 /**
  * PDF conversion settings (spec §5.1), applied in the fixed order from spec
@@ -106,6 +111,8 @@ export interface ConvertJobParams {
   font?: string;
   /** PDF conversion settings; only meaningful when source.kind === "pdf". */
   pdfOptions?: PdfConvertOptions;
+  /** Text conversion settings; only meaningful when source.kind === "text". */
+  textOptions?: TextConvertOptions;
 }
 
 /**

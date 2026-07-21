@@ -46,4 +46,41 @@ describe("resolveServerErrorKey", () => {
   it("returns null for unrecognized text so the caller can fall back to the raw string", () => {
     expect(resolveServerErrorKey("some brand-new server message")).toBeNull();
   });
+
+  // TXTアップロード系の対応表は src/text-upload.ts#textPrepareErrorMessage と
+  // src/workflow.ts#runTextSource の実装（バックエンド確定後）に対して突き合わせ
+  // 済み。ここでの文字列は実際に投げられる安定文字列そのもの。
+  it("maps textPrepareErrorMessage()'s stable strings (src/text-upload.ts)", () => {
+    expect(resolveServerErrorKey("text file is empty")).toBe("text_err_empty");
+    expect(resolveServerErrorKey("unable to determine the text encoding")).toBe("text_err_encoding_unknown");
+    expect(resolveServerErrorKey("UTF-16 is not supported; convert the file to UTF-8")).toBe("text_err_utf16");
+    expect(resolveServerErrorKey("uploaded file is not a plain text file")).toBe("text_err_binary");
+    expect(resolveServerErrorKey("text is too long to convert")).toBe("text_err_too_many_chars");
+    expect(resolveServerErrorKey("line count exceeds the limit")).toBe("text_err_too_many_lines");
+    expect(resolveServerErrorKey("a line exceeds the maximum line length")).toBe("text_err_line_too_long");
+  });
+
+  it("maps the upload-time Content-Length size limit message (src/index.ts#handleCreateTextJob)", () => {
+    expect(resolveServerErrorKey("uploaded text file exceeds the 5242880 byte limit")).toBe(
+      "text_err_too_large",
+    );
+  });
+
+  it("maps the TXT-specific rendered-PDF size limit message, distinct from the URL/PDF one", () => {
+    expect(
+      resolveServerErrorKey("rendered PDF exceeds the 50331648 byte limit; reduce the font size or margins"),
+    ).toBe("text_err_pdf_too_large");
+    // Same byte-limit prefix as the URL/PDF-source message, but with a different
+    // suffix ("try a shorter page..." vs "reduce the font size or margins") — must
+    // resolve to the distinct TXT-context key, not pdf_too_large.
+    expect(
+      resolveServerErrorKey(
+        "rendered PDF exceeds the 50331648 byte limit; try a shorter page or the layout-preserving (full) mode",
+      ),
+    ).toBe("pdf_too_large");
+  });
+
+  it("TXT jobs' final XTC-conversion failure reuses the shared generic key (identical string across all sources)", () => {
+    expect(resolveServerErrorKey("XTC conversion failed")).toBe("pdf_err_convert_failed");
+  });
 });

@@ -6,6 +6,7 @@ import type { WorkflowEvent, WorkflowStep } from "cloudflare:workers";
 import { NonRetryableError } from "cloudflare:workflows";
 import { convertInContainer, convertUploadedPdfInContainer } from "./container";
 import { prepareRenderInput } from "./extract";
+import { buildInlineFontCss } from "./fonts";
 import {
   articleHtmlKey,
   fontsCssKey,
@@ -13,7 +14,7 @@ import {
   outputXtcKey,
   resolveMaxPdfBytes,
 } from "./jobs";
-import { renderPdf, renderPdfFromHtml } from "./pdf";
+import { renderPdf, renderPdfFromHtml, renderSelfStyledHtmlPdf } from "./pdf";
 import {
   DEFAULT_PDF_OPTIONS,
   resolveMaxUploadPdfBytes,
@@ -21,6 +22,18 @@ import {
 } from "./pdf-upload";
 import { storeXtcOutput } from "./pipeline";
 import { isAozoraBunkoUrl, resolveRenderOptions } from "./sitepresets";
+import { decodeTextFile } from "./text-decode";
+import { buildTextArticleHtml, resolveDocumentTitle } from "./text-html";
+import {
+  MAX_GENERATED_HTML_BYTES,
+  MAX_TEXT_FILE_BYTES,
+  TextTooLongError,
+  normalizeText,
+  validateTextLimits,
+} from "./text-normalize";
+import { DEFAULT_TEXT_OPTIONS } from "./text-options";
+import type { TextConvertOptions } from "./text-options";
+import { textPrepareErrorMessage } from "./text-upload";
 import type { ConvertJobParams, ConvertSource, Env, PdfConvertOptions } from "./types";
 
 // xtctool may run up to 600s (XTC_TIMEOUT_SECONDS in container.ts); allow a
@@ -78,6 +91,15 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
         jobId,
         source,
         event.payload.pdfOptions ?? DEFAULT_PDF_OPTIONS,
+        step,
+      );
+    }
+
+    if (source.kind === "text") {
+      return await this.runTextSource(
+        jobId,
+        source,
+        event.payload.textOptions ?? DEFAULT_TEXT_OPTIONS,
         step,
       );
     }
@@ -428,6 +450,273 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
           await this.env.XTC_BUCKET.delete(source.key);
         } catch (error) {
           console.error(`[${jobId}] best-effort delete of ${source.key} failed`, error);
+        }
+      });
+    }
+  }
+
+  /**
+   * TXT-upload pipeline (text-upload spec §12.2-§12.6): prepare-text
+   * (decode/validate/normalize/build the reading HTML + font CSS) ->
+   * render-text-pdf (renderSelfStyledHtmlPdf, src/pdf.ts — deliberately NOT
+   * renderPdfFromHtml, see that function's doc comment) -> convert-xtc
+   * (reuses the same trusted /convert Container endpoint the URL pipeline
+   * uses, since the rendered PDF is one this service produced itself) ->
+   * delete-text-intermediates (all four R2 objects, success or failure
+   * alike, spec §12.6).
+   *
+   * Each step re-reads its input from R2 so a retry never depends on
+   * in-memory state from a prior attempt, matching every other pipeline in
+   * this Workflow. Step return values never carry the TXT body itself (spec
+   * §12.3) — only R2 keys and small counts.
+   */
+  private async runTextSource(
+    jobId: string,
+    source: Extract<ConvertSource, { kind: "text" }>,
+    textOptions: TextConvertOptions,
+    step: WorkflowStep,
+  ): Promise<{ xtcKey: string; title?: string }> {
+    let articleKey: string | null = null;
+    let fontsKey: string | null = null;
+    let pdfKey: string | null = null;
+
+    try {
+      ({ articleKey, fontsKey } = await step.do(
+        "prepare-text",
+        {
+          // No retry budget beyond one extra attempt: every failure this step
+          // can produce (bad encoding, binary input, over the char/line/HTML
+          // limits) is deterministic for this exact upload — see the
+          // NonRetryableError throws below, which skip retries entirely. The
+          // single retry only covers a transient R2 get/put hiccup.
+          retries: { limit: 1, delay: "5 seconds", backoff: "constant" },
+          // Covers the R2 round trip plus buildInlineFontCss's font-fetch
+          // fan-out (up to 8 css2 + N woff2 fetches at 10s each, run in
+          // parallel — src/fonts.ts), mirroring extract-content's budget for
+          // the same reason.
+          timeout: "3 minutes",
+        },
+        async () => {
+          const input = await this.env.XTC_BUCKET.get(source.key);
+          if (input === null) {
+            // Only possible if the upload expired or was deleted mid-job.
+            throw new NonRetryableError("uploaded text file is missing");
+          }
+          if (input.size > MAX_TEXT_FILE_BYTES) {
+            // Defense in depth: the Worker already enforced this at upload
+            // time (spec §11.3); a stale/tampered object should never reach
+            // decoding.
+            throw new NonRetryableError(textPrepareErrorMessage(new TextTooLongError("upload too large")));
+          }
+          const bytes = new Uint8Array(await input.arrayBuffer());
+
+          let decoded;
+          try {
+            decoded = decodeTextFile(bytes, textOptions.encoding);
+          } catch (error) {
+            throw new NonRetryableError(textPrepareErrorMessage(error));
+          }
+
+          try {
+            validateTextLimits(decoded.text);
+          } catch (error) {
+            throw new NonRetryableError(textPrepareErrorMessage(error));
+          }
+
+          const normalized = normalizeText(decoded.text, {
+            maxConsecutiveBlankLines: textOptions.maxConsecutiveBlankLines,
+            preserveSpaces: textOptions.preserveSpaces,
+          });
+          // The removed characters themselves are never logged (spec §8.3/§17) —
+          // only the count.
+          if (normalized.controlCharsRemoved > 0) {
+            console.log(
+              `[${jobId}] text: stripped ${normalized.controlCharsRemoved} control character(s)`,
+            );
+          }
+
+          const documentTitle = resolveDocumentTitle(textOptions.title, source.filename);
+          const html = buildTextArticleHtml({
+            normalizedText: normalized.text,
+            options: textOptions,
+            documentTitle,
+          });
+          const htmlBytes = new TextEncoder().encode(html);
+          if (htmlBytes.byteLength > MAX_GENERATED_HTML_BYTES) {
+            // Deterministic for this input+options combination — retrying
+            // would regenerate the same oversized HTML.
+            throw new NonRetryableError(
+              textPrepareErrorMessage(new TextTooLongError("generated HTML too large")),
+            );
+          }
+
+          const key = articleHtmlKey(jobId);
+          await this.env.XTC_BUCKET.put(key, htmlBytes, {
+            httpMetadata: { contentType: "text/html; charset=utf-8" },
+          });
+
+          // Font inlining is fail-soft (src/fonts.ts): a missing/failed web
+          // font degrades to the article's own generic font-family fallback
+          // (baked into buildTextPrintCss), never fails the job. The subset
+          // covers every string that lands in the document — title, author,
+          // and body — so a title/author that uses characters absent from
+          // the body still gets a matching glyph.
+          const fontSubsetText = `${documentTitle}\n${textOptions.title}\n${textOptions.author}\n${normalized.text}`;
+          const fontCss = await buildInlineFontCss(fontSubsetText, jobId, fetch, textOptions.font);
+          let storedFontsKey: string | null = null;
+          if (fontCss !== null) {
+            const fKey = fontsCssKey(jobId);
+            try {
+              await this.env.XTC_BUCKET.put(fKey, fontCss, {
+                httpMetadata: { contentType: "text/css; charset=utf-8" },
+              });
+              storedFontsKey = fKey;
+            } catch (error) {
+              console.error(
+                `[${jobId}] R2 put ${fKey} failed; rendering without the inline font`,
+                error,
+              );
+            }
+          }
+
+          return {
+            articleKey: key,
+            fontsKey: storedFontsKey,
+            detectedEncoding: decoded.encoding,
+            characterCount: Array.from(normalized.text).length,
+            lineCount: normalized.text.split("\n").length,
+          };
+        },
+      ));
+
+      ({ pdfKey } = await step.do(
+        "render-text-pdf",
+        {
+          retries: { limit: 2, delay: "10 seconds", backoff: "exponential" },
+          // Same budget as the URL pipeline's render-pdf step: goto/font
+          // grace + the 300s pdf-generation cap in pdf.ts, plus R2 I/O margin.
+          timeout: "7 minutes",
+        },
+        async () => {
+          if (articleKey === null) {
+            // Unreachable in practice (prepare-text always returns a key on
+            // success or throws), but keeps this step's input contract
+            // explicit and satisfies strict null checking.
+            throw new NonRetryableError("prepared article HTML is missing");
+          }
+          const article = await this.env.XTC_BUCKET.get(articleKey);
+          if (article === null) {
+            // Only possible if the intermediate expired mid-job.
+            throw new NonRetryableError("prepared article HTML is missing");
+          }
+          let fontCss: string | null = null;
+          if (fontsKey !== null) {
+            try {
+              const fonts = await this.env.XTC_BUCKET.get(fontsKey);
+              fontCss = fonts !== null ? await fonts.text() : null;
+            } catch (error) {
+              console.error(`[${jobId}] R2 get ${fontsKey} failed`, error);
+            }
+          }
+
+          const response = await renderSelfStyledHtmlPdf(
+            this.env,
+            await article.text(),
+            fontCss,
+          );
+          if (!response.ok) {
+            console.error(
+              `[${jobId}] Browser Run returned ${response.status}: ${await response.text()}`,
+            );
+            throw new Error("PDF generation failed");
+          }
+          const pdfBytes = await response.arrayBuffer();
+          const maxPdfBytes = resolveMaxPdfBytes(this.env);
+          if (pdfBytes.byteLength > maxPdfBytes) {
+            // Deterministic: retrying would render the same PDF.
+            throw new NonRetryableError(
+              `rendered PDF exceeds the ${maxPdfBytes} byte limit; reduce the font size or margins`,
+            );
+          }
+          const key = intermediatePdfKey(jobId);
+          await this.env.XTC_BUCKET.put(key, pdfBytes, {
+            httpMetadata: { contentType: "application/pdf" },
+          });
+          return { pdfKey: key };
+        },
+      ));
+
+      const { xtcKey, title } = await step.do(
+        "convert-xtc",
+        {
+          retries: { limit: 2, delay: "30 seconds", backoff: "constant" },
+          timeout: "12 minutes",
+        },
+        async () => {
+          if (pdfKey === null) {
+            throw new NonRetryableError("intermediate PDF is missing");
+          }
+          const pdfSource = await this.env.XTC_BUCKET.get(pdfKey);
+          if (pdfSource === null) {
+            throw new NonRetryableError("intermediate PDF is missing");
+          }
+          let response: Response;
+          try {
+            // Same trusted /convert endpoint + FixedLengthStream requirement
+            // as the URL pipeline's convert-xtc step — this PDF was rendered
+            // by this service's own Browser Run call above, not uploaded by
+            // the client. textOptions.author rides along as X-Xtc-Author
+            // (src/container.ts): the only /convert caller that ever has an
+            // author to set, since the title alone travels via the PDF's own
+            // metadata (document.title -> Chromium print -> read_pdf_metadata).
+            response = await convertInContainer(
+              this.env,
+              jobId,
+              pdfSource.body.pipeThrough(new FixedLengthStream(pdfSource.size)),
+              CONVERTER_FETCH_TIMEOUT_MS,
+              textOptions.author,
+            );
+          } catch (error) {
+            if (error instanceof DOMException && error.name === "TimeoutError") {
+              throw new NonRetryableError(
+                "XTC conversion timed out; the document is too large",
+              );
+            }
+            throw error; // network/container failures stay retryable
+          }
+          if (!response.ok) {
+            console.error(
+              `[${jobId}] converter returned ${response.status}: ${await response.text()}`,
+            );
+            if (response.status === 413) {
+              throw new NonRetryableError(
+                `rendered PDF exceeds the ${resolveMaxPdfBytes(this.env)} byte limit; reduce the font size or margins`,
+              );
+            }
+            throw new Error("XTC conversion failed");
+          }
+          const { title } = await storeXtcOutput(this.env, jobId, response);
+          return { xtcKey: outputXtcKey(jobId), title };
+        },
+      );
+
+      return { xtcKey, title };
+    } finally {
+      // Runs on success and on terminal failure alike (spec §12.6): every
+      // input/intermediate object this pipeline produced is removed, not
+      // just the uploaded TXT. Best-effort — a delete failure here still
+      // gets cleaned up by the input//intermediate/ R2 lifecycle rules
+      // within a day.
+      await step.do("delete-text-intermediates", async () => {
+        const keys = [source.key, articleKey, fontsKey, pdfKey].filter(
+          (key): key is string => key !== null,
+        );
+        for (const key of keys) {
+          try {
+            await this.env.XTC_BUCKET.delete(key);
+          } catch (error) {
+            console.error(`[${jobId}] best-effort delete of ${key} failed`, error);
+          }
         }
       });
     }

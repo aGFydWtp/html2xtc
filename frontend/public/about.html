@@ -97,6 +97,19 @@
     </ul>
   </section>
 
+  <section id="text-upload">
+    <h2 data-i18n="text_upload_h">TXTファイルのアップロードについて</h2>
+    <p data-i18n="text_upload_p">お手元のテキストファイル（.txt）をアップロードし、ブラウザ内で文字コードの判定・本文プレビュー・組版設定（書字方向、フォント、文字サイズ、行間、余白など）を確認したうえで XTC に変換できます。アップロードされたテキストファイルおよび変換設定、変換途中に生成される中間ファイル（組版済みHTML・中間PDF）は、変換処理の完了後に速やかに削除され、R2 のライフサイクル設定により最長でも 1 日以内には自動的に削除されます（利用者には提供されません）。生成された XTC ファイルの保存期間は他の変換と同じく約 24 時間です。</p>
+    <p data-i18n="text_upload_unsupported_h">次のものには対応していません。</p>
+    <ul>
+      <li data-i18n="text_upload_unsupported_1">Markdown・HTMLタグの解釈（本文は常にプレーンテキストとして扱われます）</li>
+      <li data-i18n="text_upload_unsupported_2">RTF、DOCX、EPUB などの他形式、OCR、画像埋め込み、外部画像・外部CSS・外部JavaScriptの読み込み</li>
+      <li data-i18n="text_upload_unsupported_3">青空文庫注記の解釈、ルビ・傍点・脚注・目次</li>
+      <li data-i18n="text_upload_unsupported_4">UTF-16、EUC-JP、ISO-2022-JP などの文字コード</li>
+      <li data-i18n="text_upload_unsupported_5">複数テキストファイルの結合、ページ単位の個別書式、変換開始後のジョブキャンセル</li>
+    </ul>
+  </section>
+
   <section id="terms">
     <h2 data-i18n="terms_h">利用規約</h2>
     <ul>
@@ -156,6 +169,14 @@ const I18N = {
     pdf_upload_unsupported_3: "見開き分割、自動ノド除去、自動傾き補正、自動余白検出",
     pdf_upload_unsupported_4: "注釈・フォーム入力内容の編集、ページごとに異なる個別設定",
     pdf_upload_unsupported_5: "サイズ上限を超えるファイルのアップロード、変換開始後のジョブキャンセル",
+    text_upload_h: "TXTファイルのアップロードについて",
+    text_upload_p: "お手元のテキストファイル（.txt）をアップロードし、ブラウザ内で文字コードの判定・本文プレビュー・組版設定（書字方向、フォント、文字サイズ、行間、余白など）を確認したうえで XTC に変換できます。アップロードされたテキストファイルおよび変換設定、変換途中に生成される中間ファイル（組版済みHTML・中間PDF）は、変換処理の完了後に速やかに削除され、R2 のライフサイクル設定により最長でも 1 日以内には自動的に削除されます（利用者には提供されません）。生成された XTC ファイルの保存期間は他の変換と同じく約 24 時間です。",
+    text_upload_unsupported_h: "次のものには対応していません。",
+    text_upload_unsupported_1: "Markdown・HTMLタグの解釈（本文は常にプレーンテキストとして扱われます）",
+    text_upload_unsupported_2: "RTF、DOCX、EPUB などの他形式、OCR、画像埋め込み、外部画像・外部CSS・外部JavaScriptの読み込み",
+    text_upload_unsupported_3: "青空文庫注記の解釈、ルビ・傍点・脚注・目次",
+    text_upload_unsupported_4: "UTF-16、EUC-JP、ISO-2022-JP などの文字コード",
+    text_upload_unsupported_5: "複数テキストファイルの結合、ページ単位の個別書式、変換開始後のジョブキャンセル",
     terms_h: "利用規約",
     terms_1: "本サービスは、個人が私生活上の読書・学習のために利用する場合に限って利用できます。業務、職務、事業、営業その他これらに類する目的での利用を禁止します。",
     terms_2: "利用者は、著作権者の許諾、適用されるライセンスまたは法令上の例外により、適法に複製・変換できるコンテンツのみを指定してください。",
@@ -195,6 +216,14 @@ const I18N = {
     pdf_upload_unsupported_3: "Splitting two-page spreads, automatic gutter removal, automatic deskewing, automatic margin detection",
     pdf_upload_unsupported_4: "Editing annotations or form field contents, per-page individual settings",
     pdf_upload_unsupported_5: "Uploading files above the size limit, cancelling a job after conversion has started",
+    text_upload_h: "About uploading TXT files",
+    text_upload_p: "You can upload your own plain text file (.txt), check the detected encoding, a body-text preview and layout settings (writing direction, font, text size, line spacing, margins, etc.) in your browser beforehand, and convert it to XTC. The uploaded text file and its conversion settings, along with intermediate files generated during conversion (the typeset HTML and intermediate PDF), are deleted promptly after conversion finishes, and are automatically deleted within 1 day at the latest by the R2 lifecycle policy (they are never provided back to users). Generated XTC files are kept for about 24 hours, the same as other conversions.",
+    text_upload_unsupported_h: "The following are not supported.",
+    text_upload_unsupported_1: "Interpreting Markdown or HTML tags (the text is always treated as plain text)",
+    text_upload_unsupported_2: "Other formats such as RTF, DOCX or EPUB; OCR; embedded images; loading external images, external CSS or external JavaScript",
+    text_upload_unsupported_3: "Interpreting Aozora Bunko annotation notation; ruby, emphasis dots, footnotes, tables of contents",
+    text_upload_unsupported_4: "Character encodings such as UTF-16, EUC-JP or ISO-2022-JP",
+    text_upload_unsupported_5: "Merging multiple text files, per-page individual formatting, cancelling a job after conversion has started",
     terms_h: "Terms of use",
     terms_1: "This service may be used only by individuals for personal, private reading and study. Use for business, professional, commercial or other similar purposes is prohibited.",
     terms_2: "Specify only content you may lawfully copy and convert, based on the rights holder's permission, an applicable license, or a statutory exception.",

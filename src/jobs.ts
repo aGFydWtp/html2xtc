@@ -56,8 +56,20 @@ export function inputPdfKey(jobId: string): string {
   return `input/${jobId}/source.pdf`;
 }
 
+/**
+ * R2 key for an uploaded TXT file (POST /jobs/text, src/text-upload.ts).
+ * Mirrors inputPdfKey's retention story: deleted by the Workflow itself on
+ * completion (success or failure, text-upload spec §12.6), with R2 lifecycle
+ * only as a same-day safety net (see claudedocs/deploy-guide.md's expire-
+ * input-pdf rule — prefix-based, so input/ already covers this key too).
+ */
+export function inputTextKey(jobId: string): string {
+  return `input/${jobId}/source.txt`;
+}
+
 export type JobApiStatus =
   | "queued"
+  | "preparing"
   | "rendering"
   | "converting"
   | "completed"
@@ -149,6 +161,51 @@ export function mapPdfInstanceStatus(
   instance: WorkflowStatusLike,
 ): JobStatusBody {
   return mapInstanceStatus(jobId, instance, true);
+}
+
+/**
+ * Maps a Workflows instance status for a TXT-source job (text-upload spec
+ * §19). Unlike PDF jobs (no rendering phase at all) and URL jobs (a binary
+ * rendering/converting split), TXT jobs have a THIRD running-family phase —
+ * preparing (prepare-text: decode/normalize/HTML-generate) ahead of
+ * rendering (render-text-pdf) and converting (convert-xtc) — so this can't
+ * be expressed as a call into mapInstanceStatus (which only carries a single
+ * boolean axis). Written standalone rather than generalizing
+ * mapInstanceStatus's signature, for the same reason mapPdfInstanceStatus
+ * stays a thin wrapper instead of a signature change: avoids touching the
+ * URL-job code path at all. Callers (src/index.ts#mapWithPhaseProbe) resolve
+ * `phase` from R2 probes: articleHtmlKey missing -> "preparing";
+ * articleHtmlKey present, intermediatePdfKey missing -> "rendering"; both
+ * present -> "converting".
+ */
+export function mapTextInstanceStatus(
+  jobId: string,
+  instance: WorkflowStatusLike,
+  phase: "preparing" | "rendering" | "converting",
+): JobStatusBody {
+  switch (instance.status) {
+    case "queued":
+      return { jobId, status: "queued" };
+    case "complete": {
+      const title = titleFromOutput(instance.output);
+      return {
+        jobId,
+        status: "completed",
+        downloadUrl: `/jobs/${jobId}/download`,
+        ...(title !== undefined ? { title } : {}),
+      };
+    }
+    case "errored":
+    case "terminated":
+      return {
+        jobId,
+        status: "failed",
+        error: instance.error?.message ?? "unknown error",
+      };
+    default:
+      // running / waiting / paused / waitingForPause / unknown
+      return { jobId, status: phase };
+  }
 }
 
 export type DownloadDecision =

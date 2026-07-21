@@ -1,7 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import { onMount } from "svelte";
-  import AccountMenu from "./components/AccountMenu.svelte";
   import AozoraDialog from "./components/AozoraDialog.svelte";
   import ConvertForm from "./components/ConvertForm.svelte";
   import CurrentJob from "./components/CurrentJob.svelte";
@@ -47,7 +46,6 @@
 
 <main>
   <Header />
-  <AccountMenu />
   <div class="tabs" role="tablist">
     <button type="button" role="tab" aria-selected={tab === "convert"} onclick={() => (tab = "convert")}>{t("tab_convert")}</button>
     <button type="button" role="tab" aria-selected={tab === "library"} onclick={() => (tab = "library")}>{t("tab_library")}</button>

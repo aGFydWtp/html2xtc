@@ -3,7 +3,7 @@
 // AozoraDialog（frontend/src/lib/aozora.svelte.ts）と同じ「open フラグを
 // $state で保持し、コンポーネント側の $effect が dialog.showModal()/close() と
 // 同期する」パターン。App.svelte から一度だけマウントされる各ダイアログを、
-// AccountMenu 等の別コンポーネントから開けるようにするための共有状態。
+// Header 等の別コンポーネントから開けるようにするための共有状態。
 
 export const loginDialog = $state({ open: false });
 

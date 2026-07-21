@@ -20,6 +20,7 @@ export interface Messages {
   copyright_line: string;
   dl: string;
   menu_label: string;
+  menu_open: string;
   menu_dl: string;
   menu_preview: string;
   preview: string;
@@ -139,6 +140,7 @@ export const I18N: Record<Lang, Messages> = {
     copyright_line: "© 2026 aGFydWtp",
     dl: "XTC をダウンロード",
     menu_label: "操作メニュー",
+    menu_open: "メニューを開く",
     menu_dl: "XTC ダウンロード",
     menu_preview: "XTC プレビュー",
     preview: "プレビュー",
@@ -255,6 +257,7 @@ export const I18N: Record<Lang, Messages> = {
     copyright_line: "© 2026 aGFydWtp",
     dl: "Download XTC",
     menu_label: "Actions",
+    menu_open: "Open menu",
     menu_dl: "Download XTC",
     menu_preview: "Preview XTC",
     preview: "Preview",

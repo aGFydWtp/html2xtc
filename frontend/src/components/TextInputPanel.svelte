@@ -68,12 +68,13 @@
     };
   });
 
-  // 正規化（仕様書 §8, §10.8: 空行上限・空白保持の変更は150msデバウンスで再処理）。
+  // 正規化（仕様書 §8, §10.8: 空行上限・空白保持・行の自動連結の変更は150msデバウンスで再処理）。
   let normalizeTimer: ReturnType<typeof setTimeout> | undefined;
   $effect(() => {
     const text = decodedText;
     const maxConsecutiveBlankLines = options.maxConsecutiveBlankLines;
     const preserveSpaces = options.preserveSpaces;
+    const joinHardWrappedLines = options.joinHardWrappedLines;
     const ready = status === "ready";
     if (normalizeTimer) clearTimeout(normalizeTimer);
     if (!ready) {
@@ -81,7 +82,11 @@
       return;
     }
     normalizeTimer = setTimeout(() => {
-      normalizedText = normalizeText(text, { maxConsecutiveBlankLines, preserveSpaces }).text;
+      normalizedText = normalizeText(text, {
+        maxConsecutiveBlankLines,
+        preserveSpaces,
+        joinHardWrappedLines,
+      }).text;
     }, 150);
     return () => {
       if (normalizeTimer) clearTimeout(normalizeTimer);

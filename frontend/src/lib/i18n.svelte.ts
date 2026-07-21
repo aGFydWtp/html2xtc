@@ -129,6 +129,10 @@ export interface Messages {
   text_preserve_spaces_label: string;
   text_preserve_spaces_on: string;
   text_preserve_spaces_off: string;
+  text_join_lines_label: string;
+  text_join_lines_on: string;
+  text_join_lines_off: string;
+  text_join_lines_note: string;
   text_bibliographic_heading: string;
   text_title_label: string;
   text_author_label: string;
@@ -358,6 +362,10 @@ export const I18N: Record<Lang, Messages> = {
     text_preserve_spaces_label: "空白保持",
     text_preserve_spaces_on: "保持する",
     text_preserve_spaces_off: "保持しない",
+    text_join_lines_label: "行を自動的につなげる",
+    text_join_lines_on: "つなげる",
+    text_join_lines_off: "つなげない",
+    text_join_lines_note: "固定幅で改行されたテキストの行を段落内で連結します。",
     text_bibliographic_heading: "書誌情報",
     text_title_label: "表題",
     text_author_label: "著者",
@@ -584,6 +592,10 @@ export const I18N: Record<Lang, Messages> = {
     text_preserve_spaces_label: "Preserve whitespace",
     text_preserve_spaces_on: "On",
     text_preserve_spaces_off: "Off",
+    text_join_lines_label: "Auto-join hard-wrapped lines",
+    text_join_lines_on: "On",
+    text_join_lines_off: "Off",
+    text_join_lines_note: "Joins lines within a paragraph that were hard-wrapped to a fixed width.",
     text_bibliographic_heading: "Bibliographic info",
     text_title_label: "Title",
     text_author_label: "Author",

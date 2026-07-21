@@ -34,6 +34,13 @@ export interface TextConvertOptions {
   textAlign: TextAlign;
   maxConsecutiveBlankLines: number;
   preserveSpaces: boolean;
+  /**
+   * Joins hard-wrapped lines within a paragraph (text-normalize.ts's
+   * joinWrappedLines heuristic) instead of keeping every single newline as
+   * <br>. Many Japanese-book TXT sources are fixed-width hard-wrapped, so
+   * this defaults to true.
+   */
+  joinHardWrappedLines: boolean;
   showPageNumbers: boolean;
   /** 100 chars max (code points). */
   title: string;
@@ -58,6 +65,7 @@ export const DEFAULT_TEXT_OPTIONS: TextConvertOptions = {
   textAlign: "start",
   maxConsecutiveBlankLines: 2,
   preserveSpaces: false,
+  joinHardWrappedLines: true,
   showPageNumbers: false,
   title: "",
   author: "",
@@ -155,6 +163,18 @@ export function validateTextConvertOptions(value: unknown): TextOptionsResult {
   }
   const preserveSpaces = v.preserveSpaces;
 
+  // Backward compatibility: this field was added after the initial TXT
+  // upload release, so a header/stored payload from before then omits it
+  // entirely. Treat that absence as the default (true) — same stance as
+  // decodeTextOptionsHeader treating a wholly-missing header as
+  // DEFAULT_TEXT_OPTIONS — but a present-and-wrong-typed value is still a
+  // hard rejection like every other field here.
+  const joinHardWrappedLinesRaw = v.joinHardWrappedLines === undefined ? true : v.joinHardWrappedLines;
+  if (typeof joinHardWrappedLinesRaw !== "boolean") {
+    return { ok: false, error: "invalid joinHardWrappedLines" };
+  }
+  const joinHardWrappedLines = joinHardWrappedLinesRaw;
+
   if (typeof v.showPageNumbers !== "boolean") {
     return { ok: false, error: "invalid showPageNumbers" };
   }
@@ -183,6 +203,7 @@ export function validateTextConvertOptions(value: unknown): TextOptionsResult {
       textAlign,
       maxConsecutiveBlankLines,
       preserveSpaces,
+      joinHardWrappedLines,
       showPageNumbers,
       title,
       author,

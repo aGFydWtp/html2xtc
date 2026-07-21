@@ -131,6 +131,30 @@ describe("validateTextConvertOptions", () => {
     ).toBe(false);
   });
 
+  it("accepts an explicit joinHardWrappedLines boolean in either direction", () => {
+    expect(
+      validateTextConvertOptions({ ...DEFAULT_TEXT_OPTIONS, joinHardWrappedLines: false }),
+    ).toEqual({
+      ok: true,
+      options: { ...DEFAULT_TEXT_OPTIONS, joinHardWrappedLines: false },
+    });
+    expect(
+      validateTextConvertOptions({ ...DEFAULT_TEXT_OPTIONS, joinHardWrappedLines: true }).ok,
+    ).toBe(true);
+  });
+
+  it("rejects a non-boolean joinHardWrappedLines", () => {
+    expect(
+      validateTextConvertOptions({ ...DEFAULT_TEXT_OPTIONS, joinHardWrappedLines: "yes" }),
+    ).toEqual({ ok: false, error: "invalid joinHardWrappedLines" });
+  });
+
+  it("defaults a missing joinHardWrappedLines to true (backward compatibility)", () => {
+    const { joinHardWrappedLines: _omitted, ...withoutField } = DEFAULT_TEXT_OPTIONS;
+    const result = validateTextConvertOptions(withoutField);
+    expect(result).toEqual({ ok: true, options: DEFAULT_TEXT_OPTIONS });
+  });
+
   it("caps title/author at 100 code points without implicit truncation", () => {
     expect(
       validateTextConvertOptions({ ...DEFAULT_TEXT_OPTIONS, title: "a".repeat(100) }).ok,

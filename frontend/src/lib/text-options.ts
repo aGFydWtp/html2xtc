@@ -35,6 +35,10 @@ export interface TextConvertOptions {
   textAlign: TextAlign;
   maxConsecutiveBlankLines: number;
   preserveSpaces: boolean;
+
+  /** 固定幅ハードラップされた行を段落内で連結するか（text-normalize.ts の joinWrappedLines） */
+  joinHardWrappedLines: boolean;
+
   showPageNumbers: boolean;
 
   /** 100文字以内 */
@@ -61,6 +65,7 @@ export const DEFAULT_TEXT_OPTIONS: TextConvertOptions = {
   textAlign: "start",
   maxConsecutiveBlankLines: 2,
   preserveSpaces: false,
+  joinHardWrappedLines: true,
   showPageNumbers: false,
   title: "",
   author: "",
@@ -88,7 +93,8 @@ export function isUntouchedFromDefault(options: TextConvertOptions): boolean {
     options.margins.left === DEFAULT_TEXT_OPTIONS.margins.left &&
     options.textAlign === DEFAULT_TEXT_OPTIONS.textAlign &&
     options.maxConsecutiveBlankLines === DEFAULT_TEXT_OPTIONS.maxConsecutiveBlankLines &&
-    options.preserveSpaces === DEFAULT_TEXT_OPTIONS.preserveSpaces
+    options.preserveSpaces === DEFAULT_TEXT_OPTIONS.preserveSpaces &&
+    options.joinHardWrappedLines === DEFAULT_TEXT_OPTIONS.joinHardWrappedLines
   );
 }
 
@@ -202,6 +208,9 @@ export function validateTextOptions(options: TextConvertOptions): TextOptionsVal
   }
   if (typeof options.preserveSpaces !== "boolean") {
     errors.push({ field: "preserveSpaces", message: "preserveSpaces must be boolean" });
+  }
+  if (typeof options.joinHardWrappedLines !== "boolean") {
+    errors.push({ field: "joinHardWrappedLines", message: "joinHardWrappedLines must be boolean" });
   }
   if (typeof options.showPageNumbers !== "boolean") {
     errors.push({ field: "showPageNumbers", message: "showPageNumbers must be boolean" });

@@ -31,6 +31,7 @@ describe("DEFAULT_TEXT_OPTIONS", () => {
       textAlign: "start",
       maxConsecutiveBlankLines: 2,
       preserveSpaces: false,
+      joinHardWrappedLines: true,
       showPageNumbers: false,
       title: "",
       author: "",
@@ -101,6 +102,16 @@ describe("validateTextOptions", () => {
     expect(isValidTextOptions({ ...cloneDefaults(), layout: "rtl" as never })).toBe(false);
     expect(isValidTextOptions({ ...cloneDefaults(), textAlign: "center" as never })).toBe(false);
   });
+
+  it("requires joinHardWrappedLines to be boolean", () => {
+    expect(
+      validateTextOptions({ ...cloneDefaults(), joinHardWrappedLines: "yes" as never }).some(
+        (e) => e.field === "joinHardWrappedLines",
+      ),
+    ).toBe(true);
+    expect(isValidTextOptions({ ...cloneDefaults(), joinHardWrappedLines: false })).toBe(true);
+    expect(isValidTextOptions({ ...cloneDefaults(), joinHardWrappedLines: true })).toBe(true);
+  });
 });
 
 describe("isValidFontFamily", () => {
@@ -152,6 +163,10 @@ describe("isUntouchedFromDefault / setTextLayout (§6.3)", () => {
     const withMargin = cloneDefaults();
     withMargin.margins.top = 40;
     expect(isUntouchedFromDefault(withMargin)).toBe(false);
+  });
+
+  it("is false once joinHardWrappedLines diverges from default", () => {
+    expect(isUntouchedFromDefault({ ...cloneDefaults(), joinHardWrappedLines: false })).toBe(false);
   });
 
   it("applies §6.3 vertical overrides when switching to vertical from an untouched default", () => {

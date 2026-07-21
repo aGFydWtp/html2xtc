@@ -60,6 +60,11 @@ class LibraryStore {
   // (source_job_id) に任せるため実害はない）。
   savedJobIds = $state<Set<string>>(new Set());
 
+  // saveFromJob 実行中 / 失敗した jobId。CurrentJob 行のテキスト表示
+  // （保存中… / 保存に失敗しました）が自動保存の進行状態を参照するために持つ。
+  savingJobIds = $state<Set<string>>(new Set());
+  saveFailedJobIds = $state<Set<string>>(new Set());
+
   async load(): Promise<void> {
     this.loadState = "loading";
     try {
@@ -75,7 +80,21 @@ class LibraryStore {
     return this.savedJobIds.has(jobId);
   }
 
+  isSavingJob(jobId: string): boolean {
+    return this.savingJobIds.has(jobId);
+  }
+
+  isSaveFailedJob(jobId: string): boolean {
+    return this.saveFailedJobIds.has(jobId);
+  }
+
   async saveFromJob(jobId: string, title?: string, author?: string): Promise<boolean> {
+    this.savingJobIds = new Set(this.savingJobIds).add(jobId);
+    if (this.saveFailedJobIds.has(jobId)) {
+      const next = new Set(this.saveFailedJobIds);
+      next.delete(jobId);
+      this.saveFailedJobIds = next;
+    }
     try {
       const body = await apiSend<ItemResponse>("POST", "/api/library/items/from-job", {
         jobId,
@@ -83,14 +102,22 @@ class LibraryStore {
         ...(author ? { author } : {}),
       });
       const item = parseItem(body.item);
-      if (!item) return false;
+      if (!item) {
+        this.saveFailedJobIds = new Set(this.saveFailedJobIds).add(jobId);
+        return false;
+      }
       if (!this.items.some((i) => i.id === item.id)) this.items = [item, ...this.items];
       const next = new Set(this.savedJobIds);
       next.add(jobId);
       this.savedJobIds = next;
       return true;
     } catch {
+      this.saveFailedJobIds = new Set(this.saveFailedJobIds).add(jobId);
       return false;
+    } finally {
+      const next = new Set(this.savingJobIds);
+      next.delete(jobId);
+      this.savingJobIds = next;
     }
   }
 
@@ -128,6 +155,8 @@ class LibraryStore {
     this.items = [];
     this.loadState = "idle";
     this.savedJobIds = new Set();
+    this.savingJobIds = new Set();
+    this.saveFailedJobIds = new Set();
   }
 }
 

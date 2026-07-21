@@ -19,7 +19,7 @@
           {#if busy}<span class="spinner"></span>{/if}
           <span class="badge" class:err={job.status === "failed" || job.status === "expired"}>{statusLabel(job.status)}</span>
           {#if job.status === "completed"}
-            <SaveToLibraryButton jobId={job.jobId} title={job.title} />
+            <SaveToLibraryButton jobId={job.jobId} />
             <span class="actions">
               <a class="dl" href="/jobs/{encodeURIComponent(job.jobId)}/download" aria-label={t("dl")} title={t("dl")}>
                 <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v10" /><path d="M7 10l5 5 5-5" /><path d="M4 19h16" /></svg>
@@ -45,7 +45,6 @@
 {/if}
 
 <style>
-  .current { border-bottom: 1px solid var(--line); }
   /* 1 件時は旧 .current（padding: 22px 0）と同じ見え方。複数件は行間に区切り線。 */
   .job-row { padding: 22px 0; }
   .job-row + .job-row { border-top: 1px solid var(--line); }

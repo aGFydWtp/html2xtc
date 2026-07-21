@@ -39,7 +39,6 @@ export interface Messages {
   aozora_open: string;
   aozora_title: string;
   aozora_hint: string;
-  aozora_credit: string;
   cancel: string;
   aozora_start: string;
   aozora_searching: string;
@@ -86,7 +85,6 @@ export const I18N: Record<Lang, Messages> = {
     aozora_open: "青空文庫から選択",
     aozora_title: "青空文庫から選択",
     aozora_hint: "タイトル・作者名で検索できます",
-    aozora_credit: "データ提供：青空文庫",
     cancel: "キャンセル",
     aozora_start: "作品名か作者名を入力してください。",
     aozora_searching: "検索中…",
@@ -131,7 +129,6 @@ export const I18N: Record<Lang, Messages> = {
     aozora_open: "Choose from Aozora Bunko",
     aozora_title: "Choose from Aozora Bunko",
     aozora_hint: "Search by title or author",
-    aozora_credit: "Data: Aozora Bunko",
     cancel: "Cancel",
     aozora_start: "Type a title or author name.",
     aozora_searching: "Searching…",

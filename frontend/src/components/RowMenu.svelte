@@ -1,12 +1,15 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script module lang="ts">
   // 行アクションメニューの 1 項目。href があればアンカー、なければボタンとして描画する。
+  // heading は選択不可の見出し行（例:「端末に追加」の下に端末一覧を indent で並べる）。
   export interface RowMenuItem {
     label: string;
     onSelect?: () => void;
     href?: string;
     danger?: boolean;
     disabled?: boolean;
+    heading?: boolean;
+    indent?: boolean;
   }
 
   // aria-controls 用のインスタンスごとの一意 id。
@@ -19,8 +22,11 @@
 
   interface Props {
     items: RowMenuItem[];
+    /** 指定するとトリガーが ⋮ アイコンではなくテキストボタン（.secondary 相当の見た目）になる。 */
+    label?: string;
+    disabled?: boolean;
   }
-  const { items }: Props = $props();
+  const { items, label, disabled = false }: Props = $props();
 
   // 行右端の ⋮ から開く操作メニュー（ポップオーバー）。History.svelte /
   // Header.svelte のメニューと同じ方式: Popover API 非対応ブラウザ
@@ -107,15 +113,20 @@
 
 <button
   type="button"
-  class="more-btn"
+  class={label !== undefined ? "label-btn" : "more-btn"}
   aria-controls={menuId}
   aria-expanded={menuOpen}
-  aria-label={t("menu_label")}
+  aria-label={label === undefined ? t("menu_label") : undefined}
+  {disabled}
   bind:this={btnEl}
   onpointerdown={onBtnPointerDown}
   onclick={() => void toggleMenu()}
 >
-  <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5.5" r="1.7" /><circle cx="12" cy="12" r="1.7" /><circle cx="12" cy="18.5" r="1.7" /></svg>
+  {#if label !== undefined}
+    {label}
+  {:else}
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5.5" r="1.7" /><circle cx="12" cy="12" r="1.7" /><circle cx="12" cy="18.5" r="1.7" /></svg>
+  {/if}
 </button>
 
 <div
@@ -127,12 +138,15 @@
   ontoggle={onMenuToggle}
 >
   {#each items as item}
-    {#if item.href !== undefined}
-      <a href={item.href} class:danger={item.danger} onclick={hideMenu}>{item.label}</a>
+    {#if item.heading}
+      <div class="heading">{item.label}</div>
+    {:else if item.href !== undefined}
+      <a href={item.href} class:danger={item.danger} class:indent={item.indent} onclick={hideMenu}>{item.label}</a>
     {:else}
       <button
         type="button"
         class:danger={item.danger}
+        class:indent={item.indent}
         disabled={item.disabled}
         onclick={() => select(item)}
       >{item.label}</button>
@@ -146,6 +160,13 @@
     display: flex; align-items: center; padding: 10px; margin: -10px -6px; border-radius: 4px;
   }
   .more-btn:hover { background: var(--panel); color: var(--text); }
+  /* ConvertForm.svelte の button.secondary（「青空文庫から選択」）と同じ見た目 */
+  .label-btn {
+    padding: 8px 18px; font: inherit; font-size: 14px; font-weight: 500; border-radius: 4px;
+    border: 1px solid var(--ink); background: var(--card); color: var(--ink); cursor: pointer;
+  }
+  .label-btn:hover:not(:disabled) { background: var(--panel); }
+  .label-btn:disabled { border-color: var(--disabled); color: var(--disabled); cursor: default; }
   .row-menu {
     position: fixed; display: none; margin: 0; padding: 6px; min-width: 180px;
     border: 1px solid var(--line); border-radius: 4px; background: var(--card);
@@ -166,4 +187,6 @@
   .row-menu a:hover { background: var(--panel); }
   .row-menu button:disabled { color: var(--disabled); cursor: default; }
   .row-menu .danger { color: var(--error); }
+  .row-menu .heading { padding: 8px 12px 2px; font-size: 14px; color: var(--faint); cursor: default; }
+  .row-menu .indent { padding-left: 24px; }
 </style>

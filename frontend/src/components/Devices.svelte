@@ -164,11 +164,12 @@
 </dialog>
 
 <style>
-  section.devices { padding: 24px 0; }
+  section.devices { padding: 0 0 24px; }
   .login-gate { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; }
   .note { color: var(--muted); font-size: 14px; }
   ul.items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
-  ul.items li.device-row { border-top: 1px solid var(--line); padding: 14px 0; display: flex; flex-direction: column; gap: 8px; }
+  ul.items li.device-row { padding: 14px 0; display: flex; flex-direction: column; gap: 8px; }
+  ul.items li.device-row + li.device-row { border-top: 1px solid var(--line); }
   ul.items li.device-row:last-child { border-bottom: 1px solid var(--line); }
   .info .title { font-weight: 600; }
   .info .meta { display: flex; gap: 10px; flex-wrap: wrap; font-family: var(--mono); font-size: 12px; color: var(--faint); margin-top: 4px; }

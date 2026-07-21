@@ -35,11 +35,11 @@
 </section>
 
 <style>
-  section.library { padding: 24px 0; }
+  section.library { padding: 0 0 24px; }
   .login-gate { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; }
   .note { color: var(--muted); font-size: 14px; }
   ul.items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
-  ul.items li { border-top: 1px solid var(--line); }
+  ul.items li + li { border-top: 1px solid var(--line); }
   ul.items li:last-child { border-bottom: 1px solid var(--line); }
   button.secondary {
     padding: 8px 18px; font: inherit; font-size: 14px; font-weight: 500; border-radius: 4px;

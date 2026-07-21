@@ -142,11 +142,12 @@
       {/each}
     </ul>
   {/if}
-  <footer class="site">
-    <a href="/about">{t("about_link")}</a><br />
-    <span>{t("copyright_line")}</span>
-  </footer>
 </section>
+
+<footer class="site">
+  <a href="/about">{t("about_link")}</a><br />
+  <span>{t("copyright_line")}</span>
+</footer>
 
 <div
   class="job-menu"

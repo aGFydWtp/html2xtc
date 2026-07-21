@@ -41,3 +41,52 @@ a:hover { color: #555; }
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 .error-text { color: var(--error); font-size: 14px; margin-top: 8px; word-break: break-all; }
+
+/* 端末別ライブラリ・パスキー認証・ペアリング関連の新規ダイアログ
+   （PasskeyLoginDialog / PasskeyRegistrationDialog / PairingApprovalDialog /
+   DeviceLibraryEditor）で共用するチューム。クラス名は AozoraDialog /
+   PreviewDialog の scoped スタイルと衝突しないよう "simple-dialog" 配下に
+   閉じている（コンポーネント側 scoped セレクタは属性セレクタ付与で常に
+   詳細度が勝るため、既存ダイアログへの影響もない）。 */
+dialog.simple-dialog {
+  padding: 0; border: 1.5px solid var(--ink); border-radius: 4px;
+  background: var(--bg); color: var(--text);
+  width: min(420px, calc(100vw - 32px));
+  max-height: calc(100vh - 96px);
+  box-shadow: 4px 4px 0 rgba(28, 26, 23, .35);
+}
+dialog.simple-dialog[open] { display: flex; flex-direction: column; }
+dialog.simple-dialog::backdrop { background: rgba(28, 26, 23, .45); }
+dialog.simple-dialog.wide { width: min(560px, calc(100vw - 32px)); }
+.simple-dialog .dlg-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 16px 22px; border-bottom: 1px solid var(--line); flex: none;
+}
+.simple-dialog .dlg-title { font-size: 16px; font-weight: 700; letter-spacing: .04em; }
+.simple-dialog .dlg-x {
+  width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
+  border: 1px solid #cfc9bd; border-radius: 4px; background: none; color: var(--muted);
+  font-size: 14px; line-height: 1; cursor: pointer; font-family: inherit;
+}
+.simple-dialog .dlg-x:hover { color: var(--text); }
+.simple-dialog .dlg-body { padding: 18px 22px; overflow-y: auto; flex: 1; }
+.simple-dialog .field { display: flex; flex-direction: column; gap: 6px; font-size: 14px; color: var(--muted2); margin-bottom: 14px; }
+.simple-dialog .field input[type="text"] {
+  padding: 10px 12px; font: inherit; font-size: 16px; border: 1.5px solid var(--ink);
+  border-radius: 4px; background: var(--card); color: var(--text);
+}
+.simple-dialog .field input:focus { outline: 2px solid var(--ink); outline-offset: 1px; }
+.simple-dialog .dlg-actions {
+  display: flex; align-items: center; justify-content: flex-end; gap: 16px;
+  padding: 12px 22px 18px; flex: none;
+}
+.simple-dialog .dlg-cancel {
+  border: 0; background: none; font: inherit; font-size: 14px; color: var(--muted);
+  text-decoration: underline; cursor: pointer; padding: 0;
+}
+.simple-dialog .dlg-submit {
+  padding: 10px 24px; font: inherit; font-size: 14px; font-weight: 700; letter-spacing: .08em;
+  border: 0; border-radius: 4px; background: var(--ink); color: var(--ink-text); cursor: pointer;
+  white-space: nowrap;
+}
+.simple-dialog .dlg-submit:disabled { opacity: .55; cursor: default; }

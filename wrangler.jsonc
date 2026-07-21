@@ -13,7 +13,14 @@
 		// (src/container.ts) so both sides enforce the same limit. Memory:
 		// each workflow step holds at most one PDF-sized buffer, so 48 MiB
 		// keeps ample headroom under the Worker's 128 MB limit.
-		"MAX_PDF_BYTES": "50331648"
+		"MAX_PDF_BYTES": "50331648",
+		// WebAuthn relying party ID/origin (src/auth/webauthn.ts, plan §5.1 /
+		// §12). Not secret — the RP ID is the bare domain and the origin is
+		// just that domain's HTTPS URL, both already public via the custom
+		// domain route below. SESSION_PEPPER / PAIRING_ENCRYPTION_KEY /
+		// REGISTRATION_INVITE_SECRET stay Wrangler secrets, never vars.
+		"WEBAUTHN_RP_ID": "xtc.hr20k.com",
+		"WEBAUTHN_ORIGIN": "https://xtc.hr20k.com"
 	},
 	"browser": {
 		"binding": "BROWSER",
@@ -37,6 +44,15 @@
 			"database_name": "html2xtc-aozora-catalog",
 			"database_id": "5b20f008-2d9a-417a-be9a-e9a7a3738eb5",
 			"migrations_dir": "migrations/aozora"
+		},
+		{
+			// Application data (accounts, sessions, devices, library items, ...).
+			// Deliberately separate from AOZORA_DB: catalog re-syncs/regenerations
+			// must never be able to touch user data.
+			"binding": "APP_DB",
+			"database_name": "html2xtc-app",
+			"database_id": "cabeb5b6-7ba7-4b98-952e-3d45c45638d5",
+			"migrations_dir": "migrations/app"
 		}
 	],
 	"containers": [
@@ -127,7 +143,11 @@
 			"/convert",
 			"/jobs",
 			"/jobs/*",
-			"/download/*"
+			"/download/*",
+			// Device-facing OPDS feeds (src/opds/routes.ts, plan §9.5/§12):
+			// without this, the edge could serve a static asset at the same
+			// path instead of ever reaching the Worker.
+			"/opds/*"
 		]
 	},
 	"routes": [

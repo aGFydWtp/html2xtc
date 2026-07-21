@@ -4,6 +4,7 @@
   import { noteText, serverErrorText, statusLabel, t } from "../lib/i18n.svelte";
   import { IN_FLIGHT } from "../lib/jobs.svelte";
   import { openPreview, previewBroken } from "../lib/preview.svelte";
+  import SaveToLibraryButton from "./SaveToLibraryButton.svelte";
 </script>
 
 {#if current.entries.length}
@@ -25,6 +26,7 @@
               disabled={previewBroken.has(job.jobId)}
               onclick={() => void openPreview(job.jobId)}
             >{t("preview")}</button>
+            <SaveToLibraryButton jobId={job.jobId} title={job.title} />
           {/if}
         </div>
         {#if entry.note}<div class="error-text">{noteText(entry.note)}</div>{/if}

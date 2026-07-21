@@ -58,7 +58,7 @@
             autocomplete="off"
             spellcheck="false"
           />
-          <button class="primary" type="submit" disabled={submitting.busy}>{t("convert_short")}</button>
+          <button class="primary" type="submit" disabled={submitting.busy}>{t("convert")}</button>
         </div>
       </form>
       {#snippet below()}

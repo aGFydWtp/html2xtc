@@ -10,7 +10,6 @@ export interface Messages {
   intro: string;
   convert: string;
   keep_layout: string;
-  form_note: string;
   agree_before: string;
   agree_link: string;
   agree_after: string;
@@ -142,7 +141,6 @@ export const I18N: Record<Lang, Messages> = {
     intro: "公開されているWebサイトやコンテンツを、電子ペーパー端末 Xteink X3 用の XTC ファイルに変換します。",
     convert: "変換する",
     keep_layout: "レイアウトを保持して変換する",
-    form_note: "変換には 1〜2 分ほどかかります。生成されたファイルは約 24 時間後に自動削除されます。",
     agree_before: "「変換する」を押すことで、",
     agree_link: "利用規約",
     agree_after: "に同意したものとします。",
@@ -271,7 +269,6 @@ export const I18N: Record<Lang, Messages> = {
     intro: "Converts publicly available websites and content into XTC files for the Xteink X3 e-paper reader.",
     convert: "Convert",
     keep_layout: "Keep the page layout",
-    form_note: "Conversion takes 1–2 minutes. Files are deleted automatically after about 24 hours.",
     agree_before: "By pressing “Convert”, you agree to the ",
     agree_link: "Terms of Use",
     agree_after: ". ",

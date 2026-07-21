@@ -16,7 +16,7 @@
 <section class="convert">
   <p class="intro">{t("intro")}</p>
   <form {onsubmit}>
-    <div class="form-note"><span>{t("agree_before")}</span><a href="/about#terms">{t("agree_link")}</a><span>{t("agree_after")}</span><span>{t("form_note")}</span></div>
+    <div class="form-note"><span>{t("agree_before")}</span><a href="/about#terms">{t("agree_link")}</a><span>{t("agree_after")}</span></div>
     <div class="input-row">
       <input
         type="url"

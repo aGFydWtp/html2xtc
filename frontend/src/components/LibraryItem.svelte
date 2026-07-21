@@ -3,6 +3,7 @@
   import { formatDate } from "../lib/jobs.svelte";
   import { t } from "../lib/i18n.svelte";
   import { formatSize, libraryStore, type LibraryItem } from "../lib/library.svelte";
+  import RowMenu from "./RowMenu.svelte";
 
   interface Props {
     item: LibraryItem;
@@ -41,7 +42,7 @@
   }
 </script>
 
-<div class="library-item">
+<div class="library-item" class:editing>
   {#if editing}
     <div class="edit-fields">
       <input type="text" bind:value={titleInput} maxlength="200" />
@@ -60,18 +61,22 @@
         <span>{formatDate(item.createdAt)}</span>
       </div>
     </div>
-    <div class="row-actions">
-      <a class="text-btn" href="/api/library/items/{encodeURIComponent(item.id)}/download">{t("library_download")}</a>
-      <button type="button" class="text-btn" onclick={startEdit}>{t("library_item_edit")}</button>
-      <button type="button" class="text-btn danger" disabled={deleting} onclick={() => void onDelete()}>{t("library_delete")}</button>
-    </div>
+    <RowMenu
+      items={[
+        { label: t("library_download"), href: `/api/library/items/${encodeURIComponent(item.id)}/download` },
+        { label: t("library_item_edit"), onSelect: startEdit },
+        { label: t("library_delete"), danger: true, disabled: deleting, onSelect: () => void onDelete() },
+      ]}
+    />
   {/if}
 </div>
 
 <style>
-  .library-item { display: flex; flex-direction: column; gap: 8px; padding: 14px 0; }
+  .library-item { display: flex; align-items: center; gap: 14px; padding: 14px 0; }
+  .library-item.editing { flex-direction: column; align-items: stretch; gap: 8px; }
+  .info { flex: 1; min-width: 0; }
   .info .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
-  .info .meta { display: flex; gap: 10px; flex-wrap: wrap; font-family: var(--mono); font-size: 12px; color: var(--faint); margin-top: 4px; }
+  .info .meta { display: flex; gap: 10px; flex-wrap: wrap; font-family: var(--mono); font-size: 14px; color: var(--faint); margin-top: 4px; }
   .edit-fields { display: flex; flex-direction: column; gap: 6px; }
   .edit-fields input {
     padding: 8px 10px; font: inherit; font-size: 14px; border: 1.5px solid var(--ink);
@@ -79,10 +84,9 @@
   }
   .row-actions { display: flex; gap: 14px; flex-wrap: wrap; }
   .text-btn {
-    border: 0; background: none; font: inherit; font-size: 13px; color: var(--muted2);
+    border: 0; background: none; font: inherit; font-size: 14px; color: var(--muted2);
     text-decoration: underline; cursor: pointer; padding: 0;
   }
   .text-btn.primary { color: var(--ink); font-weight: 700; }
-  .text-btn.danger { color: var(--error); }
   .text-btn:disabled { opacity: .5; cursor: default; }
 </style>

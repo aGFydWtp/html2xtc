@@ -6,6 +6,7 @@
   import { t } from "../lib/i18n.svelte";
   import { formatDate } from "../lib/jobs.svelte";
   import DeviceLibraryEditor from "./DeviceLibraryEditor.svelte";
+  import RowMenu from "./RowMenu.svelte";
 
   $effect(() => {
     if (authStore.account && devicesStore.loadState === "idle") {
@@ -124,17 +125,19 @@
                 <span>{lastSeenText(device)}</span>
               </div>
             </div>
-            <div class="row-actions">
-              <button type="button" class="text-btn" onclick={() => startRename(device)}>{t("devices_rename")}</button>
-              <button type="button" class="text-btn" onclick={() => (editingLibraryFor = device)}>{t("devices_edit_library")}</button>
-              <button type="button" class="text-btn" disabled={busyId === device.id} onclick={() => void onRotate(device)}>{t("devices_rotate_token")}</button>
-              <button
-                type="button"
-                class="text-btn danger"
-                disabled={busyId === device.id || device.status === "revoked"}
-                onclick={() => void onRevoke(device)}
-              >{t("devices_revoke")}</button>
-            </div>
+            <RowMenu
+              items={[
+                { label: t("devices_rename"), onSelect: () => startRename(device) },
+                { label: t("devices_edit_library"), onSelect: () => (editingLibraryFor = device) },
+                { label: t("devices_rotate_token"), disabled: busyId === device.id, onSelect: () => void onRotate(device) },
+                {
+                  label: t("devices_revoke"),
+                  danger: true,
+                  disabled: busyId === device.id || device.status === "revoked",
+                  onSelect: () => void onRevoke(device),
+                },
+              ]}
+            />
           {/if}
         </li>
       {/each}
@@ -168,24 +171,24 @@
   .login-gate { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; }
   .note { color: var(--muted); font-size: 14px; }
   ul.items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
-  ul.items li.device-row { padding: 14px 0; display: flex; flex-direction: column; gap: 8px; }
+  ul.items li.device-row { padding: 14px 0; display: flex; align-items: center; gap: 14px; }
   ul.items li.device-row + li.device-row { border-top: 1px solid var(--line); }
   ul.items li.device-row:last-child { border-bottom: 1px solid var(--line); }
+  .info { flex: 1; min-width: 0; }
   .info .title { font-weight: 600; }
-  .info .meta { display: flex; gap: 10px; flex-wrap: wrap; font-family: var(--mono); font-size: 12px; color: var(--faint); margin-top: 4px; }
+  .info .meta { display: flex; gap: 10px; flex-wrap: wrap; font-family: var(--mono); font-size: 14px; color: var(--faint); margin-top: 4px; }
   .info .meta .revoked { color: var(--error); }
-  .edit-fields { display: flex; flex-direction: column; gap: 6px; }
+  .edit-fields { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 0; }
   .edit-fields input {
     padding: 8px 10px; font: inherit; font-size: 14px; border: 1.5px solid var(--ink);
     border-radius: 4px; background: var(--card); color: var(--text);
   }
   .row-actions { display: flex; gap: 14px; flex-wrap: wrap; }
   .text-btn {
-    border: 0; background: none; font: inherit; font-size: 13px; color: var(--muted2);
+    border: 0; background: none; font: inherit; font-size: 14px; color: var(--muted2);
     text-decoration: underline; cursor: pointer; padding: 0;
   }
   .text-btn.primary { color: var(--ink); font-weight: 700; }
-  .text-btn.danger { color: var(--error); }
   .text-btn:disabled { opacity: .5; cursor: default; }
   button.secondary {
     padding: 8px 18px; font: inherit; font-size: 14px; font-weight: 500; border-radius: 4px;
@@ -195,6 +198,6 @@
   .token-warning { font-size: 14px; color: var(--error); margin: 0 0 12px; }
   .token-value {
     display: block; word-break: break-all; padding: 10px 12px; background: var(--panel);
-    border-radius: 4px; font-family: var(--mono); font-size: 13px; margin-bottom: 12px;
+    border-radius: 4px; font-family: var(--mono); font-size: 14px; margin-bottom: 12px;
   }
 </style>

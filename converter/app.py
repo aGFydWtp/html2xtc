@@ -4,10 +4,13 @@
 """HTTP wrapper around the xtctool CLI. Standard library only, except for an
 optional pymupdf import (shipped with xtctool) used to read PDF metadata.
 
-POST /convert  request body = PDF bytes -> response body = XTC bytes
-               (X-Xtc-Title response header carries the PDF title,
-                UTF-8 percent-encoded, when one could be extracted)
-GET  /healthz  liveness probe
+POST /convert            trusted PDF (produced by our own Browser Run step)
+                         request body = PDF bytes -> response body = XTC bytes
+                         (X-Xtc-Title response header carries the PDF title,
+                          UTF-8 percent-encoded, when one could be extracted)
+POST /convert/uploaded-pdf  untrusted, user-uploaded PDF; see pdf_upload.py
+                         for request/response contract and validation.
+GET  /healthz            liveness probe
 
 Error responses carry generic JSON messages; xtctool stderr and tracebacks go
 to the process log only.
@@ -139,6 +142,15 @@ class ConversionError(Exception):
 MAX_TITLE_CHARS = 100
 
 
+def sanitize_title(raw: str) -> str:
+    """Collapse whitespace/control characters in a PDF-metadata-sourced title
+    and cap its length. Shared by the trusted /convert path (read_pdf_metadata
+    below) and the untrusted /convert/uploaded-pdf path (pdf_upload.py)."""
+    title = "".join(" " if ord(c) < 0x20 or ord(c) == 0x7F else c for c in raw)
+    title = " ".join(title.split())
+    return title[:MAX_TITLE_CHARS].strip()
+
+
 def read_pdf_metadata(pdf_bytes: bytes) -> tuple[str, int | None]:
     """Best-effort single-pass read of the PDF /Title metadata (Chromium's
     print-to-PDF stores the page <title> there) and the page count. Returns
@@ -152,10 +164,7 @@ def read_pdf_metadata(pdf_bytes: bytes) -> tuple[str, int | None]:
     except Exception:  # noqa: BLE001 - metadata is optional, never fatal
         logger.exception("failed to read PDF metadata")
         return "", None
-    # Collapse whitespace/control characters and cap the length.
-    title = "".join(" " if ord(c) < 0x20 or ord(c) == 0x7F else c for c in title)
-    title = " ".join(title.split())
-    return title[:MAX_TITLE_CHARS].strip(), page_count
+    return sanitize_title(title), page_count
 
 
 def extract_pdf_title(pdf_bytes: bytes) -> str:
@@ -370,10 +379,25 @@ class Handler(BaseHTTPRequestHandler):
             self._handle_post()
 
     def _handle_post(self) -> None:
-        if self.path != "/convert":
-            self._send_json(404, {"error": "not found"})
-            return
+        if self.path == "/convert":
+            self._handle_convert()
+        elif self.path == "/convert/uploaded-pdf":
+            # Deferred import: pdf_upload imports this module at its own top
+            # level to reuse _run_xtctool/_toml_value/sanitize_title/etc., so
+            # importing it eagerly here (at module load time) would create an
+            # import cycle. By the time a request arrives the server is fully
+            # started and app.py has finished loading, so this is safe and
+            # only pays the sys.modules lookup cost per request.
+            import pdf_upload
 
+            pdf_upload.handle_uploaded_pdf_request(self)
+        else:
+            self._send_json(404, {"error": "not found"})
+
+    def _handle_convert(self) -> None:
+        """POST /convert: PDF bytes produced by our own Browser Run pipeline.
+        Trusted input only -- do not point untrusted/user-uploaded PDFs at
+        this handler. See pdf_upload.py for the untrusted-input path."""
         raw_length = self.headers.get("Content-Length")
         if raw_length is None or raw_length.strip() == "":
             self._send_json(

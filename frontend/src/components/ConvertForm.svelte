@@ -3,35 +3,70 @@
   import { aozora } from "../lib/aozora.svelte";
   import { submitUrl, submitting } from "../lib/convert.svelte";
   import { t } from "../lib/i18n.svelte";
+  import { PdfFileValidationError, validatePdfFile } from "../lib/pdf-file-validate";
+  import PdfDropZone from "./PdfDropZone.svelte";
+  import PdfInputPanel from "./PdfInputPanel.svelte";
 
   let url = $state("");
+  let pdfFile = $state<File | null>(null);
+  let fileError = $state<string | null>(null);
 
   function onsubmit(event: SubmitEvent) {
     event.preventDefault();
     void submitUrl(url);
   }
+
+  function fileErrorText(kind: PdfFileValidationError["kind"]): string {
+    switch (kind) {
+      case "too_large": return t("pdf_err_too_large");
+      case "magic_missing": return t("pdf_err_parse_failed");
+      default: return t("pdf_err_not_pdf");
+    }
+  }
+
+  async function onFileSelected(file: File): Promise<void> {
+    fileError = null;
+    try {
+      await validatePdfFile(file);
+      pdfFile = file;
+    } catch (e) {
+      fileError = e instanceof PdfFileValidationError ? fileErrorText(e.kind) : t("pdf_err_not_pdf");
+    }
+  }
+
+  function onRemoveFile(): void {
+    pdfFile = null;
+    fileError = null;
+  }
 </script>
 
 <section class="convert">
   <p class="intro">{t("intro")}</p>
-  <form {onsubmit}>
-    <div class="form-note"><span>{t("agree_before")}</span><a href="/about#terms">{t("agree_link")}</a><span>{t("agree_after")}</span></div>
-    <div class="input-row">
-      <input
-        type="url"
-        bind:value={url}
-        required
-        placeholder="https://example.com/article"
-        inputmode="url"
-        autocomplete="off"
-        spellcheck="false"
-      />
-      <button class="primary" type="submit" disabled={submitting.busy}>{t("convert")}</button>
+  {#if pdfFile}
+    <PdfInputPanel file={pdfFile} onRemove={onRemoveFile} />
+  {:else}
+    <PdfDropZone onFileSelected={(f) => void onFileSelected(f)}>
+      <form {onsubmit}>
+        <div class="form-note"><span>{t("agree_before")}</span><a href="/about#terms">{t("agree_link")}</a><span>{t("agree_after")}</span></div>
+        <div class="input-row">
+          <input
+            type="url"
+            bind:value={url}
+            required
+            placeholder="https://example.com/article"
+            inputmode="url"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <button class="primary" type="submit" disabled={submitting.busy}>{t("convert")}</button>
+        </div>
+      </form>
+    </PdfDropZone>
+    {#if fileError}<div class="error-text">{fileError}</div>{/if}
+    <div class="aozora-open-row">
+      <button type="button" class="secondary" onclick={() => aozora.show()}>{t("aozora_open")}</button>
     </div>
-  </form>
-  <div class="aozora-open-row">
-    <button type="button" class="secondary" onclick={() => aozora.show()}>{t("aozora_open")}</button>
-  </div>
+  {/if}
 </section>
 
 <style>

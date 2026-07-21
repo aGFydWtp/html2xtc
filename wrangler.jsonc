@@ -14,6 +14,12 @@
 		// each workflow step holds at most one PDF-sized buffer, so 48 MiB
 		// keeps ample headroom under the Worker's 128 MB limit.
 		"MAX_PDF_BYTES": "50331648",
+		// 48 MiB (spec §11.4). Separate var from MAX_PDF_BYTES above — same
+		// value today, but this one bounds a user-uploaded PDF (POST
+		// /jobs/pdf) rather than a Browser-Run-rendered one, and is forwarded
+		// to the Container as X-Max-Pdf-Bytes (src/container.ts) so both
+		// sides agree.
+		"MAX_UPLOAD_PDF_BYTES": "50331648",
 		// WebAuthn relying party ID/origin (src/auth/webauthn.ts, plan §5.1 /
 		// §12). Not secret — the RP ID is the bare domain and the origin is
 		// just that domain's HTTPS URL, both already public via the custom

@@ -39,11 +39,11 @@ Worker
 
 ## 認証
 
-認証は設けていない（一般公開）。API（`/convert` `/jobs` `/download`）・WebUI とも誰でも利用できる。悪用対策はレート制限（次節）と URL 検証（SSRF 対策）で行う。
+認証は設けていない（一般公開）。API（`/convert` `/jobs` `/jobs/pdf` `/download`）・WebUI とも誰でも利用できる。悪用対策はレート制限（次節）と URL 検証（SSRF 対策）で行う。
 
 ## レート制限
 
-変換を起動するエンドポイント（`POST /convert`・`POST /jobs`）は IP ごとに **1 時間あたり 50 件**（固定窓、Worker の var `RATE_LIMIT_PER_HOUR` で変更可）に制限する（`src/ratelimit.ts` / `src/ratelimiter.ts`）。IP は Cloudflare エッジが設定する `CF-Connecting-IP` から取り、IPv6 は /64 プレフィックス単位で数える（プレフィックス内でアドレスを回すすり抜け対策）。超過時は 429 + `Retry-After`（窓リセットまでの秒数）を返す。カウントは IP キーごとの Durable Object が保持し、DO 呼び出しが失敗した場合はブロックせず通す（validate.ts の DoH 障害時と同じ可用性優先）。GET 系（状態確認・ダウンロード）は対象外。
+変換を起動するエンドポイント（`POST /convert`・`POST /jobs`・`POST /jobs/pdf`）は IP ごとに **1 時間あたり 50 件**（固定窓、Worker の var `RATE_LIMIT_PER_HOUR` で変更可）に制限する（`src/ratelimit.ts` / `src/ratelimiter.ts`）。IP は Cloudflare エッジが設定する `CF-Connecting-IP` から取り、IPv6 は /64 プレフィックス単位で数える（プレフィックス内でアドレスを回すすり抜け対策）。超過時は 429 + `Retry-After`（窓リセットまでの秒数）を返す。カウントは IP キーごとの Durable Object が保持し、DO 呼び出しが失敗した場合はブロックせず通す（validate.ts の DoH 障害時と同じ可用性優先）。GET 系（状態確認・ダウンロード）は対象外。
 
 ## API
 
@@ -79,20 +79,59 @@ Worker
 
 ### GET /jobs/{jobId}
 
-ジョブ状態を返す。ポーリングして `completed` を待つ。
+ジョブ状態を返す。ポーリングして `completed` を待つ。URL ジョブ・PDF ジョブ共通のエンドポイント。
 
 ```json
 { "jobId": "<uuid>", "status": "converting" }
 ```
 
-- `status`: `queued` → `rendering` → `converting` → `completed` | `failed`
-- `completed` 時は `downloadUrl`（`/jobs/{jobId}/download`）付き、`failed` 時は `error`（メッセージ）付き。
-- `rendering`/`converting` の区別は R2 上の中間 PDF（`intermediate/{jobId}/source.pdf`）の有無から導出する（Workflows の status() は実行中ステップ名を返さないため）。
+- `status`: URL ジョブは `queued` → `rendering` → `converting` → `completed` | `failed`。PDF ジョブ（下記 `POST /jobs/pdf`）には Browser Run による PDF 生成（rendering）が無いため `queued` → `converting` → `completed` | `failed` のみを取る。
+- `completed` 時は `downloadUrl`（`/jobs/{jobId}/download`）付き、`failed` 時は `error`（メッセージ）付き。PDF ジョブの失敗は原因を問わず一般化した文言（例: `"invalid or unsupported PDF"`, `"XTC conversion failed"`）のみを返し、PyMuPDF/xtctool 側の詳細はログにのみ記録する。
+- `rendering`/`converting` の区別は R2 上の中間 PDF（`intermediate/{jobId}/source.pdf`）の有無から導出する（Workflows の status() は実行中ステップ名を返さないため）。同じ仕組みで、まず入力アップロード PDF（`input/{jobId}/source.pdf`）の有無を見て PDF ジョブかどうかを判定し、PDF ジョブなら常に `converting` を返す（`src/jobs.ts` の `mapPdfInstanceStatus`）。
 - jobId が UUID 形式でなければ 400、不明・Workflows インスタンスの保持期限切れ（`retention` 指定により成功・失敗とも約 1 日）なら 404。なお成果物 XTC 自体は R2 lifecycle により約 24 時間で削除される（ダウンロード側で 404）。
 
 ### GET /jobs/{jobId}/download
 
-R2 上の XTC（`jobs/{jobId}/output.xtc`）を attachment で返す。未完了なら 409 + `{status}`、不明 jobId・成果物期限切れ（約 24 時間）・失敗ジョブなら 404。
+R2 上の XTC（`jobs/{jobId}/output.xtc`）を attachment で返す。URL ジョブ・PDF ジョブ共通（出力キーの命名は共通のため、生成後はどちらのジョブか区別せず同じ経路でダウンロードできる）。未完了なら 409 + `{status}`、不明 jobId・成果物期限切れ（約 24 時間）・失敗ジョブなら 404。
+
+### POST /jobs/pdf
+
+手元の PDF ファイルをアップロードして非同期変換ジョブを作成する（`frontend/` の PDF アップロード UI から使用）。Browser Run を経由せず、アップロードされた PDF をそのまま Container へ渡す。
+
+```http
+POST /jobs/pdf
+Content-Type: application/pdf
+Content-Length: <bytes>
+X-File-Name: <UTF-8 ファイル名を base64url エンコード>
+X-Pdf-Options: <PdfConvertOptions の JSON を base64url エンコード>
+
+<PDF バイト列>
+```
+
+- `Content-Type`: `application/pdf` または `application/x-pdf`（メディアタイプパラメータは無視）のみ許可。それ以外は 415。
+- `Content-Length`: 必須（未指定は 411）。0 以下・非数値は 400。上限（既定 48 MiB = 50331648 バイト、`MAX_UPLOAD_PDF_BYTES` で変更可。`MAX_PDF_BYTES` とは別軸の変数 — 前者は Browser Run が生成する PDF、後者はユーザーがアップロードする PDF の上限）超過は 413。
+- `X-File-Name`（任意）: base64url エンコードした UTF-8 ファイル名。制御文字・パス区切り（`/` `\`）を除去し Unicode 正規化、255 文字まで切り詰め、空なら `document.pdf`、拡張子が無ければ `.pdf` を付与する。表示・XTC タイトル候補にのみ使い、R2 キーや一時ファイルパスには使わない。デコードに失敗しても（表示用途のみのため）400 にはせず既定ファイル名へフォールバックする。
+- `X-Pdf-Options`（任意）: `PdfConvertOptions`（ページ範囲・回転・クロップ・収め方・余白・二値化しきい値・ディザリング・白黒反転。既定値・各項目の制約は `src/types.ts` の `PdfConvertOptions`/`src/pdf-upload.ts` の `DEFAULT_PDF_OPTIONS` を参照）を JSON 化して base64url エンコードした値。省略時は既定値を使う。デコード失敗・JSON 不正・スキーマ違反（値の暗黙補正はしない）はいずれも 400。
+- リクエストボディは Worker 側で `ArrayBuffer` へ全量展開せず、ストリームのまま R2（`input/{jobId}/source.pdf`）へ保存する。保存後に R2 オブジェクトサイズと申告 `Content-Length` を比較し、不一致なら入力を削除して 400（Workflow は開始しない）。
+
+成功時 202:
+
+```json
+{ "jobId": "<uuid>", "statusUrl": "/jobs/<uuid>" }
+```
+
+| ステータス | 意味 |
+|---:|---|
+| 400 | `Content-Length` が 0 以下/非数値、`X-Pdf-Options` のデコード・JSON・スキーマ検証失敗、保存後サイズ不一致 |
+| 411 | `Content-Length` 未指定 |
+| 413 | 申告サイズが上限超過 |
+| 415 | `Content-Type` が `application/pdf`/`application/x-pdf` 以外 |
+| 429 | IP ごとのレート制限超過（`POST /convert`・`POST /jobs` と共通の窓。`Retry-After` ヘッダ付き） |
+| 500 | R2 保存失敗、または Workflow インスタンス作成失敗（いずれの場合も保存済み入力 PDF は best-effort で削除する） |
+
+裏側は `POST /jobs` と同じ Cloudflare Workflow（`ConvertWorkflow`）の PDF 用分岐（`source.kind === "pdf"`）。extract-content・render-pdf ステップは skip し、`convert-uploaded-pdf` ステップ（2 回まで再試行、タイムアウト 12 分）で入力 PDF を Container の `POST /convert/uploaded-pdf` へストリーム転送する。暗号化 PDF・破損 PDF・ページ範囲/選択ページ数の不正・非 PDF・サイズ上限超過・変換タイムアウトは再試行なしで即 `failed`（同じ入力を再試行しても結果が変わらないため）。入力 PDF は成功・失敗を問わず最後に best-effort で削除する（削除に失敗しても `input/` の R2 lifecycle により約 1 日で自動削除される）。
+
+**対応しないもの（MVP）**: PDF 内テキストの再構成・フォント/文字サイズ/行間の変更・横書き⇄縦書きの再組版・OCR・パスワード付き/暗号化 PDF・ページごとの個別設定・見開き分割・変換開始後のジョブキャンセル・48 MiB を超えるアップロード。
 
 ### POST /convert（短ページ用・非推奨。/jobs 推奨）
 
@@ -143,10 +182,11 @@ R2 上の XTC を `application/octet-stream` + `Content-Length` + `Content-Dispo
 | 項目 | 既定値 | 変更方法 |
 |---|---|---|
 | 生成 PDF の上限（Worker） | 48 MiB（`wrangler.jsonc` の var `MAX_PDF_BYTES`。コード上の既定は 20 MiB） | Worker の var `MAX_PDF_BYTES`（バイト数） |
-| 受信 PDF の上限（Container） | 50 MiB | Container の env `MAX_PDF_BYTES`（超過は 413） |
+| 受信 PDF の上限（Container、`/convert`） | 50 MiB | Container の env `MAX_PDF_BYTES`（超過は 413） |
+| アップロード PDF の上限（`POST /jobs/pdf`） | 48 MiB（`wrangler.jsonc` の var `MAX_UPLOAD_PDF_BYTES`。`MAX_PDF_BYTES` とは別軸） | Worker の var `MAX_UPLOAD_PDF_BYTES`（バイト数。Container へ `X-Max-Pdf-Bytes` として転送され、Container 側の上限もこれに揃う） |
 | xtctool タイムアウト | 600 秒 | Container の env `XTC_TIMEOUT_SECONDS`（`src/container.ts` の `envVars` で設定） |
 | 同時変換数（Container 内） | 2 | Container の env `MAX_CONCURRENT_CONVERSIONS`（Semaphore で制限） |
-| 変換リクエストのレート制限（IP ごと・1 時間固定窓） | 50 件 | Worker の var `RATE_LIMIT_PER_HOUR`（「レート制限」参照） |
+| 変換リクエストのレート制限（IP ごと・1 時間固定窓） | 50 件 | Worker の var `RATE_LIMIT_PER_HOUR`（「レート制限」参照。`POST /convert`・`POST /jobs`・`POST /jobs/pdf` 共通） |
 
 ## 青空文庫カタログ同期（D1）
 

@@ -43,6 +43,19 @@ export function outputXtcKey(jobId: string): string {
   return `jobs/${jobId}/output.xtc`;
 }
 
+/**
+ * R2 key for an uploaded PDF (POST /jobs/pdf, src/pdf-upload.ts). Deliberately
+ * its own prefix, not intermediate/: the retention story differs (deleted by
+ * the Workflow immediately on completion, success or failure — spec §9.5 —
+ * with R2 lifecycle only as a same-day safety net, vs. intermediate/'s
+ * "always ~1 day" policy for URL-render diagnostics). Requires its own R2
+ * lifecycle rule (see claudedocs/pdf-upload-investigation.md §5.3 — not
+ * expressible in wrangler.jsonc, applied once via the wrangler CLI).
+ */
+export function inputPdfKey(jobId: string): string {
+  return `input/${jobId}/source.pdf`;
+}
+
 export type JobApiStatus =
   | "queued"
   | "rendering"
@@ -115,6 +128,27 @@ export function mapInstanceStatus(
       // running / waiting / paused / waitingForPause / unknown
       return { jobId, status: hasIntermediatePdf ? "converting" : "rendering" };
   }
+}
+
+/**
+ * Maps a Workflows instance status for a PDF-source job (spec §8.2). PDF
+ * jobs have no rendering phase — there is no Browser Run step, so the
+ * running family always maps to "converting". This delegates to
+ * mapInstanceStatus with hasIntermediatePdf forced true (its running-family
+ * default becomes "converting", exactly what a PDF job needs) rather than
+ * duplicating the queued/complete/errored/terminated branches, which are
+ * identical for both source kinds. mapInstanceStatus itself is untouched —
+ * URL-job behavior does not change (see
+ * claudedocs/pdf-upload-investigation.md §1.6/§5.5). Callers (src/index.ts)
+ * decide which of the two functions to call by probing R2 for
+ * inputPdfKey(jobId): present ⇒ this function; absent ⇒ mapInstanceStatus
+ * with the existing intermediate-PDF probe.
+ */
+export function mapPdfInstanceStatus(
+  jobId: string,
+  instance: WorkflowStatusLike,
+): JobStatusBody {
+  return mapInstanceStatus(jobId, instance, true);
 }
 
 export type DownloadDecision =

@@ -126,7 +126,10 @@
         {@const done = status === "completed"}
         <li>
           <div class="info">
-            <div class="job-title" class:dim={!done}>{j.title || j.url}</div>
+            <div class="job-title" class:dim={!done}>
+              {#if j.sourceType === "pdf"}<span class="src-badge">PDF</span>{/if}
+              {j.title || j.sourceLabel}
+            </div>
             <div class="date">{formatDate(j.createdAt ?? "")}{done ? "" : ` · ${statusLabel(status)}`}</div>
           </div>
           <button
@@ -183,6 +186,10 @@
   ul.jobs .info { flex: 1; min-width: 0; }
   ul.jobs .job-title { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   ul.jobs .job-title.dim { color: var(--faint); }
+  .src-badge {
+    font-family: var(--mono); font-size: 11px; font-weight: 600; padding: 1px 6px;
+    background: var(--panel); color: #4d4a42; border-radius: 4px; margin-right: 6px;
+  }
   ul.jobs .date { font-family: var(--mono); font-size: 14px; color: var(--faint); }
   .more-btn {
     border: 0; background: none; color: var(--muted2); cursor: pointer;

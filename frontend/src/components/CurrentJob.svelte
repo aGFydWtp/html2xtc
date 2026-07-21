@@ -14,7 +14,7 @@
       {@const busy = !entry.note && IN_FLIGHT.includes(job.status)}
       <div class="job-row">
         {#if job.title}<div class="title-line">{job.title}</div>{/if}
-        {#if job.url}<div class="url-line">{job.url}</div>{/if}
+        {#if job.sourceLabel}<div class="url-line">{job.sourceLabel}</div>{/if}
         <div class="status-line">
           {#if busy}<span class="spinner"></span>{/if}
           <span class="badge" class:err={job.status === "failed" || job.status === "expired"}>{statusLabel(job.status)}</span>

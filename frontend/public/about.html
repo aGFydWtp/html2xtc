@@ -84,6 +84,19 @@
     <p data-i18n="overview_p">指定された URL のページを印刷用 CSS を適用して PDF 化し、Xteink X3 向けの XTC ファイルに変換する、個人運営のサービスです。</p>
   </section>
 
+  <section id="pdf-upload">
+    <h2 data-i18n="pdf_upload_h">PDFファイルのアップロードについて</h2>
+    <p data-i18n="pdf_upload_p">お手元の PDF ファイルをアップロードし、ブラウザ内であらかじめ設定を確認したうえで XTC に変換できます。アップロードされた PDF は変換処理の完了後に速やかに削除され、R2 のライフサイクル設定により最長でも 1 日以内には自動的に削除されます（利用者には提供されません）。</p>
+    <p data-i18n="pdf_upload_unsupported_h">次のものには対応していません。</p>
+    <ul>
+      <li data-i18n="pdf_upload_unsupported_1">パスワードで保護された PDF、暗号化された PDF</li>
+      <li data-i18n="pdf_upload_unsupported_2">PDF 内テキストの再構成、フォント・文字サイズ・行間の変更、横書き・縦書きの再組版、OCR</li>
+      <li data-i18n="pdf_upload_unsupported_3">見開き分割、自動ノド除去、自動傾き補正、自動余白検出</li>
+      <li data-i18n="pdf_upload_unsupported_4">注釈・フォーム入力内容の編集、ページごとに異なる個別設定</li>
+      <li data-i18n="pdf_upload_unsupported_5">サイズ上限を超えるファイルのアップロード、変換開始後のジョブキャンセル</li>
+    </ul>
+  </section>
+
   <section id="terms">
     <h2 data-i18n="terms_h">利用規約</h2>
     <ul>
@@ -96,6 +109,7 @@
       <li data-i18n="terms_7">送信された URL および変換処理に関するジョブ情報は、サーバー上に約 24 時間保存された後、自動的に削除されます。生成された XTC ファイルも約 24 時間後に削除対象となり、削除処理に時間を要する場合があります。中間 PDF は変換処理後速やかに削除され、利用者には提供されません。</li>
       <li data-i18n="terms_8">本サービスは現状有姿かつ無保証で提供され、予告なく内容の変更、利用制限または提供停止を行うことがあります。</li>
       <li data-i18n="terms_9">本規約に違反する利用が確認された場合、成果物の削除や利用制限を行うことがあります。</li>
+      <li data-i18n="terms_10">アップロードされた PDF ファイルおよびその変換設定は、変換処理の完了後に速やかに削除され、利用者には提供されません。生成された XTC ファイルの保存期間は他の変換と同じく約 24 時間です。</li>
     </ul>
   </section>
 
@@ -134,6 +148,14 @@ const I18N = {
     sub: "概要・利用規約・クローラー情報・プライバシー・連絡先",
     overview_h: "サービス概要",
     overview_p: "指定された URL のページを印刷用 CSS を適用して PDF 化し、Xteink X3 向けの XTC ファイルに変換する、個人運営のサービスです。",
+    pdf_upload_h: "PDFファイルのアップロードについて",
+    pdf_upload_p: "お手元の PDF ファイルをアップロードし、ブラウザ内であらかじめ設定を確認したうえで XTC に変換できます。アップロードされた PDF は変換処理の完了後に速やかに削除され、R2 のライフサイクル設定により最長でも 1 日以内には自動的に削除されます（利用者には提供されません）。",
+    pdf_upload_unsupported_h: "次のものには対応していません。",
+    pdf_upload_unsupported_1: "パスワードで保護された PDF、暗号化された PDF",
+    pdf_upload_unsupported_2: "PDF 内テキストの再構成、フォント・文字サイズ・行間の変更、横書き・縦書きの再組版、OCR",
+    pdf_upload_unsupported_3: "見開き分割、自動ノド除去、自動傾き補正、自動余白検出",
+    pdf_upload_unsupported_4: "注釈・フォーム入力内容の編集、ページごとに異なる個別設定",
+    pdf_upload_unsupported_5: "サイズ上限を超えるファイルのアップロード、変換開始後のジョブキャンセル",
     terms_h: "利用規約",
     terms_1: "本サービスは、個人が私生活上の読書・学習のために利用する場合に限って利用できます。業務、職務、事業、営業その他これらに類する目的での利用を禁止します。",
     terms_2: "利用者は、著作権者の許諾、適用されるライセンスまたは法令上の例外により、適法に複製・変換できるコンテンツのみを指定してください。",
@@ -144,6 +166,7 @@ const I18N = {
     terms_7: "送信された URL および変換処理に関するジョブ情報は、サーバー上に約 24 時間保存された後、自動的に削除されます。生成された XTC ファイルも約 24 時間後に削除対象となり、削除処理に時間を要する場合があります。中間 PDF は変換処理後速やかに削除され、利用者には提供されません。",
     terms_8: "本サービスは現状有姿かつ無保証で提供され、予告なく内容の変更、利用制限または提供停止を行うことがあります。",
     terms_9: "本規約に違反する利用が確認された場合、成果物の削除や利用制限を行うことがあります。",
+    terms_10: "アップロードされた PDF ファイルおよびその変換設定は、変換処理の完了後に速やかに削除され、利用者には提供されません。生成された XTC ファイルの保存期間は他の変換と同じく約 24 時間です。",
     crawler_h: "クローラー情報",
     crawler_p1: "本サービスは変換時に、対象ページを User-Agent ",
     crawler_p2: " として取得します。アクセスされたくないサイト管理者の方は、この UA を拒否することでブロックできます。",
@@ -164,6 +187,14 @@ const I18N = {
     sub: "Overview · Terms of use · Crawler info · Privacy · Contact",
     overview_h: "Overview",
     overview_p: "A personally run service that renders the page at a given URL to PDF with print CSS applied, then converts it into an XTC file for the Xteink X3.",
+    pdf_upload_h: "About uploading PDF files",
+    pdf_upload_p: "You can upload your own PDF file, check the conversion settings in your browser beforehand, and convert it to XTC. Uploaded PDFs are deleted promptly after conversion finishes, and are automatically deleted within 1 day at the latest by the R2 lifecycle policy (they are never provided back to users).",
+    pdf_upload_unsupported_h: "The following are not supported.",
+    pdf_upload_unsupported_1: "Password-protected or encrypted PDFs",
+    pdf_upload_unsupported_2: "Reflowing text extracted from the PDF, changing fonts, font size or line spacing, changing writing direction, OCR",
+    pdf_upload_unsupported_3: "Splitting two-page spreads, automatic gutter removal, automatic deskewing, automatic margin detection",
+    pdf_upload_unsupported_4: "Editing annotations or form field contents, per-page individual settings",
+    pdf_upload_unsupported_5: "Uploading files above the size limit, cancelling a job after conversion has started",
     terms_h: "Terms of use",
     terms_1: "This service may be used only by individuals for personal, private reading and study. Use for business, professional, commercial or other similar purposes is prohibited.",
     terms_2: "Specify only content you may lawfully copy and convert, based on the rights holder's permission, an applicable license, or a statutory exception.",
@@ -174,6 +205,7 @@ const I18N = {
     terms_7: "Submitted URLs and job data for the conversion are kept on the server for about 24 hours and then deleted automatically. Generated XTC files also become subject to deletion after about 24 hours (the deletion itself may take additional time). Intermediate PDFs are deleted promptly after conversion and are not provided to users.",
     terms_8: "This service is provided as-is and without warranty; its content may be changed, restricted or discontinued without notice.",
     terms_9: "If use in violation of these terms is found, generated files may be deleted and use may be restricted.",
+    terms_10: "Uploaded PDF files and their conversion settings are deleted promptly after conversion finishes and are not provided to users. Generated XTC files are kept for about 24 hours, the same as other conversions.",
     crawler_h: "Crawler info",
     crawler_p1: "When converting, this service fetches the target page with the User-Agent ",
     crawler_p2: ". Site administrators who do not want to be accessed can block it by denying this UA.",

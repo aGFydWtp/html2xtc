@@ -7,6 +7,7 @@ import { authStore } from "./auth.svelte";
 import type { Note } from "./i18n.svelte";
 import { IN_FLIGHT, jobsStore, type JobEntry } from "./jobs.svelte";
 import { libraryStore } from "./library.svelte";
+import { encodeFileNameHeader, encodePdfOptionsHeader, type PdfConvertOptions } from "./pdf-options";
 
 const POLL_MS = 4000;
 const MAX_POLL_FAILURES = 5;
@@ -139,7 +140,7 @@ export async function submitUrl(rawUrl: string, displayTitle?: string): Promise<
       // サーバー由来のエラー文字列はそのまま job に保持し、汎用フォールバックは
       // 言語切替に耐えるよう i18n キーの note として渡す。
       submissionError(
-        { url, jobId: "", status: "failed", error: body?.error },
+        { url, sourceType: "url", sourceLabel: url, jobId: "", status: "failed", error: body?.error },
         body?.error ? null : { key: "http_error", args: [res.status] },
       );
       return;
@@ -147,6 +148,8 @@ export async function submitUrl(rawUrl: string, displayTitle?: string): Promise<
     // 投入直後に履歴へ queued を記録してから並行ポーリングを開始する。
     const job: JobEntry = {
       jobId: body.jobId,
+      sourceType: "url",
+      sourceLabel: url,
       url,
       createdAt: new Date().toISOString(),
       status: "queued",
@@ -156,10 +159,91 @@ export async function submitUrl(rawUrl: string, displayTitle?: string): Promise<
     sessionJobIds.add(job.jobId);
     startPolling(job);
   } catch {
-    submissionError({ url, jobId: "", status: "failed" }, "no_server");
+    submissionError({ url, sourceType: "url", sourceLabel: url, jobId: "", status: "failed" }, "no_server");
   } finally {
     submitting.busy = false;
   }
+}
+
+// PDFアップロードの進捗コールバック。percent は 0〜100（Content-Length が
+// 取得できない場合など計測不能なら null）。
+export type PdfUploadProgress = (percent: number | null) => void;
+
+export interface PdfUploadHandle {
+  abort(): void;
+}
+
+// アップロード自体の結果（ジョブが作られたかどうか）。中断時は ok: false, aborted: true。
+export interface PdfUploadResult {
+  ok: boolean;
+  aborted: boolean;
+}
+
+export interface PdfUploadSession {
+  handle: PdfUploadHandle;
+  done: Promise<PdfUploadResult>;
+}
+
+// PDFファイルをアップロードしてジョブを投入する（仕様書 §7.9）。fetch では
+// 安定した進捗取得が難しいため XMLHttpRequest を使う。ユーザーがアップロード中に
+// キャンセルした場合は handle.abort() で XHR を中断し、ジョブは一切作られない。
+// done は XHR が終端（成功・失敗・中断のいずれか）に達した時点で解決する。
+export function submitPdf(
+  file: File,
+  options: PdfConvertOptions,
+  onProgress: PdfUploadProgress,
+  displayTitle?: string,
+): PdfUploadSession {
+  const xhr = new XMLHttpRequest();
+  xhr.open("POST", "/jobs/pdf");
+  xhr.setRequestHeader("Content-Type", "application/pdf");
+  xhr.setRequestHeader("X-File-Name", encodeFileNameHeader(file.name));
+  xhr.setRequestHeader("X-Pdf-Options", encodePdfOptionsHeader(options));
+
+  xhr.upload.onprogress = (event) => {
+    onProgress(event.lengthComputable ? Math.round((event.loaded / event.total) * 100) : null);
+  };
+
+  const done = new Promise<PdfUploadResult>((resolve) => {
+    xhr.onload = () => {
+      let body: JobsPostResponse | null = null;
+      try {
+        body = xhr.responseText ? JSON.parse(xhr.responseText) as JobsPostResponse : null;
+      } catch { /* JSON でないレスポンスは body=null のまま扱う */ }
+
+      if (xhr.status < 200 || xhr.status >= 300 || !body || typeof body.jobId !== "string") {
+        submissionError(
+          { sourceType: "pdf", sourceLabel: file.name, jobId: "", status: "failed", error: body?.error },
+          body?.error ? null : { key: "http_error", args: [xhr.status] },
+        );
+        resolve({ ok: false, aborted: false });
+        return;
+      }
+
+      const job: JobEntry = {
+        jobId: body.jobId,
+        sourceType: "pdf",
+        sourceLabel: file.name,
+        createdAt: new Date().toISOString(),
+        status: "queued",
+        ...(displayTitle ? { title: displayTitle } : {}),
+      };
+      jobsStore.upsert({ ...job });
+      sessionJobIds.add(job.jobId);
+      startPolling(job);
+      resolve({ ok: true, aborted: false });
+    };
+
+    xhr.onerror = () => {
+      submissionError({ sourceType: "pdf", sourceLabel: file.name, jobId: "", status: "failed" }, "no_server");
+      resolve({ ok: false, aborted: false });
+    };
+
+    xhr.onabort = () => resolve({ ok: false, aborted: true }); // ユーザーによる中断: ジョブは作られない
+  });
+
+  xhr.send(file);
+  return { handle: { abort: () => xhr.abort() }, done };
 }
 
 // このセッションで投入したジョブが completed へ遷移した瞬間、ログイン中なら

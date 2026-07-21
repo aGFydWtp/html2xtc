@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // i18n。LANG_KEY は about.html（静的ページ）と共通で、言語選択が両ページ間で引き継がれる。
 
+import { resolveServerErrorKey } from "./server-error-text";
+
 export type Lang = "ja" | "en";
 
 export type JobStatus = "queued" | "rendering" | "converting" | "completed" | "failed" | "expired";
@@ -35,6 +37,54 @@ export interface Messages {
   no_server: string;
   http_error: (s: number) => string;
   pdf_too_large: string;
+
+  // --- PDFアップロード入力（実装仕様書 §7, §14） -----------------------------
+  pdf_or_drop: string;
+  pdf_pick_file: string;
+  pdf_drop_active: string;
+  pdf_file_label: string;
+  pdf_size_label: string;
+  pdf_pages_label: string;
+  pdf_remove_file: string;
+  pdf_preview_note: string;
+  pdf_mode_source: string;
+  pdf_mode_x3: string;
+  pdf_page_indicator: (n: number, total: number) => string;
+  pdf_target_pages: string;
+  pdf_pages_hint: string;
+  pdf_rotation: string;
+  pdf_fit: string;
+  pdf_fit_contain: string;
+  pdf_fit_cover: string;
+  pdf_margin: string;
+  pdf_advanced: string;
+  pdf_crop: string;
+  pdf_crop_top: string;
+  pdf_crop_right: string;
+  pdf_crop_bottom: string;
+  pdf_crop_left: string;
+  pdf_threshold: string;
+  pdf_dither: string;
+  pdf_dither_on: string;
+  pdf_dither_off: string;
+  pdf_dither_strength: string;
+  pdf_invert: string;
+  pdf_invert_on: string;
+  pdf_invert_off: string;
+  pdf_uploading: (percent: number) => string;
+  pdf_uploading_indeterminate: string;
+  pdf_options_invalid: string;
+  pdf_crop_sum_invalid: string;
+  pdf_err_not_pdf: string;
+  pdf_err_too_large: string;
+  pdf_err_encrypted: string;
+  pdf_err_parse_failed: string;
+  pdf_err_page_range_invalid: string;
+  pdf_err_no_pages_selected: string;
+  pdf_err_upload_failed: string;
+  pdf_err_convert_failed: string;
+  pdf_err_timeout: string;
+
   aozora_open: string;
   aozora_title: string;
   aozora_hint: string;
@@ -165,6 +215,53 @@ export const I18N: Record<Lang, Messages> = {
     no_server: "サーバーに接続できません。",
     http_error: (s) => `エラー (HTTP ${s})`,
     pdf_too_large: "生成された PDF がサイズ上限を超えました。「レイアウトを保持して変換する」を有効にすると変換できる場合があります。",
+
+    pdf_or_drop: "または PDF をドラッグ＆ドロップ",
+    pdf_pick_file: "ファイルを選択",
+    pdf_drop_active: "ここにドロップ",
+    pdf_file_label: "ファイル",
+    pdf_size_label: "サイズ",
+    pdf_pages_label: "ページ数",
+    pdf_remove_file: "ファイルを解除",
+    pdf_preview_note: "プレビューは変換結果の目安です。PDFの描画方式の違いにより、実際のXTCとわずかに異なる場合があります。",
+    pdf_mode_source: "元PDF",
+    pdf_mode_x3: "X3プレビュー",
+    pdf_page_indicator: (n, total) => `${n} / ${total}`,
+    pdf_target_pages: "対象ページ",
+    pdf_pages_hint: "例: 1-10, 1,3,5-8",
+    pdf_rotation: "回転",
+    pdf_fit: "収め方",
+    pdf_fit_contain: "全体を収める",
+    pdf_fit_cover: "画面を埋める",
+    pdf_margin: "余白",
+    pdf_advanced: "詳細設定",
+    pdf_crop: "クロップ（上/右/下/左）",
+    pdf_crop_top: "上",
+    pdf_crop_right: "右",
+    pdf_crop_bottom: "下",
+    pdf_crop_left: "左",
+    pdf_threshold: "二値化しきい値",
+    pdf_dither: "ディザリング",
+    pdf_dither_on: "あり",
+    pdf_dither_off: "なし",
+    pdf_dither_strength: "ディザリング強度",
+    pdf_invert: "白黒反転",
+    pdf_invert_on: "する",
+    pdf_invert_off: "しない",
+    pdf_uploading: (percent) => `アップロード中 ${percent}%`,
+    pdf_uploading_indeterminate: "アップロード中…",
+    pdf_options_invalid: "設定値を確認してください。",
+    pdf_crop_sum_invalid: "クロップは上下・左右それぞれの合計が80%未満になるように設定してください。",
+    pdf_err_not_pdf: "PDFファイルを選択してください。",
+    pdf_err_too_large: "ファイルサイズが上限を超えています。",
+    pdf_err_encrypted: "パスワードで保護されたPDFには対応していません。",
+    pdf_err_parse_failed: "PDFを読み込めませんでした。ファイルが壊れている可能性があります。",
+    pdf_err_page_range_invalid: "ページ範囲を確認してください。",
+    pdf_err_no_pages_selected: "変換するページを1ページ以上選択してください。",
+    pdf_err_upload_failed: "PDFのアップロードに失敗しました。",
+    pdf_err_convert_failed: "XTCへの変換に失敗しました。",
+    pdf_err_timeout: "PDFが大きいため、変換が時間内に完了しませんでした。",
+
     aozora_open: "青空文庫から選択",
     aozora_title: "青空文庫から選択",
     aozora_hint: "タイトル・作者名で検索",
@@ -292,6 +389,53 @@ export const I18N: Record<Lang, Messages> = {
     no_server: "Could not reach the server.",
     http_error: (s) => `Error (HTTP ${s})`,
     pdf_too_large: "The rendered PDF exceeds the size limit. Enabling “Keep the page layout” may allow the conversion to succeed.",
+
+    pdf_or_drop: "or drag and drop a PDF",
+    pdf_pick_file: "Choose file",
+    pdf_drop_active: "Drop here",
+    pdf_file_label: "File",
+    pdf_size_label: "Size",
+    pdf_pages_label: "Pages",
+    pdf_remove_file: "Remove file",
+    pdf_preview_note: "The preview is only an approximation of the conversion result. Because the browser and server render PDFs differently, the final XTC file may look slightly different.",
+    pdf_mode_source: "Original PDF",
+    pdf_mode_x3: "X3 preview",
+    pdf_page_indicator: (n, total) => `${n} / ${total}`,
+    pdf_target_pages: "Pages",
+    pdf_pages_hint: "e.g. 1-10, 1,3,5-8",
+    pdf_rotation: "Rotation",
+    pdf_fit: "Fit",
+    pdf_fit_contain: "Fit inside",
+    pdf_fit_cover: "Fill screen",
+    pdf_margin: "Margin",
+    pdf_advanced: "Advanced settings",
+    pdf_crop: "Crop (top/right/bottom/left)",
+    pdf_crop_top: "Top",
+    pdf_crop_right: "Right",
+    pdf_crop_bottom: "Bottom",
+    pdf_crop_left: "Left",
+    pdf_threshold: "Threshold",
+    pdf_dither: "Dithering",
+    pdf_dither_on: "On",
+    pdf_dither_off: "Off",
+    pdf_dither_strength: "Dither strength",
+    pdf_invert: "Invert colors",
+    pdf_invert_on: "On",
+    pdf_invert_off: "Off",
+    pdf_uploading: (percent) => `Uploading ${percent}%`,
+    pdf_uploading_indeterminate: "Uploading…",
+    pdf_options_invalid: "Please check the conversion settings.",
+    pdf_crop_sum_invalid: "Keep the top+bottom and left+right crop totals under 80%.",
+    pdf_err_not_pdf: "Please select a PDF file.",
+    pdf_err_too_large: "The file size exceeds the limit.",
+    pdf_err_encrypted: "Password-protected PDFs are not supported.",
+    pdf_err_parse_failed: "Could not read the PDF. The file may be corrupted.",
+    pdf_err_page_range_invalid: "Please check the page range.",
+    pdf_err_no_pages_selected: "Select at least one page to convert.",
+    pdf_err_upload_failed: "Failed to upload the PDF.",
+    pdf_err_convert_failed: "Failed to convert to XTC.",
+    pdf_err_timeout: "The PDF is too large and the conversion did not finish in time.",
+
     aozora_open: "Choose from Aozora Bunko",
     aozora_title: "Choose from Aozora Bunko",
     aozora_hint: "Search by title or author",
@@ -429,11 +573,11 @@ export function noteText(note: Note): string {
 }
 
 // サーバーのエラー文字列は未翻訳で届きそのまま表示されるが、既知のものは i18n キーへ
-// 写像して言語切替に追従させる。サイズ超過メッセージは安定した前方部分でマッチする
-// （バイト値は MAX_PDF_BYTES の設定に追従する）。未知のものはそのまま表示。
+// 写像して言語切替に追従させる。対応表は resolveServerErrorKey（server-error-text.ts）
+// に切り出してあり、詳細な対応関係はそこのコメントを参照。未知のものはそのまま表示。
 export function serverErrorText(err: string): string {
-  if (/rendered PDF exceeds the \d+ byte limit/.test(err)) return t("pdf_too_large");
-  return err;
+  const key = resolveServerErrorKey(err);
+  return key ? t(key) : err;
 }
 
 // 未知のステータス値はそのまま表示する（サーバー側が先行して新ステータスを返した場合の保険）

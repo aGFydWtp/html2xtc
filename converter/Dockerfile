@@ -60,6 +60,7 @@ RUN mkdir -p /tmp/numba-cache && chown appuser:appuser /tmp/numba-cache
 WORKDIR /app
 
 COPY app.py /app/app.py
+COPY pdf_upload.py /app/pdf_upload.py
 COPY config-x3.toml /app/config-x3.toml
 
 USER appuser

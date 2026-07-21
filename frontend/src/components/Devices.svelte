@@ -8,10 +8,11 @@
   import DeviceLibraryEditor from "./DeviceLibraryEditor.svelte";
   import RowMenu from "./RowMenu.svelte";
 
+  // タブ表示（マウント）のたびに再取得して常に最新を表示する。タブは
+  // App.svelte の {#if} で破棄されるため、マウント＝タブ切り替え 1 回に対応。
+  // 既にデータがある場合は load() が既存表示を維持したまま裏で更新する。
   $effect(() => {
-    if (authStore.account && devicesStore.loadState === "idle") {
-      void devicesStore.load();
-    }
+    if (authStore.account) void devicesStore.load();
   });
 
   let renamingId = $state<string | null>(null);

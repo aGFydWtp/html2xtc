@@ -65,14 +65,28 @@ class LibraryStore {
   savingJobIds = $state<Set<string>>(new Set());
   saveFailedJobIds = $state<Set<string>>(new Set());
 
+  /** load() の重複発火防止（タブ連打などでのリクエスト多重化を避ける）。 */
+  #loadInFlight = false;
+
+  /**
+   * 一覧を取得する。初回（loadState が idle/fail）はローディング表示を出すが、
+   * 既に loaded の場合は既存の一覧を表示したまま裏で再取得し、完了時に
+   * 差し替える（タブ再表示時のチラつき防止）。再取得の失敗は既存データを
+   * 残して静かに握りつぶす（store 内の他の更新系と同じ流儀）。
+   */
   async load(): Promise<void> {
-    this.loadState = "loading";
+    if (this.#loadInFlight) return;
+    this.#loadInFlight = true;
+    const isRefresh = this.loadState === "loaded";
+    if (!isRefresh) this.loadState = "loading";
     try {
       const body = await apiGet<ItemsResponse>("/api/library/items");
       this.items = parseItems(body.items);
       this.loadState = "loaded";
     } catch {
-      this.loadState = "fail";
+      if (!isRefresh) this.loadState = "fail";
+    } finally {
+      this.#loadInFlight = false;
     }
   }
 
@@ -147,9 +161,9 @@ class LibraryStore {
    * Clears cached state so the next login re-fetches from scratch. Called
    * by authStore on logout and on every successful login/register — without
    * this, a same-tab account switch would keep showing the previous
-   * account's library (loadState stays "loaded" so the load-on-idle $effect
-   * in Library.svelte never re-fires) even though the server correctly
-   * scopes every request to the new account.
+   * account's library while the mount-time refresh runs in the background
+   * (loadState stays "loaded" so load() treats it as a silent refresh) even
+   * though the server correctly scopes every request to the new account.
    */
   reset(): void {
     this.items = [];

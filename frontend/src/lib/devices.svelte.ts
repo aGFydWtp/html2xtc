@@ -121,14 +121,28 @@ class DevicesStore {
   devices = $state<Device[]>([]);
   loadState = $state<"idle" | "loading" | "loaded" | "fail">("idle");
 
+  /** load() の重複発火防止（タブ連打などでのリクエスト多重化を避ける）。 */
+  #loadInFlight = false;
+
+  /**
+   * 一覧を取得する。初回（loadState が idle/fail）はローディング表示を出すが、
+   * 既に loaded の場合は既存の一覧を表示したまま裏で再取得し、完了時に
+   * 差し替える（タブ再表示時のチラつき防止）。再取得の失敗は既存データを
+   * 残して静かに握りつぶす（store 内の他の更新系と同じ流儀）。
+   */
   async load(): Promise<void> {
-    this.loadState = "loading";
+    if (this.#loadInFlight) return;
+    this.#loadInFlight = true;
+    const isRefresh = this.loadState === "loaded";
+    if (!isRefresh) this.loadState = "loading";
     try {
       const body = await apiGet<DevicesResponse>("/api/devices");
       this.devices = parseDevices(body.devices);
       this.loadState = "loaded";
     } catch {
-      this.loadState = "fail";
+      if (!isRefresh) this.loadState = "fail";
+    } finally {
+      this.#loadInFlight = false;
     }
   }
 

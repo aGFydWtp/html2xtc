@@ -43,7 +43,7 @@
 </section>
 
 <style>
-  section.convert { padding: 30px 0 30px; border-bottom: 1px solid var(--line); }
+  section.convert { padding: 30px 0 30px; }
   .intro { margin: 0 0 16px; color: var(--muted2); line-height: 1.8; }
   form .input-row {
     display: flex; border: 1.5px solid var(--ink); background: var(--card);

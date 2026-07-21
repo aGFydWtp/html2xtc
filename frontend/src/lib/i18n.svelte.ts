@@ -86,6 +86,7 @@ export interface Messages {
   library_saving: string;
   library_saved: string;
   library_saved_inline: string;
+  library_saving_inline: string;
   library_save_failed: string;
 
   devices_load_failed: string;
@@ -206,6 +207,7 @@ export const I18N: Record<Lang, Messages> = {
     library_saving: "保存中…",
     library_saved: "保存済み",
     library_saved_inline: "ライブラリ保存済み",
+    library_saving_inline: "ライブラリ保存中…",
     library_save_failed: "保存に失敗しました。",
 
     devices_load_failed: "端末一覧の取得に失敗しました。",
@@ -324,6 +326,7 @@ export const I18N: Record<Lang, Messages> = {
     library_saving: "Saving…",
     library_saved: "Saved",
     library_saved_inline: "Saved to library",
+    library_saving_inline: "Saving to library…",
     library_save_failed: "Failed to save.",
 
     devices_load_failed: "Failed to load your devices.",

@@ -164,7 +164,8 @@ export async function submitUrl(rawUrl: string, keepLayout: boolean, displayTitl
 
 // このセッションで投入したジョブが completed へ遷移した瞬間、ログイン中なら
 // ライブラリへ自動保存する。失敗しても何もしない（saveFromJob は throw せず
-// false を返す）— 手動保存（SaveToLibraryButton）に任せる。sessionJobIds.delete
+// false を返し、失敗表示は SaveToLibraryButton が libraryStore の
+// saveFailedJobIds を見て行う）— 再保存は History の行メニューに任せる。sessionJobIds.delete
 // が true を返すのは 1 回だけなので、同一ジョブで二重発火しない。
 function maybeAutoSave(job: JobEntry): void {
   if (job.status !== "completed") return;

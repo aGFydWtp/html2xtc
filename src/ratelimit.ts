@@ -34,6 +34,23 @@ export function resolveRateLimitPerHour(
     : DEFAULT_RATE_LIMIT_PER_HOUR;
 }
 
+const DEFAULT_TEXT_PREVIEW_RATE_LIMIT_PER_HOUR = 20;
+
+/**
+ * Requests allowed per IP key per window for POST /preview/text (preview
+ * spec §8), namespaced away from the /convert+/jobs limit via
+ * purposeRateLimitKey/enforcePurposeRateLimit (src/ratelimiter.ts). Same
+ * fallback shape as resolveRateLimitPerHour above.
+ */
+export function resolveTextPreviewRateLimitPerHour(
+  env: Pick<Env, "TEXT_PREVIEW_RATE_LIMIT_PER_HOUR">,
+): number {
+  const configured = Number(env.TEXT_PREVIEW_RATE_LIMIT_PER_HOUR);
+  return Number.isInteger(configured) && configured > 0
+    ? configured
+    : DEFAULT_TEXT_PREVIEW_RATE_LIMIT_PER_HOUR;
+}
+
 /**
  * Normalizes a client IP (the CF-Connecting-IP header value) into the name
  * of the Durable Object that counts its requests.

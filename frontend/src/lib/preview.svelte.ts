@@ -68,6 +68,26 @@ export async function openPreview(jobId: string): Promise<void> {
   preview.state = { jobId, page: 0 };
 }
 
+/**
+ * 同期プレビュー（POST /preview/text）で受け取った ArrayBuffer を、既存の
+ * ジョブID前提の openPreview と同じ状態機械（previewCache / preview.state）
+ * へそのまま乗せる。fetch を一切行わない点だけが openPreview と異なる — jobId
+ * の代わりに呼び出し側が渡す（衝突しない限り何でもよい）固定キーを使う。
+ * ダウンロード履歴・ジョブとは無関係なため previewBroken/markJobExpired は
+ * 触らない（実装仕様書 §18: プレビューを履歴へ保存しない）。
+ */
+export function openPreviewFromBytes(bytes: ArrayBuffer, key = "__preview__"): void {
+  try {
+    // 上限超過時は挿入順で最古のエントリを evict（openPreview と同じ FIFO）。
+    if (previewCache.size >= PREVIEW_CACHE_MAX) previewCache.delete(previewCache.keys().next().value!);
+    previewCache.set(key, parseXtc(bytes));
+  } catch {
+    preview.state = { jobId: key, note: "preview_parse_fail" };
+    return;
+  }
+  preview.state = { jobId: key, page: 0 };
+}
+
 export function movePreview(delta: number): void {
   const s = preview.state;
   if (!s || !("page" in s) || !previewCache.has(s.jobId)) return;

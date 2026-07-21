@@ -28,6 +28,7 @@ import {
 import { registerLibraryRoutes } from "./library/routes";
 import { registerOpdsRoutes } from "./opds/routes";
 import { renderPdf, renderPdfFromHtml } from "./pdf";
+import { handleTextPreview } from "./preview/text-preview";
 import {
   checkContentLength,
   decodeFilenameHeader,
@@ -181,6 +182,19 @@ async function route(request: Request, env: Env): Promise<Response> {
       return methodNotAllowed("POST");
     }
     return handleCreateTextJob(request, env);
+  }
+
+  // Must come before the /jobs/:jobId matcher below, same reasoning as
+  // /jobs/pdf and /jobs/text above (this path doesn't collide with that
+  // matcher's shape, but keeping every fixed POST endpoint above the dynamic
+  // matchers is the established convention here). The rate limit is applied
+  // inside handleTextPreview itself (preview spec §9's order: Content-Type
+  // -> Content-Length -> rate limit -> JSON parse -> ...), not at dispatch.
+  if (pathname === "/preview/text") {
+    if (request.method !== "POST") {
+      return methodNotAllowed("POST");
+    }
+    return handleTextPreview(request, env);
   }
 
   if (pathname === "/api/books") {

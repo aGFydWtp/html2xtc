@@ -1,7 +1,9 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
+  import { onDestroy } from "svelte";
   import { submitText, type TextUploadHandle } from "../lib/convert.svelte";
   import { t } from "../lib/i18n.svelte";
+  import { openPreviewFromBytes } from "../lib/preview.svelte";
   import { decodeTextBytes, TextDecodeError, type EncodingDetectionResult } from "../lib/text-decode";
   import { countCharacters, countLines, normalizeText } from "../lib/text-normalize";
   import {
@@ -11,6 +13,11 @@
     type TextConvertOptions,
     type TextPresetId,
   } from "../lib/text-options";
+  import {
+    requestTextXtcPreview,
+    resolveTextPreviewErrorMessageKey,
+    TextPreviewRequestError,
+  } from "../lib/text-xtc-preview";
   import TextOptions from "./TextOptions.svelte";
   import TextPagePreview from "./TextPagePreview.svelte";
   import TextPreview from "./TextPreview.svelte";
@@ -34,6 +41,14 @@
   let uploadPercent = $state<number | null>(null);
   let uploadFailedText = $state<string | null>(null);
   let uploadHandleRef: TextUploadHandle | null = null;
+
+  // X3実機プレビュー（POST /preview/text、実装仕様書 §18）。世代カウンタ +
+  // AbortController で、設定変更後の再生成が古い結果で新しい結果を上書きしない
+  // ようにする。古い結果は届いても破棄するだけで、UI上の表示は常に最新世代のみ。
+  let x3PreviewGeneration = 0;
+  let x3PreviewController: AbortController | null = null;
+  let x3PreviewGenerating = $state(false);
+  let x3PreviewErrorText = $state<string | null>(null);
 
   const charCount = $derived(countCharacters(normalizedText));
   const lineCount = $derived(countLines(normalizedText));
@@ -148,6 +163,45 @@
   function cancelUpload(): void {
     uploadHandleRef?.abort();
   }
+
+  // X3実機プレビュー生成（実装仕様書 §14/§18）。クリックのたびに前回の
+  // リクエストを中止して新しい世代を開始する — 設定変更後の再クリックがそのまま
+  // 「中止して再生成」になる（専用の中止ボタンは設けない、仕様書のUIモック通り）。
+  async function generateX3Preview(): Promise<void> {
+    x3PreviewController?.abort();
+    const generation = ++x3PreviewGeneration;
+    const controller = new AbortController();
+    x3PreviewController = controller;
+    x3PreviewGenerating = true;
+    x3PreviewErrorText = null;
+    try {
+      const bytes = await requestTextXtcPreview(normalizedText, options, controller.signal);
+      if (generation !== x3PreviewGeneration) return; // 古い世代の結果は破棄
+      openPreviewFromBytes(bytes);
+    } catch (e) {
+      if (generation !== x3PreviewGeneration) return;
+      if (e instanceof DOMException && e.name === "AbortError") return; // 中断は無視
+      const code = e instanceof TextPreviewRequestError ? e.code : "UNKNOWN";
+      x3PreviewErrorText = t(resolveTextPreviewErrorMessageKey(code));
+    } finally {
+      if (generation === x3PreviewGeneration) {
+        x3PreviewGenerating = false;
+        x3PreviewController = null;
+      }
+    }
+  }
+
+  // コンポーネント破棄時（TXTファイル削除等でこのパネルが消える場合）、in-flight の
+  // プレビューリクエストを中止する。中止し忘れると、最大 TEXT_PREVIEW_TIMEOUT_MS
+  // (120秒) 後にレスポンスが届いた時点でモジュールグローバルの preview ストアへ
+  // openPreviewFromBytes が呼ばれ、既にこのパネルとは無関係になった画面へ勝手に
+  // プレビューダイアログが開いてしまう。世代カウンタも同時に進めておくことで、
+  // 万一 abort() が AbortError 以外の形で解決した場合でも既存の世代ガード
+  // （generation !== x3PreviewGeneration）が二重に守る。
+  onDestroy(() => {
+    x3PreviewController?.abort();
+    x3PreviewGeneration++;
+  });
 </script>
 
 <div class="text-panel">
@@ -179,6 +233,18 @@
       <p class="preview-note">{t("text_preview_note")}</p>
     {:else}
       <TextPagePreview {normalizedText} {options} />
+      <div class="x3-preview-actions">
+        <button
+          type="button"
+          class="secondary"
+          disabled={!optionsValid}
+          onclick={() => void generateX3Preview()}
+        >
+          {x3PreviewGenerating ? t("text_x3_preview_generating") : t("text_x3_preview_button")}
+        </button>
+        {#if x3PreviewErrorText}<div class="error-text">{x3PreviewErrorText}</div>{/if}
+        <p class="preview-note">{t("text_x3_preview_note")}</p>
+      </div>
     {/if}
   {:else if status === "loading"}
     <div class="preview-placeholder"><span class="spinner"></span></div>
@@ -265,6 +331,8 @@
   .tab[aria-pressed="true"] { background: var(--ink); color: var(--ink-text); font-weight: 700; }
 
   .preview-note { margin: 0; font-size: 12px; color: var(--muted); line-height: 1.7; }
+  .x3-preview-actions { display: flex; flex-direction: column; gap: 8px; align-items: center; margin-top: 4px; }
+  .x3-preview-actions button.secondary { align-self: center; }
 
   .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; align-self: flex-start; }
   .seg button {

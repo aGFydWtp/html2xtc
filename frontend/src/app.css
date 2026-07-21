@@ -52,7 +52,9 @@ dialog.simple-dialog {
   padding: 0; border: 1.5px solid var(--ink); border-radius: 4px;
   background: var(--bg); color: var(--text);
   width: min(420px, calc(100vw - 32px));
-  max-height: calc(100vh - 96px);
+  /* iOS Safari ではツールバー分を除いた dvh を優先（非対応環境は vh にフォールバック） */
+  max-height: min(80vh, calc(100vh - 96px));
+  max-height: min(80dvh, calc(100dvh - 96px));
   box-shadow: 4px 4px 0 rgba(28, 26, 23, .35);
 }
 dialog.simple-dialog[open] { display: flex; flex-direction: column; }
@@ -69,7 +71,9 @@ dialog.simple-dialog.wide { width: min(560px, calc(100vw - 32px)); }
   font-size: 14px; line-height: 1; cursor: pointer; font-family: inherit;
 }
 .simple-dialog .dlg-x:hover { color: var(--text); }
-.simple-dialog .dlg-body { padding: 18px 22px; overflow-y: auto; flex: 1; }
+/* 中央の body のみ伸縮しスクロール（flex-basis: auto + min-height: 0 は
+   iOS Safari で高さが潰れないための組み合わせ）。head / actions は flex: none 固定。 */
+.simple-dialog .dlg-body { padding: 18px 22px; overflow-y: auto; flex: 1 1 auto; min-height: 0; }
 .simple-dialog .field { display: flex; flex-direction: column; gap: 6px; font-size: 14px; color: var(--muted2); margin-bottom: 14px; }
 .simple-dialog .field input[type="text"] {
   padding: 10px 12px; font: inherit; font-size: 16px; border: 1.5px solid var(--ink);

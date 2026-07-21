@@ -154,15 +154,13 @@
   section.library { padding: 0 0 24px; }
   .login-gate { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; }
   .note { color: var(--muted); font-size: 14px; }
-  /* 折り返さず横スクロール。スクロールバーは細く。 */
+  /* 折り返さず横スクロール。スクロールバーは非表示（スワイプ/ホイールで操作可能）。 */
   .bulk-bar {
     display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
-    flex-wrap: nowrap; overflow-x: auto; padding-bottom: 4px;
-    scrollbar-width: thin; scrollbar-color: var(--line) transparent;
+    flex-wrap: nowrap; overflow-x: auto;
+    scrollbar-width: none;
   }
-  .bulk-bar::-webkit-scrollbar { height: 4px; }
-  .bulk-bar::-webkit-scrollbar-thumb { background: var(--line); border-radius: 2px; }
-  .bulk-bar::-webkit-scrollbar-track { background: transparent; }
+  .bulk-bar::-webkit-scrollbar { display: none; }
   /* 選択 0 件時も高さを保ったまま隠す（レイアウトシフト防止） */
   .bulk-bar.invisible { visibility: hidden; }
   .bulk-bar > :global(*) { flex: none; }

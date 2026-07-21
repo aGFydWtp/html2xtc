@@ -11,6 +11,25 @@
 // PDFアップロード系のエラー文字列は src/pdf-upload.ts#uploadedPdfErrorMessage が
 // Container（converter/pdf_upload.py）の機械可読な `code` から決定する安定文字列。
 // サイズ超過メッセージだけはバイト値を埋め込むため正規表現でマッチする。
+//
+// TXTアップロード系（text_err_*）: src/text-upload.ts#textPrepareErrorMessage
+// （prepare-text ステップの NonRetryableError 文言）および src/workflow.ts の
+// runTextSource（render-text-pdf/convert-xtc ステップの NonRetryableError 文言）
+// を正として突き合わせ済み（2026-07-21 バックエンド実装確定後に確認）。
+//
+// 以下は意図的にマッピングしていない（実装を確認したうえでの判断）:
+// - "Content-Type must be text/plain or application/octet-stream"（415）:
+//   PDF側の同種メッセージ「Content-Type must be application/pdf or
+//   application/x-pdf」も未マッピングであり、既存の方針と揃えた。フロントは
+//   常に Content-Type: text/plain を送るため、通常到達しない。
+// - "uploaded text file is missing" / "prepared article HTML is missing" /
+//   "intermediate PDF is missing": R2オブジェクトが処理中に失効した場合のみ
+//   発生する内部的なエラーで、PDF側の対応する文言（"uploaded PDF is missing"
+//   等）も同様に未マッピング。
+// - 「フォント失敗」（仕様書§19.1）: buildInlineFontCss はフォント取得に失敗
+//   してもジョブを失敗させないフェイルソフト設計（src/workflow.ts の
+//   runTextSource コメント参照）。ジョブの error として届くことはないため、
+//   対応するサーバー文字列自体が存在しない。
 import type { Messages } from "./i18n.svelte";
 
 export type ServerErrorKey = keyof Pick<
@@ -25,10 +44,26 @@ export type ServerErrorKey = keyof Pick<
   | "pdf_err_no_pages_selected"
   | "pdf_err_timeout"
   | "pdf_err_convert_failed"
+  | "text_err_empty"
+  | "text_err_too_large"
+  | "text_err_encoding_unknown"
+  | "text_err_utf16"
+  | "text_err_binary"
+  | "text_err_too_many_chars"
+  | "text_err_too_many_lines"
+  | "text_err_line_too_long"
+  | "text_err_pdf_too_large"
 >;
 
 /** サーバーのエラー文字列から対応する i18n キーを解決する。未知のものは null。 */
 export function resolveServerErrorKey(err: string): ServerErrorKey | null {
+  // TXT側の「組版後PDFが大きすぎる」（末尾 "; reduce the font size or margins"）は、
+  // 接頭辞が URL/PDF側の pdf_too_large 用メッセージと共通のため、より限定的な
+  // こちらを先にチェックする（src/workflow.ts#runTextSource の render-text-pdf /
+  // convert-xtc ステップ）。
+  if (/rendered PDF exceeds the \d+ byte limit; reduce the font size or margins/.test(err)) {
+    return "text_err_pdf_too_large";
+  }
   if (/rendered PDF exceeds the \d+ byte limit/.test(err)) return "pdf_too_large";
   if (/uploaded PDF exceeds the \d+ byte limit/.test(err)) return "pdf_err_too_large";
   if (err === "uploaded file is not a PDF") return "pdf_err_not_pdf";
@@ -41,7 +76,23 @@ export function resolveServerErrorKey(err: string): ServerErrorKey | null {
   // Container コード）。汎用文言だが「解析不能」が最も近い意味なのでそこへ寄せる。
   if (err === "invalid or unsupported PDF") return "pdf_err_parse_failed";
   if (/XTC conversion timed out; the document is too large/.test(err)) return "pdf_err_timeout";
-  // URL/PDF 両ソースの Workflow が最終的に投げる汎用メッセージ（src/workflow.ts）。
+  // URL/PDF/TXT 全ソースの Workflow が最終的に投げる汎用メッセージ（"XTC conversion
+  // failed"、src/workflow.ts）。TXT専用の文言ではなく全ソース共通の文字列なので、
+  // TXT専用キー（text_err_convert_failed）は作らずここへ合流させる。
   if (err === "XTC conversion failed") return "pdf_err_convert_failed";
+
+  // --- TXTアップロード系（src/text-upload.ts#textPrepareErrorMessage / ------------
+  //     src/workflow.ts#runTextSource と突き合わせ済みの実文字列） -----------------
+  if (err === "text file is empty") return "text_err_empty";
+  if (/uploaded text file exceeds the \d+ byte limit/.test(err)) return "text_err_too_large";
+  if (err === "unable to determine the text encoding") return "text_err_encoding_unknown";
+  if (err === "UTF-16 is not supported; convert the file to UTF-8") return "text_err_utf16";
+  if (err === "uploaded file is not a plain text file") return "text_err_binary";
+  // "text is too long to convert" は入力TXTの文字数超過・生成HTMLの容量超過の
+  // 両方をカバーする（textPrepareErrorMessage は TextTooLongError を区別しない）。
+  if (err === "text is too long to convert") return "text_err_too_many_chars";
+  if (err === "line count exceeds the limit") return "text_err_too_many_lines";
+  if (err === "a line exceeds the maximum line length") return "text_err_line_too_long";
+
   return null;
 }

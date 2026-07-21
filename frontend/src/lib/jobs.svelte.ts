@@ -9,7 +9,8 @@ export { migrateJobEntry };
 const STORE_KEY = "xtc-jobs";
 const MAX_ENTRIES = 50;
 
-export const IN_FLIGHT = ["queued", "rendering", "converting"];
+// "preparing" は TXT ジョブのみが経由するフェーズ（本文を組版中）。
+export const IN_FLIGHT = ["queued", "preparing", "rendering", "converting"];
 
 // サーバー側の保持期限を過ぎた completed エントリは、404 になるダウンロードを
 // 提示する代わりに expired として表示する。

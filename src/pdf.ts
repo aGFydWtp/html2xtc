@@ -816,3 +816,40 @@ export function renderPdfFromHtml(
     pdfOptions: PDF_OPTIONS,
   });
 }
+
+/**
+ * Renders a PDF from a TXT-upload article document (src/text-html.ts), which
+ * is fully self-styled: its own <style> tag already carries the @page
+ * geometry (528x792 CSS px) and every typographic rule the user's
+ * TextConvertOptions selected (src/text-options.ts). Deliberately NOT built
+ * on renderPdfFromHtml: that function always injects buildPrintRules(), a
+ * !important-laden stylesheet tuned for arbitrary scraped web pages (fixed
+ * 66mm x 99mm page, 10pt body text, layout-reset/chrome-hide rules) which
+ * would fight the TXT document's own variable page size, font size (12-32px)
+ * and margins (0-120px) — buildPrintRules' !important rules would win. The
+ * only thing this path injects is the inlined @font-face CSS (src/fonts.ts's
+ * buildInlineFontCss); with no inline font available it injects nothing and
+ * relies on the document's own generic font-family fallback (serif/
+ * sans-serif per layout, baked into text-html.ts) — never buildPrintCssWithFontImport,
+ * which would also drag in buildPrintRules via buildPrintRules() internally.
+ */
+export function renderSelfStyledHtmlPdf(
+  env: Env,
+  html: string,
+  fontCss: string | null,
+): Promise<Response> {
+  return env.BROWSER.quickAction("pdf", {
+    html,
+    userAgent: RENDER_USER_AGENT,
+    // Only the inlined font faces ride along via addStyleTag — no rule
+    // injection of any kind, unlike renderPdfFromHtml. An empty array is
+    // valid input (no-op) when font inlining fail-soft'd to null.
+    addStyleTag: fontCss !== null ? [{ content: fontCss }] : [],
+    gotoOptions: PDF_GOTO_OPTIONS,
+    // Same rationale as renderPdfFromHtml's wait: gives a cold-instance
+    // font decode time to finish before capture; harmless no-op when there
+    // is no inlined font.
+    waitForTimeout: 3_000,
+    pdfOptions: PDF_OPTIONS,
+  });
+}

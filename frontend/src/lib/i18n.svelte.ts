@@ -5,7 +5,8 @@ import { resolveServerErrorKey } from "./server-error-text";
 
 export type Lang = "ja" | "en";
 
-export type JobStatus = "queued" | "rendering" | "converting" | "completed" | "failed" | "expired";
+// "preparing"（本文を組版中）は TXT ジョブのみが経由するフェーズ（仕様書 §19）。
+export type JobStatus = "queued" | "preparing" | "rendering" | "converting" | "completed" | "failed" | "expired";
 
 export interface Messages {
   brand: string;
@@ -90,6 +91,62 @@ export interface Messages {
   pdf_err_upload_failed: string;
   pdf_err_convert_failed: string;
   pdf_err_timeout: string;
+
+  // --- TXTアップロード入力（実装仕様書 §6, §10, §19） -----------------------------
+  text_remove_file: string;
+  text_meta_line: (size: string, chars: number, lines: number) => string;
+  text_preview_note: string;
+  text_tab_body: string;
+  text_tab_x3: string;
+  text_show_more: string;
+  text_encoding_label: string;
+  text_encoding_option_auto: string;
+  text_encoding_option_utf8: string;
+  text_encoding_option_shift_jis: string;
+  text_encoding_detected: (label: string) => string;
+  text_presets_label: string;
+  text_preset_standard: string;
+  text_preset_vertical_novel: string;
+  text_preset_large_font: string;
+  text_options_heading: string;
+  text_options_summary: (layoutLabel: string, fontSizePx: number) => string;
+  text_layout_label: string;
+  text_layout_horizontal: string;
+  text_layout_vertical: string;
+  text_font_label: string;
+  text_font_size_label: string;
+  text_line_height_label: string;
+  text_paragraph_spacing_label: string;
+  text_margin_label: string;
+  text_margin_top: string;
+  text_margin_right: string;
+  text_margin_bottom: string;
+  text_margin_left: string;
+  text_align_label: string;
+  text_align_start: string;
+  text_align_justify: string;
+  text_max_blank_lines_label: string;
+  text_preserve_spaces_label: string;
+  text_preserve_spaces_on: string;
+  text_preserve_spaces_off: string;
+  text_bibliographic_heading: string;
+  text_title_label: string;
+  text_author_label: string;
+  text_uploading: (percent: number) => string;
+  text_uploading_indeterminate: string;
+  text_options_invalid: string;
+  text_err_not_txt: string;
+  text_err_empty: string;
+  text_err_too_large: string;
+  text_err_encoding_unknown: string;
+  text_err_utf16: string;
+  text_err_binary: string;
+  text_err_too_many_chars: string;
+  text_err_too_many_lines: string;
+  text_err_line_too_long: string;
+  text_err_font_fallback: string;
+  text_err_pdf_too_large: string;
+  text_err_upload_failed: string;
 
   aozora_open: string;
   aozora_title: string;
@@ -213,7 +270,7 @@ export const I18N: Record<Lang, Messages> = {
     http_error: (s) => `エラー (HTTP ${s})`,
     pdf_too_large: "生成された PDF がサイズ上限を超えました。「レイアウトを保持して変換する」を有効にすると変換できる場合があります。",
 
-    pdf_or_drop: "または PDF をここにドラッグ＆ドロップ ／ ",
+    pdf_or_drop: "または PDF / TXT をここにドラッグ＆ドロップ ／ ",
     pdf_pick_file: "ファイルを選択",
     pdf_drop_active: "ここにドロップ",
     pdf_file_label: "ファイル",
@@ -265,6 +322,61 @@ export const I18N: Record<Lang, Messages> = {
     pdf_err_convert_failed: "XTCへの変換に失敗しました。",
     pdf_err_timeout: "PDFが大きいため、変換が時間内に完了しませんでした。",
 
+    text_remove_file: "ファイルを解除",
+    text_meta_line: (size, chars, lines) => `${size} ・ ${chars.toLocaleString("ja-JP")}字 ・ ${lines.toLocaleString("ja-JP")}行`,
+    text_preview_note: "プレビューは変換結果の目安です。フォント描画や改ページ位置が実際のXTCとわずかに異なる場合があります。",
+    text_tab_body: "本文",
+    text_tab_x3: "X3プレビュー",
+    text_show_more: "続きを表示",
+    text_encoding_label: "文字コード",
+    text_encoding_option_auto: "自動判定",
+    text_encoding_option_utf8: "UTF-8",
+    text_encoding_option_shift_jis: "Shift_JIS（Windows-31J）",
+    text_encoding_detected: (label) => `自動判定: ${label}`,
+    text_presets_label: "プリセット",
+    text_preset_standard: "標準",
+    text_preset_vertical_novel: "小説・縦書き",
+    text_preset_large_font: "大きな文字",
+    text_options_heading: "組版設定",
+    text_options_summary: (layoutLabel, fontSizePx) => `${layoutLabel} ・ ${fontSizePx}px`,
+    text_layout_label: "書字方向",
+    text_layout_horizontal: "横書き",
+    text_layout_vertical: "縦書き",
+    text_font_label: "フォント",
+    text_font_size_label: "フォントサイズ",
+    text_line_height_label: "行間",
+    text_paragraph_spacing_label: "段落間隔",
+    text_margin_label: "余白",
+    text_margin_top: "上",
+    text_margin_right: "右",
+    text_margin_bottom: "下",
+    text_margin_left: "左",
+    text_align_label: "文字揃え",
+    text_align_start: "行頭揃え",
+    text_align_justify: "両端揃え",
+    text_max_blank_lines_label: "空行上限",
+    text_preserve_spaces_label: "空白保持",
+    text_preserve_spaces_on: "保持する",
+    text_preserve_spaces_off: "保持しない",
+    text_bibliographic_heading: "書誌情報",
+    text_title_label: "表題",
+    text_author_label: "著者",
+    text_uploading: (percent) => `アップロード中 ${percent}%`,
+    text_uploading_indeterminate: "アップロード中…",
+    text_options_invalid: "設定値を確認してください。",
+    text_err_not_txt: "テキストファイルを選択してください。",
+    text_err_empty: "空のテキストファイルは変換できません。",
+    text_err_too_large: "テキストファイルのサイズが上限を超えています。",
+    text_err_encoding_unknown: "文字コードを判定できませんでした。",
+    text_err_utf16: "UTF-16形式には対応していません。UTF-8へ変換してください。",
+    text_err_binary: "このファイルはプレーンテキストとして読み込めません。",
+    text_err_too_many_chars: "本文が長すぎるため変換できません。",
+    text_err_too_many_lines: "行数が上限を超えています。",
+    text_err_line_too_long: "1行が長すぎるため変換できません。",
+    text_err_font_fallback: "指定フォントを取得できなかったため、代替フォントで変換します。",
+    text_err_pdf_too_large: "組版後のPDFが大きすぎます。文字サイズや余白を調整してください。",
+    text_err_upload_failed: "テキストファイルのアップロードに失敗しました。",
+
     aozora_open: "青空文庫から選択",
     aozora_title: "青空文庫から選択",
     aozora_hint: "タイトル・作者名で検索",
@@ -276,7 +388,7 @@ export const I18N: Record<Lang, Messages> = {
     aozora_results: (n) => `検索結果 · ${n}件`,
     aozora_selected: (n, max) => `${n} / ${max} 件選択中`,
     aozora_convert: (n) => n > 0 ? `${n} 件を変換する` : "変換する",
-    status: { queued: "待機中", rendering: "PDF 生成中", converting: "XTC 変換中", completed: "✓ 完了", failed: "失敗", expired: "期限切れ" },
+    status: { queued: "待機中", preparing: "本文を組版中", rendering: "PDF 生成中", converting: "XTC 変換中", completed: "✓ 完了", failed: "失敗", expired: "期限切れ" },
 
     save: "保存する",
     tab_convert: "変換",
@@ -384,7 +496,7 @@ export const I18N: Record<Lang, Messages> = {
     http_error: (s) => `Error (HTTP ${s})`,
     pdf_too_large: "The rendered PDF exceeds the size limit. Enabling “Keep the page layout” may allow the conversion to succeed.",
 
-    pdf_or_drop: "or drag & drop a PDF here / ",
+    pdf_or_drop: "or drag & drop a PDF or TXT file here / ",
     pdf_pick_file: "Choose file",
     pdf_drop_active: "Drop here",
     pdf_file_label: "File",
@@ -436,6 +548,61 @@ export const I18N: Record<Lang, Messages> = {
     pdf_err_convert_failed: "Failed to convert to XTC.",
     pdf_err_timeout: "The PDF is too large and the conversion did not finish in time.",
 
+    text_remove_file: "Remove file",
+    text_meta_line: (size, chars, lines) => `${size} · ${chars.toLocaleString("en-US")} chars · ${lines.toLocaleString("en-US")} lines`,
+    text_preview_note: "The preview is only an approximation of the conversion result. Font rendering and page break positions may differ slightly from the actual XTC file.",
+    text_tab_body: "Text",
+    text_tab_x3: "X3 preview",
+    text_show_more: "Show more",
+    text_encoding_label: "Encoding",
+    text_encoding_option_auto: "Auto-detect",
+    text_encoding_option_utf8: "UTF-8",
+    text_encoding_option_shift_jis: "Shift_JIS (Windows-31J)",
+    text_encoding_detected: (label) => `Auto-detected: ${label}`,
+    text_presets_label: "Presets",
+    text_preset_standard: "Standard",
+    text_preset_vertical_novel: "Novel (vertical)",
+    text_preset_large_font: "Large text",
+    text_options_heading: "Layout settings",
+    text_options_summary: (layoutLabel, fontSizePx) => `${layoutLabel} · ${fontSizePx}px`,
+    text_layout_label: "Writing direction",
+    text_layout_horizontal: "Horizontal",
+    text_layout_vertical: "Vertical",
+    text_font_label: "Font",
+    text_font_size_label: "Font size",
+    text_line_height_label: "Line height",
+    text_paragraph_spacing_label: "Paragraph spacing",
+    text_margin_label: "Margins",
+    text_margin_top: "Top",
+    text_margin_right: "Right",
+    text_margin_bottom: "Bottom",
+    text_margin_left: "Left",
+    text_align_label: "Text alignment",
+    text_align_start: "Start-aligned",
+    text_align_justify: "Justified",
+    text_max_blank_lines_label: "Max blank lines",
+    text_preserve_spaces_label: "Preserve whitespace",
+    text_preserve_spaces_on: "On",
+    text_preserve_spaces_off: "Off",
+    text_bibliographic_heading: "Bibliographic info",
+    text_title_label: "Title",
+    text_author_label: "Author",
+    text_uploading: (percent) => `Uploading ${percent}%`,
+    text_uploading_indeterminate: "Uploading…",
+    text_options_invalid: "Please check the conversion settings.",
+    text_err_not_txt: "Please select a text file.",
+    text_err_empty: "An empty text file cannot be converted.",
+    text_err_too_large: "The text file size exceeds the limit.",
+    text_err_encoding_unknown: "Could not detect the text encoding.",
+    text_err_utf16: "UTF-16 is not supported. Please convert the file to UTF-8.",
+    text_err_binary: "This file could not be read as plain text.",
+    text_err_too_many_chars: "The text is too long to convert.",
+    text_err_too_many_lines: "The number of lines exceeds the limit.",
+    text_err_line_too_long: "A line is too long to convert.",
+    text_err_font_fallback: "The selected font could not be retrieved; converting with a fallback font instead.",
+    text_err_pdf_too_large: "The typeset PDF is too large. Try adjusting the font size or margins.",
+    text_err_upload_failed: "Failed to upload the text file.",
+
     aozora_open: "Choose from Aozora Bunko",
     aozora_title: "Choose from Aozora Bunko",
     aozora_hint: "Search by title or author",
@@ -447,7 +614,7 @@ export const I18N: Record<Lang, Messages> = {
     aozora_results: (n) => `Results · ${n}`,
     aozora_selected: (n, max) => `${n} / ${max} selected`,
     aozora_convert: (n) => n > 0 ? `Convert ${n} selected` : "Convert",
-    status: { queued: "Queued", rendering: "Rendering PDF", converting: "Converting to XTC", completed: "✓ Done", failed: "Failed", expired: "Expired" },
+    status: { queued: "Queued", preparing: "Preparing text", rendering: "Rendering PDF", converting: "Converting to XTC", completed: "✓ Done", failed: "Failed", expired: "Expired" },
 
     save: "Save",
     tab_convert: "Convert",

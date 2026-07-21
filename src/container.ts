@@ -37,12 +37,24 @@ const CONVERTER_TIMEOUT_MARGIN_MS = 30_000;
  * A stream MUST have a known length — pipe it through FixedLengthStream so
  * fetch sends Content-Length — because the container's http.server rejects
  * bodies without one (chunked requests are not parsed).
+ *
+ * `author` (optional) is forwarded as X-Xtc-Author, base64url-encoded UTF-8
+ * (headers are Latin-1 only). Used only by the TXT-upload pipeline
+ * (src/workflow.ts's text-source branch), which is the only caller with an
+ * author to set — Chromium's print-to-PDF never populates the PDF /Author
+ * field from the page itself the way it does /Title from document.title, so
+ * unlike the title (read back from the PDF's own metadata by
+ * converter/app.py#read_pdf_metadata), the author has to travel in on this
+ * request instead. Omitted for URL-render jobs, which never have one; the
+ * Container's own config-x3.toml default (`[output].author = ""`) governs
+ * exactly as it always has.
  */
 export function convertInContainer(
   env: Env,
   jobId: string,
   pdfBody: ArrayBuffer | ReadableStream,
   timeoutMs: number,
+  author?: string,
 ): Promise<Response> {
   const container = getContainer(env.XTC_CONVERTER, converterInstanceName(jobId));
   // Per-request subprocess timeout for app.py, kept below this fetch's budget
@@ -60,6 +72,9 @@ export function convertInContainer(
         // Worker owns the authoritative size limit; tell the container so its
         // 413 threshold tracks resolveMaxPdfBytes instead of its own default.
         "X-Max-Pdf-Bytes": String(resolveMaxPdfBytes(env)),
+        ...(author !== undefined && author.length > 0
+          ? { "X-Xtc-Author": encodeBase64Url(author) }
+          : {}),
       },
       body: pdfBody,
       signal: AbortSignal.timeout(timeoutMs),

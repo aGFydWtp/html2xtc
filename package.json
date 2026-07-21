@@ -18,6 +18,7 @@
     "@cloudflare/containers": "^0.3.7",
     "@mozilla/readability": "^0.6.0",
     "@simplewebauthn/server": "^13.3.2",
+    "encoding-japanese": "2.2.0",
     "fflate": "^0.8.3",
     "linkedom": "^0.18.13",
     "papaparse": "^5.5.4"
@@ -25,6 +26,7 @@
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.18.6",
     "@cloudflare/workers-types": "^5.20260717.1",
+    "@types/encoding-japanese": "2.2.1",
     "@types/papaparse": "^5.5.2",
     "typescript": "^5.5.0",
     "vitest": "^4.1.10",

@@ -4,11 +4,14 @@
   import { submitUrl, submitting } from "../lib/convert.svelte";
   import { t } from "../lib/i18n.svelte";
   import { PdfFileValidationError, validatePdfFile } from "../lib/pdf-file-validate";
-  import PdfDropZone from "./PdfDropZone.svelte";
+  import { TextFileValidationError, validateTextFile } from "../lib/text-file-validate";
+  import FileDropZone from "./FileDropZone.svelte";
   import PdfInputPanel from "./PdfInputPanel.svelte";
+  import TextInputPanel from "./TextInputPanel.svelte";
 
   let url = $state("");
   let pdfFile = $state<File | null>(null);
+  let txtFile = $state<File | null>(null);
   let fileError = $state<string | null>(null);
 
   function onsubmit(event: SubmitEvent) {
@@ -16,7 +19,7 @@
     void submitUrl(url);
   }
 
-  function fileErrorText(kind: PdfFileValidationError["kind"]): string {
+  function pdfFileErrorText(kind: PdfFileValidationError["kind"]): string {
     switch (kind) {
       case "too_large": return t("pdf_err_too_large");
       case "magic_missing": return t("pdf_err_parse_failed");
@@ -24,18 +27,46 @@
     }
   }
 
+  function textFileErrorText(kind: TextFileValidationError["kind"]): string {
+    switch (kind) {
+      case "too_large": return t("text_err_too_large");
+      case "empty": return t("text_err_empty");
+      case "utf16": return t("text_err_utf16");
+      case "binary": return t("text_err_binary");
+      default: return t("text_err_not_txt");
+    }
+  }
+
+  // 拡張子・MIMEでPDF/TXTを判別してから、それぞれの検証・パネルへ分岐する
+  // （仕様書 §10.2-10.3: ドロップゾーンはPDF/TXT共用。複数ファイルは受け付けない）。
+  function looksLikePdf(file: File): boolean {
+    if (/\.pdf$/i.test(file.name)) return true;
+    if (/\.txt$/i.test(file.name)) return false;
+    return file.type === "application/pdf" || file.type === "application/x-pdf";
+  }
+
   async function onFileSelected(file: File): Promise<void> {
     fileError = null;
+    if (looksLikePdf(file)) {
+      try {
+        await validatePdfFile(file);
+        pdfFile = file;
+      } catch (e) {
+        fileError = e instanceof PdfFileValidationError ? pdfFileErrorText(e.kind) : t("pdf_err_not_pdf");
+      }
+      return;
+    }
     try {
-      await validatePdfFile(file);
-      pdfFile = file;
+      await validateTextFile(file);
+      txtFile = file;
     } catch (e) {
-      fileError = e instanceof PdfFileValidationError ? fileErrorText(e.kind) : t("pdf_err_not_pdf");
+      fileError = e instanceof TextFileValidationError ? textFileErrorText(e.kind) : t("text_err_not_txt");
     }
   }
 
   function onRemoveFile(): void {
     pdfFile = null;
+    txtFile = null;
     fileError = null;
   }
 </script>
@@ -44,9 +75,11 @@
   <p class="intro">{t("intro")}</p>
   {#if pdfFile}
     <PdfInputPanel file={pdfFile} onRemove={onRemoveFile} />
+  {:else if txtFile}
+    <TextInputPanel file={txtFile} onRemove={onRemoveFile} />
   {:else}
     <div class="form-note"><span>{t("agree_before")}</span><a href="/about#terms">{t("agree_link")}</a><span>{t("agree_after")}</span></div>
-    <PdfDropZone onFileSelected={(f) => void onFileSelected(f)}>
+    <FileDropZone onFileSelected={(f) => void onFileSelected(f)}>
       <form {onsubmit}>
         <div class="input-row">
           <input
@@ -66,7 +99,7 @@
           <button type="button" class="secondary" onclick={() => aozora.show()}>{t("aozora_open")}</button>
         </div>
       {/snippet}
-    </PdfDropZone>
+    </FileDropZone>
     {#if fileError}<div class="error-text">{fileError}</div>{/if}
   {/if}
 </section>

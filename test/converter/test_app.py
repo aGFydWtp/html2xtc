@@ -1,6 +1,7 @@
 """Unit tests for converter/app.py. xtctool itself is never invoked; every
 subprocess call is mocked."""
 
+import base64
 import http.client
 import json
 import logging
@@ -356,6 +357,148 @@ class TestTitleHandling:
                     assert app.convert_pdf(FAKE_PDF, "タイトル") == FAKE_XTC
         assert calls[0][calls[0].index("-c") + 1] == "/nonexistent/config.toml"
         assert "config title merge failed" in caplog.text
+
+
+class TestAuthorHandling:
+    """text-upload spec §16/§10: [output].author, set the same way title
+    is — via a merged TOML config — but sourced from the X-Xtc-Author
+    request header (converter/app.py has no other source for it, unlike
+    the title which is read back from the rendered PDF's own metadata)."""
+
+    def test_config_with_title_author_overrides_both(self, tmp_path):
+        config_path = tmp_path / "config.toml"
+        config_path.write_text(SAMPLE_CONFIG, encoding="utf-8")
+        with mock.patch.object(app, "CONFIG_PATH", str(config_path)):
+            merged = tomllib.loads(app.config_with_title_author("タイトル", "著者名"))
+        assert merged["output"]["title"] == "タイトル"
+        assert merged["output"]["author"] == "著者名"
+        # The rest of the config survives the round trip, types intact.
+        assert merged["output"]["width"] == 528
+        assert merged["xtg"]["dither_strength"] == 0.8
+
+    def test_config_with_title_author_leaves_default_author_when_empty(self, tmp_path):
+        config_path = tmp_path / "config.toml"
+        config_path.write_text(SAMPLE_CONFIG, encoding="utf-8")
+        with mock.patch.object(app, "CONFIG_PATH", str(config_path)):
+            merged = tomllib.loads(app.config_with_title_author("タイトルのみ"))
+        assert merged["output"]["title"] == "タイトルのみ"
+        # SAMPLE_CONFIG has no [output].author key at all; author="" must not
+        # invent one -- config_with_title (the pre-existing /convert callers)
+        # must stay byte-for-byte unaffected.
+        assert "author" not in merged["output"]
+
+    def test_config_with_title_is_a_backward_compatible_alias(self, tmp_path):
+        config_path = tmp_path / "config.toml"
+        config_path.write_text(SAMPLE_CONFIG, encoding="utf-8")
+        with mock.patch.object(app, "CONFIG_PATH", str(config_path)):
+            assert app.config_with_title("T") == app.config_with_title_author("T", "")
+
+    def test_convert_pdf_with_author_passes_merged_config(self, tmp_path):
+        config_path = tmp_path / "config.toml"
+        config_path.write_text(SAMPLE_CONFIG, encoding="utf-8")
+        seen = {}
+
+        def inspecting_run(cmd, **kwargs):
+            merged_path = Path(cmd[cmd.index("-c") + 1])
+            seen["config"] = tomllib.loads(merged_path.read_text(encoding="utf-8"))
+            return run_success(cmd, **kwargs)
+
+        with mock.patch.object(app, "CONFIG_PATH", str(config_path)):
+            with mock.patch.object(app.subprocess, "run", side_effect=inspecting_run):
+                assert (
+                    app.convert_pdf(FAKE_PDF, "タイトル", author="著者名")
+                    == FAKE_XTC
+                )
+
+        assert seen["config"]["output"]["title"] == "タイトル"
+        assert seen["config"]["output"]["author"] == "著者名"
+
+    def test_convert_pdf_with_only_author_still_merges_config(self, tmp_path):
+        # title="" but author set: the merge must still trigger (spec: same
+        # mechanism as title), not silently skip because title is falsy.
+        config_path = tmp_path / "config.toml"
+        config_path.write_text(SAMPLE_CONFIG, encoding="utf-8")
+        calls = []
+
+        def recording_run(cmd, **kwargs):
+            calls.append(cmd)
+            return run_success(cmd, **kwargs)
+
+        with mock.patch.object(app, "CONFIG_PATH", str(config_path)):
+            with mock.patch.object(app.subprocess, "run", side_effect=recording_run):
+                app.convert_pdf(FAKE_PDF, "", author="著者のみ")
+        assert calls[0][calls[0].index("-c") + 1] != str(config_path)
+
+    def test_convert_pdf_without_title_or_author_uses_base_config(self):
+        calls = []
+
+        def recording_run(cmd, **kwargs):
+            calls.append(cmd)
+            return run_success(cmd, **kwargs)
+
+        with mock.patch.object(app.subprocess, "run", side_effect=recording_run):
+            app.convert_pdf(FAKE_PDF, "")
+        assert calls[0][calls[0].index("-c") + 1] == app.CONFIG_PATH
+
+    def test_decode_base64url_utf8_roundtrip(self):
+        encoded = base64.urlsafe_b64encode("著者名".encode("utf-8")).rstrip(b"=").decode("ascii")
+        assert app.decode_base64url_utf8(encoded) == "著者名"
+
+    def test_decode_base64url_utf8_falls_back_to_empty_on_malformed_input(self):
+        # Fail-soft: a garbled X-Xtc-Author must never fail the conversion,
+        # same stance as a missing/garbled title.
+        assert app.decode_base64url_utf8("not valid base64url!!") == ""
+        assert app.decode_base64url_utf8("") == ""
+
+    def test_convert_success_with_author_header_merges_it_into_config(self, server, tmp_path):
+        config_path = tmp_path / "config.toml"
+        config_path.write_text(SAMPLE_CONFIG, encoding="utf-8")
+        seen = {}
+
+        def inspecting_run(cmd, **kwargs):
+            merged_path = Path(cmd[cmd.index("-c") + 1])
+            seen["config"] = tomllib.loads(merged_path.read_text(encoding="utf-8"))
+            return run_success(cmd, **kwargs)
+
+        encoded_author = (
+            base64.urlsafe_b64encode("小説の著者".encode("utf-8")).rstrip(b"=").decode("ascii")
+        )
+        with mock.patch.object(app, "CONFIG_PATH", str(config_path)):
+            with mock.patch.object(app.subprocess, "run", side_effect=inspecting_run):
+                status, _, body = request(
+                    server,
+                    "POST",
+                    "/convert",
+                    body=FAKE_PDF,
+                    headers={"X-Xtc-Author": encoded_author},
+                )
+        assert status == 200
+        assert body == FAKE_XTC
+        assert seen["config"]["output"]["author"] == "小説の著者"
+
+    def test_convert_success_without_author_header_is_unaffected(self, server):
+        # Every pre-existing /convert caller (URL-render pipeline) never
+        # sends X-Xtc-Author; this must stay byte-for-byte the prior
+        # behavior (author untouched from config-x3.toml's own "").
+        with mock.patch.object(app.subprocess, "run", side_effect=run_success):
+            status, headers, body = request(server, "POST", "/convert", body=FAKE_PDF)
+        assert status == 200
+        assert body == FAKE_XTC
+        assert "X-Xtc-Title" not in headers
+
+    def test_convert_malformed_author_header_falls_back_to_no_author(self, server):
+        # A garbled header must degrade gracefully, never 400/500 the whole
+        # conversion.
+        with mock.patch.object(app.subprocess, "run", side_effect=run_success):
+            status, _, body = request(
+                server,
+                "POST",
+                "/convert",
+                body=FAKE_PDF,
+                headers={"X-Xtc-Author": "not valid base64url!!"},
+            )
+        assert status == 200
+        assert body == FAKE_XTC
 
 
 class TestEffectiveMaxPdfBytes:

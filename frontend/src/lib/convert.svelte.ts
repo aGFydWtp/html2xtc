@@ -8,6 +8,7 @@ import type { Note } from "./i18n.svelte";
 import { IN_FLIGHT, jobsStore, type JobEntry } from "./jobs.svelte";
 import { libraryStore } from "./library.svelte";
 import { encodeFileNameHeader, encodePdfOptionsHeader, type PdfConvertOptions } from "./pdf-options";
+import { encodeTextOptionsHeader, type TextConvertOptions } from "./text-options";
 
 const POLL_MS = 4000;
 const MAX_POLL_FAILURES = 5;
@@ -236,6 +237,83 @@ export function submitPdf(
 
     xhr.onerror = () => {
       submissionError({ sourceType: "pdf", sourceLabel: file.name, jobId: "", status: "failed" }, "no_server");
+      resolve({ ok: false, aborted: false });
+    };
+
+    xhr.onabort = () => resolve({ ok: false, aborted: true }); // ユーザーによる中断: ジョブは作られない
+  });
+
+  xhr.send(file);
+  return { handle: { abort: () => xhr.abort() }, done };
+}
+
+// TXTアップロードの進捗コールバック・型（submitPdf と同じ構造。仕様書 §11.1, §10.9）。
+export type TextUploadProgress = (percent: number | null) => void;
+
+export interface TextUploadHandle {
+  abort(): void;
+}
+
+export interface TextUploadResult {
+  ok: boolean;
+  aborted: boolean;
+}
+
+export interface TextUploadSession {
+  handle: TextUploadHandle;
+  done: Promise<TextUploadResult>;
+}
+
+// TXTファイルをアップロードしてジョブを投入する（仕様書 §11.1）。submitPdf と同じ
+// XMLHttpRequest ベースの実装（fetch では安定した進捗取得が難しいため）。
+export function submitText(
+  file: File,
+  options: TextConvertOptions,
+  onProgress: TextUploadProgress,
+  displayTitle?: string,
+): TextUploadSession {
+  const xhr = new XMLHttpRequest();
+  xhr.open("POST", "/jobs/text");
+  xhr.setRequestHeader("Content-Type", "text/plain");
+  xhr.setRequestHeader("X-File-Name", encodeFileNameHeader(file.name));
+  xhr.setRequestHeader("X-Text-Options", encodeTextOptionsHeader(options));
+
+  xhr.upload.onprogress = (event) => {
+    onProgress(event.lengthComputable ? Math.round((event.loaded / event.total) * 100) : null);
+  };
+
+  const done = new Promise<TextUploadResult>((resolve) => {
+    xhr.onload = () => {
+      let body: JobsPostResponse | null = null;
+      try {
+        body = xhr.responseText ? JSON.parse(xhr.responseText) as JobsPostResponse : null;
+      } catch { /* JSON でないレスポンスは body=null のまま扱う */ }
+
+      if (xhr.status < 200 || xhr.status >= 300 || !body || typeof body.jobId !== "string") {
+        submissionError(
+          { sourceType: "txt", sourceLabel: file.name, jobId: "", status: "failed", error: body?.error },
+          body?.error ? null : { key: "http_error", args: [xhr.status] },
+        );
+        resolve({ ok: false, aborted: false });
+        return;
+      }
+
+      const job: JobEntry = {
+        jobId: body.jobId,
+        sourceType: "txt",
+        sourceLabel: file.name,
+        createdAt: new Date().toISOString(),
+        status: "queued",
+        ...(displayTitle ? { title: displayTitle } : {}),
+      };
+      jobsStore.upsert({ ...job });
+      sessionJobIds.add(job.jobId);
+      startPolling(job);
+      resolve({ ok: true, aborted: false });
+    };
+
+    xhr.onerror = () => {
+      submissionError({ sourceType: "txt", sourceLabel: file.name, jobId: "", status: "failed" }, "no_server");
       resolve({ ok: false, aborted: false });
     };
 

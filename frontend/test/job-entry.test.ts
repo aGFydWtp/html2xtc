@@ -62,6 +62,29 @@ describe("migrateJobEntry", () => {
     });
   });
 
+  it("passes through a current-format TXT entry (no url field)", () => {
+    const txtEntry = {
+      jobId: "job-txt-1",
+      sourceType: "txt",
+      sourceLabel: "novel.txt",
+      status: "preparing",
+    };
+    expect(migrateJobEntry(txtEntry)).toEqual({
+      jobId: "job-txt-1",
+      sourceType: "txt",
+      sourceLabel: "novel.txt",
+      url: undefined,
+      status: "preparing",
+      createdAt: undefined,
+      title: undefined,
+      error: undefined,
+    });
+  });
+
+  it("drops a txt-shaped entry missing sourceLabel", () => {
+    expect(migrateJobEntry({ jobId: "job-txt-2", sourceType: "txt", status: "failed" })).toBeNull();
+  });
+
   it("drops entries missing both url and sourceType/sourceLabel", () => {
     expect(migrateJobEntry({ jobId: "job-4", status: "failed" })).toBeNull();
   });

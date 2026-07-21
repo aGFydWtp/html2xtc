@@ -34,6 +34,16 @@
   let menuEl = $state<HTMLDivElement | null>(null);
   let menuOpen = $state(false); // aria-expanded とフォールバック表示の状態
   let menuClosedAt = 0; // light dismiss は ⋮ の click より先に発火するので直前の close を覚える
+  // ⋮ を押し下げた瞬間に「自分の」メニューが開いていたか。行 A のメニューを行 B の
+  // ⋮ クリックで light dismiss した直後（300ms 以内）でも A の ⋮ で A を開けるよう、
+  // 直前の close が自分のボタン起因かを History.svelte の menuClosedJob と同様に区別する。
+  // light dismiss は pointerdown の既定動作としてリスナーの後に走るため、ここではまだ
+  // :popover-open のままの状態を観測できる。
+  let ownMenuWasOpenOnPointerDown = false;
+
+  function onBtnPointerDown(): void {
+    ownMenuWasOpenOnPointerDown = POPOVER_OK && !!menuEl?.matches(":popover-open");
+  }
 
   function hideMenu(): void {
     if (!menuEl) return;
@@ -48,7 +58,10 @@
 
   async function toggleMenu(): Promise<void> {
     if (menuOpen) { hideMenu(); return; } // フォールバックのトグル（light dismiss なし）
-    if (POPOVER_OK && Date.now() - menuClosedAt < MENU_TOGGLE_MS) return; // このクリックの light dismiss で閉じた直後
+    if (POPOVER_OK && ownMenuWasOpenOnPointerDown && Date.now() - menuClosedAt < MENU_TOGGLE_MS) {
+      ownMenuWasOpenOnPointerDown = false;
+      return; // このクリックの light dismiss で自分のメニューが閉じた直後 → トグル（閉じたまま）
+    }
     if (!menuEl || !btnEl) return;
     if (POPOVER_OK) {
       menuEl.showPopover();
@@ -99,6 +112,7 @@
   aria-expanded={menuOpen}
   aria-label={t("menu_label")}
   bind:this={btnEl}
+  onpointerdown={onBtnPointerDown}
   onclick={() => void toggleMenu()}
 >
   <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5.5" r="1.7" /><circle cx="12" cy="12" r="1.7" /><circle cx="12" cy="18.5" r="1.7" /></svg>
@@ -106,7 +120,7 @@
 
 <div
   class="row-menu"
-  class:open={menuOpen}
+  class:open={!POPOVER_OK && menuOpen}
   id={menuId}
   popover="auto"
   bind:this={menuEl}

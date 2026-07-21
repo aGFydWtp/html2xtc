@@ -30,6 +30,17 @@
 
   let tab = $state<Tab>(tabFromPath(location.pathname));
 
+  // 未ログイン時はタブを表示しない。ライブラリ/端末タブを開いたままログアウト
+  // した場合（未ログインで /library 等を直接開いた場合も含む）はアクティブタブを
+  // 「変換」へ戻し、URL も揃える。ready を待つのは、セッション復元中（/api/me
+  // 応答前）にログイン済みユーザーの深いリンクを / へ書き換えないため。
+  $effect(() => {
+    if (authStore.ready && !authStore.account && tab !== "convert") {
+      tab = "convert";
+      history.replaceState(null, "", TAB_TO_PATH.convert + location.search + location.hash);
+    }
+  });
+
   function selectTab(next: Tab) {
     if (tab === next) return;
     tab = next;
@@ -69,11 +80,15 @@
 
 <main>
   <Header />
-  <div class="tabs" role="tablist">
-    <button type="button" role="tab" aria-selected={tab === "convert"} onclick={() => selectTab("convert")}>{t("tab_convert")}</button>
-    <button type="button" role="tab" aria-selected={tab === "library"} onclick={() => selectTab("library")}>{t("tab_library")}</button>
-    <button type="button" role="tab" aria-selected={tab === "devices"} onclick={() => selectTab("devices")}>{t("tab_devices")}</button>
-  </div>
+  {#if authStore.account}
+    <div class="tabs" role="tablist">
+      <button type="button" role="tab" aria-selected={tab === "convert"} onclick={() => selectTab("convert")}>{t("tab_convert")}</button>
+      <button type="button" role="tab" aria-selected={tab === "library"} onclick={() => selectTab("library")}>{t("tab_library")}</button>
+      <button type="button" role="tab" aria-selected={tab === "devices"} onclick={() => selectTab("devices")}>{t("tab_devices")}</button>
+    </div>
+  {:else}
+    <div class="tabs-spacer"></div>
+  {/if}
   {#if tab === "convert"}
     <ConvertForm />
     <CurrentJob />
@@ -93,6 +108,9 @@
 <style>
   main { max-width: 44rem; margin: 0 auto; padding: 28px 20px 48px; }
   .tabs { display: flex; gap: 4px; margin: 18px 0 4px; border-bottom: 1px solid var(--line); }
+  /* タブ非表示時もコンテンツ開始位置が不自然に詰まらないよう、タブバーの
+     上マージン相当の余白を確保する（空 div のマージン相殺を避け高さで指定）。 */
+  .tabs-spacer { height: 18px; }
   .tabs button {
     padding: 10px 16px; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
     border: 0; border-bottom: 2px solid transparent; background: none; color: var(--muted);

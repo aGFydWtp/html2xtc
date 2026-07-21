@@ -40,6 +40,16 @@
   const optionsValid = $derived(isValidTextOptions(options));
   const canSubmit = $derived(status === "ready" && optionsValid && !uploading);
 
+  // options はプリセットや setTextLayout でオブジェクトごと差し替わる。$effect 内で
+  // options.* を直接読むと参照の変更だけで再実行され、レイアウト切替のたびに再デコード
+  // →status が一瞬 loading になり配下のコンポーネント（組版設定アコーディオン等）が
+  // 再マウントされてしまう。$derived は値が変わらない限り通知しないため、依存を
+  // プリミティブ値に絞れる。
+  const requestedEncoding = $derived(options.encoding);
+  const normMaxBlankLines = $derived(options.maxConsecutiveBlankLines);
+  const normPreserveSpaces = $derived(options.preserveSpaces);
+  const normJoinLines = $derived(options.joinHardWrappedLines);
+
   // 文字コード判定・デコード（仕様書 §5）。ファイルまたは文字コード指定が変わる
   // たびに再デコードする。
   $effect(() => {
@@ -47,7 +57,7 @@
     status = "loading";
     errorKind = null;
     const current = file;
-    const encoding = options.encoding;
+    const encoding = requestedEncoding;
     void (async () => {
       try {
         const bytes = new Uint8Array(await current.arrayBuffer());
@@ -72,9 +82,9 @@
   let normalizeTimer: ReturnType<typeof setTimeout> | undefined;
   $effect(() => {
     const text = decodedText;
-    const maxConsecutiveBlankLines = options.maxConsecutiveBlankLines;
-    const preserveSpaces = options.preserveSpaces;
-    const joinHardWrappedLines = options.joinHardWrappedLines;
+    const maxConsecutiveBlankLines = normMaxBlankLines;
+    const preserveSpaces = normPreserveSpaces;
+    const joinHardWrappedLines = normJoinLines;
     const ready = status === "ready";
     if (normalizeTimer) clearTimeout(normalizeTimer);
     if (!ready) {

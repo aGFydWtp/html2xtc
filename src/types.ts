@@ -15,6 +15,55 @@ export type ConvertMode = "full" | "extract";
 export type ConvertLayout = "horizontal" | "vertical";
 
 /**
+ * Conversion input (spec §9.1). "url" is the original URL-render pipeline
+ * (Browser Run → render-pdf → convert-xtc). "pdf" is the uploaded-PDF
+ * pipeline (POST /jobs/pdf, src/pdf-upload.ts): key is the R2 object holding
+ * the uploaded PDF (input/{jobId}/source.pdf, src/jobs.ts#inputPdfKey),
+ * filename is the sanitized display name from X-File-Name (never a path),
+ * size is the declared Content-Length the Worker verified against the
+ * stored R2 object.
+ */
+export type ConvertSource =
+  | { kind: "url"; url: string }
+  | { kind: "pdf"; key: string; filename: string; size: number };
+
+/**
+ * PDF conversion settings (spec §5.1), applied in the fixed order from spec
+ * §6: page selection → rotation → crop → contain/cover → margin →
+ * grayscale → 528×792 resample → invert → threshold/dither → XTC.
+ * Validated strictly by validatePdfConvertOptions (src/pdf-upload.ts) — no
+ * implicit correction of out-of-range values (spec §5.3).
+ */
+export interface PdfConvertOptions {
+  /** Page selection string; syntax per spec §5.4 (see src/pdf-page-range.ts). */
+  pages: string;
+  /** Rotation applied to every selected page. */
+  rotation: 0 | 90 | 180 | 270;
+  /**
+   * Crop fraction removed from each edge of the rotated page. Each side is
+   * in [0.0, 0.4]; left+right and top+bottom must each stay below 0.8.
+   */
+  crop: {
+    top: number;
+    right: number;
+    bottom: number;
+    left: number;
+  };
+  /** How the cropped page fills the X3 inner display area. */
+  fit: "contain" | "cover";
+  /** Uniform output margin in X3 pixels (0-64). */
+  marginPx: number;
+  /** 1-bit threshold (0-255). */
+  threshold: number;
+  /** Floyd–Steinberg dithering on/off. */
+  dither: boolean;
+  /** Dithering strength (0.0-1.0). */
+  ditherStrength: number;
+  /** Invert black/white. */
+  invert: boolean;
+}
+
+/**
  * Resolved rendering options, produced by resolveRenderOptions()
  * (src/sitepresets.ts) from the request's optional layout/font fields plus
  * the per-site defaults (Aozora Bunko → vertical + BIZ UDMincho).
@@ -33,16 +82,30 @@ export interface RenderOptions {
 
 /** Params handed to ConvertWorkflow via CONVERT_WORKFLOW.create(). */
 export interface ConvertJobParams {
-  url: string;
+  /**
+   * Legacy field, kept for jobs created before `source` existed. Optional
+   * now (was required) — a purely static relaxation: Workflow instance
+   * params already persisted with a string `url` are unaffected, since this
+   * type only shapes new create() calls and event.payload reads. New PDF
+   * jobs never set this; new URL jobs may set either this or
+   * `source: {kind:"url",...}` (resolveSource in src/workflow.ts prefers
+   * `source` when both are present).
+   */
+  url?: string;
+  /** Conversion input; see ConvertSource. Preferred over the legacy `url`. */
+  source?: ConvertSource;
   /** Absent on jobs created before extract mode existed; treated as "full". */
   mode?: ConvertMode;
   /**
    * Raw optional render options as submitted (loosely typed on purpose:
    * params persist across deploys, so the Workflow re-validates them via
-   * resolveRenderOptions instead of trusting the stored shape).
+   * resolveRenderOptions instead of trusting the stored shape). Unused for
+   * PDF sources.
    */
   layout?: string;
   font?: string;
+  /** PDF conversion settings; only meaningful when source.kind === "pdf". */
+  pdfOptions?: PdfConvertOptions;
 }
 
 /**
@@ -74,6 +137,14 @@ export interface Env {
   APP_DB: D1Database;
   /** Max rendered-PDF size in bytes. Default 20 MiB. */
   MAX_PDF_BYTES?: string;
+  /**
+   * Max size in bytes accepted by POST /jobs/pdf (spec §11.4). Deliberately
+   * a separate var from MAX_PDF_BYTES, even though both default to the same
+   * 48 MiB (50331648) value today — one bounds a Browser-Run-rendered PDF,
+   * the other a user-uploaded PDF; they should stay independently tunable.
+   * Also forwarded to the Container as X-Max-Pdf-Bytes so both sides agree.
+   */
+  MAX_UPLOAD_PDF_BYTES?: string;
   /**
    * Minimum extracted body length (characters after whitespace removal) for
    * extract mode to accept a Readability result. Default 300.

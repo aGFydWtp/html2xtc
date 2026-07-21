@@ -1,14 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // localStorage に保存する変換履歴（最大 50 件）。
 
-export interface JobEntry {
-  jobId: string;
-  url: string;
-  status: string;
-  createdAt?: string;
-  title?: string;
-  error?: string;
-}
+import { type JobEntry, type JobSourceType, migrateJobEntry } from "./job-entry";
+
+export type { JobEntry, JobSourceType };
+export { migrateJobEntry };
 
 const STORE_KEY = "xtc-jobs";
 const MAX_ENTRIES = 50;
@@ -23,13 +19,7 @@ function loadFromStorage(): JobEntry[] {
   try {
     const raw: unknown = JSON.parse(localStorage.getItem(STORE_KEY) ?? "[]");
     if (!Array.isArray(raw)) return [];
-    return raw.filter(
-      (j): j is JobEntry =>
-        !!j && typeof j === "object"
-        && typeof (j as JobEntry).jobId === "string"
-        && typeof (j as JobEntry).url === "string"
-        && typeof (j as JobEntry).status === "string",
-    );
+    return raw.map(migrateJobEntry).filter((j): j is JobEntry => j !== null);
   } catch {
     return [];
   }

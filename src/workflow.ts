@@ -4,7 +4,7 @@
 import { WorkflowEntrypoint } from "cloudflare:workers";
 import type { WorkflowEvent, WorkflowStep } from "cloudflare:workers";
 import { NonRetryableError } from "cloudflare:workflows";
-import { convertInContainer } from "./container";
+import { convertInContainer, convertUploadedPdfInContainer } from "./container";
 import { prepareRenderInput } from "./extract";
 import {
   articleHtmlKey,
@@ -14,14 +14,47 @@ import {
   resolveMaxPdfBytes,
 } from "./jobs";
 import { renderPdf, renderPdfFromHtml } from "./pdf";
+import {
+  DEFAULT_PDF_OPTIONS,
+  resolveMaxUploadPdfBytes,
+  uploadedPdfErrorMessage,
+} from "./pdf-upload";
 import { storeXtcOutput } from "./pipeline";
 import { isAozoraBunkoUrl, resolveRenderOptions } from "./sitepresets";
-import type { ConvertJobParams, Env } from "./types";
+import type { ConvertJobParams, ConvertSource, Env, PdfConvertOptions } from "./types";
 
 // xtctool may run up to 600s (XTC_TIMEOUT_SECONDS in container.ts); allow a
 // 30s margin for transfer and container startup. Must stay below the step
 // timeout ("12 minutes") or the fetch would never get to time out itself.
 const CONVERTER_FETCH_TIMEOUT_MS = 630_000;
+
+/**
+ * Normalizes a job's payload to a single ConvertSource (spec §9.1). `source`
+ * wins when both are present; `url` is the pre-source legacy shape, kept
+ * only for backward compatibility with jobs created before this field
+ * existed. Neither present is a payload the Worker should never produce —
+ * treated as non-retryable rather than silently defaulting to anything.
+ */
+export function resolveSource(payload: ConvertJobParams): ConvertSource {
+  if (payload.source) {
+    return payload.source;
+  }
+  if (payload.url) {
+    return { kind: "url", url: payload.url };
+  }
+  throw new NonRetryableError("conversion source is missing");
+}
+
+/**
+ * Container response statuses that mean "this exact input will never
+ * succeed" (spec §9.4/§11.11): malformed/non-PDF body (400/415), or a PDF
+ * PyMuPDF could open but had to reject (422 — encrypted, unparseable,
+ * page-range/selection problems). 413 is handled separately (its own
+ * message). Anything else (500/503/network) is left retryable.
+ */
+function isNonRetryableUploadedPdfStatus(status: number): boolean {
+  return status === 400 || status === 415 || status === 422;
+}
 
 /**
  * Conversion pipeline behind POST /jobs (extract mode and Aozora Bunko URLs
@@ -38,7 +71,18 @@ const CONVERTER_FETCH_TIMEOUT_MS = 630_000;
 export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
   async run(event: WorkflowEvent<ConvertJobParams>, step: WorkflowStep) {
     const jobId = event.instanceId;
-    const { url } = event.payload;
+    const source = resolveSource(event.payload);
+
+    if (source.kind === "pdf") {
+      return await this.runUploadedPdf(
+        jobId,
+        source,
+        event.payload.pdfOptions ?? DEFAULT_PDF_OPTIONS,
+        step,
+      );
+    }
+
+    const { url } = source;
     // Params created before extract mode existed carry no mode field.
     const mode = event.payload.mode ?? "full";
 
@@ -283,6 +327,107 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
           } catch (error) {
             console.error(`[${jobId}] best-effort delete of ${key} failed`, error);
           }
+        }
+      });
+    }
+  }
+
+  /**
+   * PDF-source pipeline (spec §9.2/§9.3): the uploaded PDF goes straight to
+   * the Container's dedicated endpoint — no extract-content, no render-pdf
+   * (there is nothing to render; the PDF already exists). Mirrors the
+   * url-source convert-xtc step above (same retry/timeout shape, same
+   * NonRetryable/retryable split), but calls
+   * convertUploadedPdfInContainer(...) instead of convertInContainer(...)
+   * and reads its input from inputPdfKey(jobId) instead of
+   * intermediatePdfKey(jobId).
+   */
+  private async runUploadedPdf(
+    jobId: string,
+    source: Extract<ConvertSource, { kind: "pdf" }>,
+    pdfOptions: PdfConvertOptions,
+    step: WorkflowStep,
+  ): Promise<{ xtcKey: string; title?: string }> {
+    try {
+      const { xtcKey, title } = await step.do(
+        "convert-uploaded-pdf",
+        {
+          retries: { limit: 2, delay: "30 seconds", backoff: "constant" },
+          // Same budget as the url-source convert-xtc step: xtctool may run
+          // up to 600s.
+          timeout: "12 minutes",
+        },
+        async () => {
+          const input = await this.env.XTC_BUCKET.get(source.key);
+          if (input === null) {
+            // The upload came from the client, not something this Workflow
+            // can regenerate — only possible if it expired or was deleted
+            // mid-job.
+            throw new NonRetryableError("uploaded PDF is missing");
+          }
+          let response: Response;
+          try {
+            // Stream R2 -> container (never buffer the whole PDF): same
+            // FixedLengthStream requirement as convertInContainer, since the
+            // container's http.server needs a Content-Length and rejects
+            // chunked bodies.
+            response = await convertUploadedPdfInContainer(
+              this.env,
+              jobId,
+              input.body.pipeThrough(new FixedLengthStream(input.size)),
+              pdfOptions,
+              source.filename,
+              CONVERTER_FETCH_TIMEOUT_MS,
+            );
+          } catch (error) {
+            if (error instanceof DOMException && error.name === "TimeoutError") {
+              throw new NonRetryableError(
+                "XTC conversion timed out; the document is too large",
+              );
+            }
+            throw error; // network/container failures stay retryable
+          }
+          if (!response.ok) {
+            const bodyText = await response.text();
+            console.error(`[${jobId}] converter returned ${response.status}: ${bodyText}`);
+            if (response.status === 413) {
+              throw new NonRetryableError(
+                `uploaded PDF exceeds the ${resolveMaxUploadPdfBytes(this.env)} byte limit`,
+              );
+            }
+            if (isNonRetryableUploadedPdfStatus(response.status)) {
+              // Covers 400/415/422 (spec §9.4/§11.11): bad magic, unparseable,
+              // encrypted, page-range/selection problems, bad config — all
+              // deterministic for this exact input, so retrying would only
+              // waste container time. uploadedPdfErrorMessage() reads the
+              // Container's stable `code` field (converter/pdf_upload.py) to
+              // pick a condition-specific message instead of the old
+              // one-size-fits-all "invalid or unsupported PDF"; that string
+              // is still the fallback when the code is missing/unrecognized.
+              // Either way, only the mapped message — never Container detail
+              // — reaches instance.status().error (src/jobs.ts).
+              throw new NonRetryableError(uploadedPdfErrorMessage(bodyText));
+            }
+            // 500/503/other: xtctool failure, no free conversion slot, or an
+            // internal error — left retryable like the url-source path.
+            throw new Error("XTC conversion failed");
+          }
+          const { title } = await storeXtcOutput(this.env, jobId, response);
+          return { xtcKey: outputXtcKey(jobId), title };
+        },
+      );
+
+      return { xtcKey, title };
+    } finally {
+      // Runs on success and on terminal failure alike (spec §9.5) — the
+      // input PDF is deleted either way. Best-effort: a delete failure here
+      // still gets cleaned up by the input/ R2 lifecycle rule within a day
+      // (claudedocs/pdf-upload-investigation.md §5.3).
+      await step.do("delete-uploaded-pdf", async () => {
+        try {
+          await this.env.XTC_BUCKET.delete(source.key);
+        } catch (error) {
+          console.error(`[${jobId}] best-effort delete of ${source.key} failed`, error);
         }
       });
     }

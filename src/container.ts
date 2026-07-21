@@ -2,8 +2,10 @@
 // Copyright (C) 2026 aGFydWtp
 
 import { Container, getContainer } from "@cloudflare/containers";
+import { encodeBase64Url } from "./base64url";
 import { resolveMaxPdfBytes } from "./jobs";
-import type { Env } from "./types";
+import { resolveMaxUploadPdfBytes } from "./pdf-upload";
+import type { Env, PdfConvertOptions } from "./types";
 
 export class XtcConverterContainer extends Container {
   // Requests block until the container listens on this port (app.py).
@@ -58,6 +60,50 @@ export function convertInContainer(
         // Worker owns the authoritative size limit; tell the container so its
         // 413 threshold tracks resolveMaxPdfBytes instead of its own default.
         "X-Max-Pdf-Bytes": String(resolveMaxPdfBytes(env)),
+      },
+      body: pdfBody,
+      signal: AbortSignal.timeout(timeoutMs),
+    }),
+  );
+}
+
+/**
+ * Sends an uploaded (untrusted, external) PDF to the converter container's
+ * dedicated endpoint and returns its response. Deliberately a separate
+ * function from convertInContainer, not a shared one with an extra branch:
+ * the target path, the trust model of the body (spec §12.1 — any PDF, not
+ * just a Browser-Run-generated one), and the extra headers all differ (spec
+ * §11.2). pdfBody MUST already carry a known length (piped through
+ * FixedLengthStream by the caller) — see convertInContainer's doc for why:
+ * the container's http.server rejects chunked bodies.
+ *
+ * X-Convert-Timeout-Seconds and X-Max-Pdf-Bytes stay plain decimal strings
+ * (matching convertInContainer and the spec's own `<seconds>`/`<bytes>`
+ * placeholders in §11.2's request example); X-Pdf-Options and
+ * X-Source-Filename are base64url per spec §11.2, since headers are Latin-1
+ * only and both carry arbitrary UTF-8.
+ */
+export function convertUploadedPdfInContainer(
+  env: Env,
+  jobId: string,
+  pdfBody: ReadableStream,
+  pdfOptions: PdfConvertOptions,
+  filename: string,
+  timeoutMs: number,
+): Promise<Response> {
+  const container = getContainer(env.XTC_CONVERTER, converterInstanceName(jobId));
+  const subprocessTimeoutSeconds = String(
+    Math.max(1, Math.floor((timeoutMs - CONVERTER_TIMEOUT_MARGIN_MS) / 1000)),
+  );
+  return container.fetch(
+    new Request("http://converter/convert/uploaded-pdf", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/pdf",
+        "X-Convert-Timeout-Seconds": subprocessTimeoutSeconds,
+        "X-Max-Pdf-Bytes": String(resolveMaxUploadPdfBytes(env)),
+        "X-Pdf-Options": encodeBase64Url(JSON.stringify(pdfOptions)),
+        "X-Source-Filename": encodeBase64Url(filename),
       },
       body: pdfBody,
       signal: AbortSignal.timeout(timeoutMs),

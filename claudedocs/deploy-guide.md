@@ -65,7 +65,7 @@ npx wrangler tail
 
 ### 5. R2 ライフサイクルルール
 
-Phase 2 で CLI による正式なルールを定めた。下記「Phase 2 デプロイ手順」の lifecycle コマンド 2 行を一度だけ実行すること（ダッシュボードからの手動設定は不要になった）。
+Phase 2 で CLI による正式なルールを定めた。下記「Phase 2 デプロイ手順」の lifecycle コマンド 3 行を一度だけ実行すること（ダッシュボードからの手動設定は不要になった）。うち `expire-input-pdf` はPDFアップロード機能で追加されたルールで、**同機能のデプロイ前に一度だけ適用必須**。
 
 ## Phase 2 デプロイ手順（非同期ジョブ化）
 
@@ -84,11 +84,13 @@ lifecycle は wrangler.jsonc では設定できないため、デプロイとは
 ```bash
 npx wrangler r2 bucket lifecycle add xteink-conversions expire-intermediate-pdf intermediate/ --expire-days 1
 npx wrangler r2 bucket lifecycle add xteink-conversions expire-job-outputs jobs/ --expire-days 1
+npx wrangler r2 bucket lifecycle add xteink-conversions expire-input-pdf input/ --expire-days 1
 npx wrangler r2 bucket lifecycle list xteink-conversions   # 確認
 ```
 
 - 中間 PDF（`intermediate/{jobId}/source.pdf`）・成果物 XTC（`jobs/{jobId}/output.xtc`）とも 1 日（24 時間）で自動削除される（削除は expiration から最大 ~24h 遅延）。一般公開ハードニングで `jobs/` を 30 日 → 24 時間に短縮した。既存バケットに旧 30 日ルールが残っている場合は `lifecycle remove` で削除してから上記を再適用すること。
 - 旧配置の `jobs/*/source.pdf` は `jobs/` の 1 日ルールでいずれ消えるため移行処理は不要。
+- `expire-input-pdf`（`input/{jobId}/source.pdf` — PDFアップロード機能のアップロード直後の入力PDF）は Workflow の `delete-uploaded-pdf` ステップによる明示削除が基本で、この lifecycle ルールは削除失敗時の保険（1 日で自動削除）。**PDFアップロード機能のデプロイ前に一度だけ適用必須**。
 
 ### 動作確認
 

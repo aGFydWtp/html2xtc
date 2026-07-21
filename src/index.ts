@@ -13,8 +13,10 @@ import { registerDeviceRoutes } from "./devices/routes";
 import { prepareRenderInput } from "./extract";
 import {
   decideMissingDownload,
+  inputPdfKey,
   intermediatePdfKey,
   mapInstanceStatus,
+  mapPdfInstanceStatus,
   needsPhaseProbe,
   outputXtcKey,
   resolveMaxPdfBytes,
@@ -23,12 +25,20 @@ import {
 import { registerLibraryRoutes } from "./library/routes";
 import { registerOpdsRoutes } from "./opds/routes";
 import { renderPdf, renderPdfFromHtml } from "./pdf";
+import {
+  checkContentLength,
+  decodeFilenameHeader,
+  decodePdfOptionsHeader,
+  isAllowedPdfContentType,
+  resolveMaxUploadPdfBytes,
+  saveUploadedPdf,
+} from "./pdf-upload";
 import { storeXtcOutput } from "./pipeline";
 import { enforceRateLimit } from "./ratelimiter";
 import { Router } from "./router";
 import { newRequestId, withSecurityHeaders } from "./security/headers";
 import { isAozoraBunkoUrl, resolveRenderOptions } from "./sitepresets";
-import type { AozoraCatalogSyncParams, ConvertMode, Env } from "./types";
+import type { AozoraCatalogSyncParams, ConvertJobParams, ConvertMode, Env } from "./types";
 import { UrlValidationError, validatePublicUrl } from "./validate";
 
 export { AozoraCatalogSyncWorkflow } from "./catalog-workflow";
@@ -138,6 +148,18 @@ async function route(request: Request, env: Env): Promise<Response> {
       return limited;
     }
     return handleCreateJob(request, env);
+  }
+
+  // Must come before the /jobs/:jobId matcher below (its [^/]+ group would
+  // otherwise swallow "pdf" as a jobId) — spec §10.1. Unlike /convert and
+  // /jobs, the rate limit is NOT applied here: handleCreatePdfJob applies it
+  // itself, after its own cheap Content-Type/Content-Length checks (spec
+  // §8.1's recommended order: header validation → rate limit → R2 upload).
+  if (pathname === "/jobs/pdf") {
+    if (request.method !== "POST") {
+      return methodNotAllowed("POST");
+    }
+    return handleCreatePdfJob(request, env);
   }
 
   if (pathname === "/api/books") {
@@ -317,6 +339,93 @@ async function handleCreateJob(request: Request, env: Env): Promise<Response> {
   );
 }
 
+/**
+ * POST /jobs/pdf handler (spec §10.2 order): Content-Type → Content-Length
+ * → rate limit → X-File-Name → X-Pdf-Options → jobId → stream request.body
+ * into R2 (never request.arrayBuffer(), spec §10.3, via saveUploadedPdf) →
+ * create the Workflow → 202. Unlike /convert and /jobs above, the rate
+ * limit is applied here (inside the handler) rather than at the route()
+ * dispatch, so it runs after the cheap header checks per spec §8.1's
+ * recommended order ("最低限のヘッダー検証 → レート制限 → R2アップロード").
+ */
+async function handleCreatePdfJob(request: Request, env: Env): Promise<Response> {
+  if (!isAllowedPdfContentType(request.headers.get("Content-Type"))) {
+    return Response.json(
+      { error: "Content-Type must be application/pdf or application/x-pdf" },
+      { status: 415 },
+    );
+  }
+
+  const maxUploadBytes = resolveMaxUploadPdfBytes(env);
+  const lengthCheck = checkContentLength(request.headers.get("Content-Length"), maxUploadBytes);
+  if (lengthCheck.kind === "missing") {
+    return Response.json({ error: "Content-Length is required" }, { status: 411 });
+  }
+  if (lengthCheck.kind === "invalid") {
+    return Response.json(
+      { error: "Content-Length must be a positive integer" },
+      { status: 400 },
+    );
+  }
+  if (lengthCheck.kind === "too-large") {
+    return Response.json(
+      { error: `uploaded PDF exceeds the ${maxUploadBytes} byte limit` },
+      { status: 413 },
+    );
+  }
+
+  const limited = await enforceRateLimit(request, env);
+  if (limited) {
+    return limited;
+  }
+
+  const filename = decodeFilenameHeader(request.headers.get("X-File-Name"));
+
+  const optionsResult = decodePdfOptionsHeader(request.headers.get("X-Pdf-Options"));
+  if (!optionsResult.ok) {
+    return Response.json({ error: optionsResult.error }, { status: 400 });
+  }
+  const pdfOptions = optionsResult.options;
+
+  if (request.body === null) {
+    return Response.json({ error: "request body is required" }, { status: 400 });
+  }
+
+  const jobId = crypto.randomUUID();
+  const key = inputPdfKey(jobId);
+  const declaredSize = lengthCheck.length;
+
+  const saveResult = await saveUploadedPdf(env, key, request.body, declaredSize, filename);
+  if (!saveResult.ok) {
+    return Response.json({ error: saveResult.error }, { status: saveResult.status });
+  }
+
+  const params: ConvertJobParams = {
+    source: { kind: "pdf", key, filename, size: declaredSize },
+    pdfOptions,
+  };
+
+  try {
+    await env.CONVERT_WORKFLOW.create({
+      id: jobId,
+      params,
+      // Mirrors POST /jobs above: the input PDF is deleted by the Workflow
+      // itself well before this window (spec §9.5), but keeping both
+      // retentions at the same ~1 day is simplest.
+      retention: {
+        successRetention: "1 day",
+        errorRetention: "1 day",
+      },
+    });
+  } catch (error) {
+    console.error(`[${jobId}] workflow create failed`, error);
+    await deleteBestEffort(env, key);
+    return Response.json({ error: "failed to create job" }, { status: 500 });
+  }
+
+  return Response.json({ jobId, statusUrl: `/jobs/${jobId}` }, { status: 202 });
+}
+
 async function handleJobStatus(jobId: string, env: Env): Promise<Response> {
   if (!UUID_PATTERN.test(jobId)) {
     return Response.json({ error: "jobId must be a UUID" }, { status: 400 });
@@ -371,17 +480,30 @@ async function handleJobDownload(jobId: string, env: Env): Promise<Response> {
 }
 
 /**
- * Maps an instance status to the API body; for the running family this
- * probes R2 for the intermediate PDF to tell rendering from converting.
+ * Maps an instance status to the API body. For the running family this
+ * probes R2: first for the uploaded-PDF input (PDF jobs — no rendering
+ * phase, see mapPdfInstanceStatus), then, only if that's absent, for the
+ * intermediate PDF that tells a URL job's rendering from converting. A PDF
+ * job whose input was already deleted (the brief window between the
+ * Workflow's delete-uploaded-pdf step and its status turning "complete")
+ * falls through to the same intermediate-PDF probe as a URL job; since
+ * neither PDF exists at that point it reports "rendering" for that instant
+ * — an accepted, self-correcting edge case (see
+ * claudedocs/pdf-upload-investigation.md §5.5).
  */
 async function mapWithPhaseProbe(
   jobId: string,
   status: InstanceStatus,
   env: Env,
 ) {
-  const hasIntermediatePdf = needsPhaseProbe(status.status)
-    ? (await env.XTC_BUCKET.head(intermediatePdfKey(jobId))) !== null
-    : false;
+  if (!needsPhaseProbe(status.status)) {
+    return mapInstanceStatus(jobId, status, false);
+  }
+  const hasInputPdf = (await env.XTC_BUCKET.head(inputPdfKey(jobId))) !== null;
+  if (hasInputPdf) {
+    return mapPdfInstanceStatus(jobId, status);
+  }
+  const hasIntermediatePdf = (await env.XTC_BUCKET.head(intermediatePdfKey(jobId))) !== null;
   return mapInstanceStatus(jobId, status, hasIntermediatePdf);
 }
 

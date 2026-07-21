@@ -52,10 +52,10 @@
   ondrop={onDrop}
 >
   {@render children()}
+  {#if below}{@render below()}{/if}
   <div class="zone-hint">
     <span>{t("pdf_or_drop")}</span><button type="button" class="linkish" onclick={onPick}>{t("pdf_pick_file")}</button>
   </div>
-  {#if below}{@render below()}{/if}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <input bind:this={fileInput} type="file" accept="application/pdf,.pdf" hidden onchange={onFileInputChange} />
   {#if dragActive}<div class="zone-drag-label" aria-hidden="true">{t("pdf_drop_active")}</div>{/if}

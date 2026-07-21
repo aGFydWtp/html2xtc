@@ -65,6 +65,26 @@ export function rateLimitKey(clientIp: string | null): string | null {
   return `v4:${ip}`;
 }
 
+/**
+ * Builds a compound rate-limit key for a specific purpose (plan §13):
+ * prefixing the purpose name onto the plain IP key gives every purpose its
+ * own counter namespace (a separate RateLimiter Durable Object instance,
+ * since idFromName hashes the whole string) so purposes never share a
+ * window with each other, or with the existing /convert + /jobs limiter
+ * (which still calls idFromName on the bare rateLimitKey() output with no
+ * prefix — see enforceRateLimit, src/ratelimiter.ts — and is deliberately
+ * left untouched by this addition). `extra` adds a further scoping
+ * dimension, e.g. deviceId for the "端末認証失敗 IP＋deviceId" limit (plan
+ * §13's table). Returns null when ipKey is null (see rateLimitKey's own
+ * doc for when that happens) so the caller can uniformly skip.
+ */
+export function purposeRateLimitKey(purpose: string, ipKey: string | null, extra?: string): string | null {
+  if (ipKey === null) {
+    return null;
+  }
+  return extra !== undefined ? `${purpose}:${ipKey}:${extra}` : `${purpose}:${ipKey}`;
+}
+
 /** Window state as persisted in the Durable Object's storage. */
 export interface RateLimitWindow {
   windowStartMs: number;

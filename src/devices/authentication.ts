@@ -21,6 +21,8 @@ export interface AuthenticatedDevice {
   deviceId: string;
   accountId: string;
   name: string;
+  /** Last-seen timestamp as of *before* this request — used by src/devices/last-seen.ts to decide whether this request should refresh it. */
+  lastSeenAt: string | null;
 }
 
 export interface DeviceAuthenticator {
@@ -85,7 +87,7 @@ export const BasicDeviceTokenAuthenticator: DeviceAuthenticator = {
     if (!timingSafeEqual(tokenHash, device.tokenHash)) {
       return null;
     }
-    return { deviceId: device.id, accountId: device.accountId, name: device.name };
+    return { deviceId: device.id, accountId: device.accountId, name: device.name, lastSeenAt: device.lastSeenAt };
   },
 };
 

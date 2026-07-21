@@ -4,6 +4,7 @@
 import { DurableObject } from "cloudflare:workers";
 import {
   decideFixedWindow,
+  purposeRateLimitKey,
   rateLimitKey,
   resolveRateLimitPerHour,
 } from "./ratelimit";
@@ -85,5 +86,71 @@ export async function enforceRateLimit(
       status: 429,
       headers: { "Retry-After": String(result.retryAfterSeconds) },
     },
+  );
+}
+
+/** Options for enforcePurposeRateLimit (plan §13's per-purpose table). */
+export interface PurposeRateLimitOptions {
+  /** Namespaces this purpose's counter away from every other purpose and from the plain /convert+/jobs limiter (see purposeRateLimitKey). */
+  purpose: string;
+  /** Requests allowed per hour for this purpose+key. */
+  limit: number;
+  /** Extra key dimension, e.g. a deviceId, for limits scoped tighter than "per IP" alone. */
+  extraKey?: string;
+  /**
+   * Whether a RateLimiter DO outage should block the request (auth,
+   * pairing, device-auth-failure — plan §13 "原則fail-closed") or let it
+   * through unlimited (matching enforceRateLimit's existing fail-open
+   * stance for the public conversion API).
+   */
+  failClosed: boolean;
+}
+
+/**
+ * Per-purpose rate-limit gate (plan §13): unlike enforceRateLimit (one
+ * shared counter for /convert + /jobs), each call site here gets its own
+ * counter namespace and its own limit/fail-open-vs-closed policy, chosen at
+ * the call site via `purpose`/`limit`/`failClosed`. The same RateLimiter DO
+ * class and decideFixedWindow logic is reused — only the key and the
+ * outage behavior differ.
+ *
+ * Returns the 429 (or, on a fail-closed outage, 503) Response to send
+ * as-is, or null to let the request through.
+ */
+export async function enforcePurposeRateLimit(
+  request: Request,
+  env: Env,
+  options: PurposeRateLimitOptions,
+): Promise<Response | null> {
+  const ipKey = rateLimitKey(request.headers.get("CF-Connecting-IP"));
+  const key = purposeRateLimitKey(options.purpose, ipKey, options.extraKey);
+  if (key === null) {
+    // No client IP to scope by (local dev, or an edge that stripped the
+    // header) — see rateLimitKey's own doc; this cannot happen from the
+    // real Cloudflare edge in production.
+    return null;
+  }
+
+  let result: { allowed: boolean; retryAfterSeconds: number };
+  try {
+    const stub = env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(key));
+    result = await stub.take(options.limit);
+  } catch (error) {
+    console.error(`rate limiter unavailable (${options.purpose})`, error);
+    if (options.failClosed) {
+      return Response.json(
+        { error: { code: "RATE_LIMITER_UNAVAILABLE", message: "try again later" } },
+        { status: 503, headers: { "Retry-After": "5" } },
+      );
+    }
+    return null;
+  }
+
+  if (result.allowed) {
+    return null;
+  }
+  return Response.json(
+    { error: { code: "RATE_LIMITED", message: "rate limit exceeded; try again later" } },
+    { status: 429, headers: { "Retry-After": String(result.retryAfterSeconds) } },
   );
 }

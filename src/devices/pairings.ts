@@ -164,10 +164,11 @@ export async function startPairing(
   env: Pick<Env, "APP_DB" | "WEBAUTHN_ORIGIN">,
   requestedName: string | null,
 ): Promise<StartPairingResult> {
-  // TODO(plan §13): apply the per-IP "ペアリング開始 | IP | 20回/時" rate
-  // limit once the per-purpose limiter lands (Phase 7 hardening pass) — this
-  // route is intentionally unauthenticated and currently has no throttle of
-  // its own.
+  // The per-IP "ペアリング開始 | IP | 20回/時" rate limit (plan §13) is
+  // enforced by the caller (src/devices/routes.ts's POST
+  // /api/device-pairings handler) before this function is ever invoked —
+  // it needs the raw Request, which this function deliberately doesn't
+  // take, to key the limiter by IP.
   const origin = resolveWebauthnOrigin(env);
   const sanitizedName =
     requestedName !== null ? sanitizeFreeText(requestedName, MAX_REQUESTED_NAME_LENGTH) : null;

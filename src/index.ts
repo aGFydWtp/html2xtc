@@ -20,6 +20,7 @@ import {
   xtcContentDisposition,
 } from "./jobs";
 import { registerLibraryRoutes } from "./library/routes";
+import { registerOpdsRoutes } from "./opds/routes";
 import { renderPdf, renderPdfFromHtml } from "./pdf";
 import { storeXtcOutput } from "./pipeline";
 import { enforceRateLimit } from "./ratelimiter";
@@ -50,6 +51,7 @@ const router = new Router();
 registerAuthRoutes(router);
 registerLibraryRoutes(router);
 registerDeviceRoutes(router);
+registerOpdsRoutes(router);
 
 export default {
   async fetch(request, env) {

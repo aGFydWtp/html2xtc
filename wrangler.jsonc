@@ -147,7 +147,11 @@
 			"/convert",
 			"/jobs",
 			"/jobs/*",
-			"/download/*"
+			"/download/*",
+			// Device-facing OPDS feeds (src/opds/routes.ts, plan §9.5/§12):
+			// without this, the edge could serve a static asset at the same
+			// path instead of ever reaching the Worker.
+			"/opds/*"
 		]
 	},
 	"routes": [

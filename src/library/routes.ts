@@ -6,6 +6,7 @@ import type { Account } from "../auth/sessions";
 import { requireSession } from "../auth/sessions";
 import { xtcContentDisposition } from "../jobs";
 import type { Router } from "../router";
+import { logAuditEvent } from "../security/audit";
 import { Errors } from "../security/errors";
 import type { Env } from "../types";
 import {
@@ -73,6 +74,12 @@ export function registerLibraryRoutes(router: Router): void {
       ...(title !== undefined ? { title } : {}),
       ...(author !== undefined ? { author } : {}),
     });
+    // Fires even on the idempotent-replay path (an already-saved jobId) —
+    // saveJobToLibrary doesn't distinguish "created" from "returned
+    // existing" in its result, and over-logging a harmless replay is
+    // preferable to threading that distinction through just for the audit
+    // trail.
+    logAuditEvent("library.item.created", { accountId: account.id, itemId: item.id });
     return Response.json({ item });
   });
 
@@ -104,6 +111,7 @@ export function registerLibraryRoutes(router: Router): void {
     const account = await requireAccount(request, env);
     requireCsrf(request, env);
     await deleteLibrary(env, account, params.itemId);
+    logAuditEvent("library.item.deleted", { accountId: account.id, itemId: params.itemId });
     return new Response(null, { status: 204 });
   });
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   RATE_LIMIT_WINDOW_MS,
   decideFixedWindow,
+  purposeRateLimitKey,
   rateLimitKey,
   resolveRateLimitPerHour,
 } from "../src/ratelimit";
@@ -34,6 +35,40 @@ describe("rateLimitKey", () => {
   it("returns null for an unparseable IPv6 literal", () => {
     expect(rateLimitKey("2001:db8::1::2")).toBeNull();
     expect(rateLimitKey(":::")).toBeNull();
+  });
+});
+
+describe("purposeRateLimitKey", () => {
+  it("prefixes the purpose onto the IP key", () => {
+    expect(purposeRateLimitKey("auth.login.start", "v4:203.0.113.7")).toBe(
+      "auth.login.start:v4:203.0.113.7",
+    );
+  });
+
+  it("appends the extra key dimension when given (e.g. deviceId)", () => {
+    expect(purposeRateLimitKey("device.auth.failed", "v4:203.0.113.7", "device-1")).toBe(
+      "device.auth.failed:v4:203.0.113.7:device-1",
+    );
+  });
+
+  it("returns null when ipKey is null, regardless of extra", () => {
+    expect(purposeRateLimitKey("auth.login.start", null)).toBeNull();
+    expect(purposeRateLimitKey("device.auth.failed", null, "device-1")).toBeNull();
+  });
+
+  it("gives different purposes distinct keys for the same IP", () => {
+    const a = purposeRateLimitKey("auth.login.start", "v4:203.0.113.7");
+    const b = purposeRateLimitKey("auth.registration.start", "v4:203.0.113.7");
+    expect(a).not.toBe(b);
+  });
+
+  it("never collides with the un-prefixed key the existing /convert+/jobs limiter uses", () => {
+    // The legacy limiter calls idFromName(rateLimitKey(ip)) directly, with
+    // no purpose prefix at all — as long as no real purpose string is empty,
+    // "<purpose>:v4:1.2.3.4" can never equal the bare "v4:1.2.3.4".
+    const bare = rateLimitKey("203.0.113.7")!;
+    const namespaced = purposeRateLimitKey("auth.login.start", bare);
+    expect(namespaced).not.toBe(bare);
   });
 });
 

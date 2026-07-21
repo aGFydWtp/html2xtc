@@ -5,8 +5,9 @@ import type {
   AuthenticationResponseJSON,
   RegistrationResponseJSON,
 } from "@simplewebauthn/server";
-import { enforceRateLimit } from "../ratelimiter";
+import { enforcePurposeRateLimit, enforceRateLimit } from "../ratelimiter";
 import type { Router } from "../router";
+import { logAuditEvent } from "../security/audit";
 import { Errors } from "../security/errors";
 import type { Env } from "../types";
 import { verifyCsrf } from "./csrf";
@@ -22,6 +23,7 @@ import {
 } from "./sessions";
 import type { Account } from "./sessions";
 import { finishLogin, finishRegistration, startLogin, startRegistration } from "./webauthn";
+import type { FinishLoginResult } from "./webauthn";
 
 /**
  * HTTP adapter for the Phase 2 passkey/session API (plan §9.1), registered
@@ -77,9 +79,19 @@ function accountDto(account: Account): { id: string; displayName: string } {
   return { id: account.id, displayName: account.displayName };
 }
 
+/** plan §13's per-purpose table. */
+const REGISTRATION_START_LIMIT = 10;
+const LOGIN_START_LIMIT = 30;
+const LOGIN_VERIFY_FAILED_LIMIT = 30;
+
 export function registerAuthRoutes(router: Router): void {
   router.post("/api/auth/registration/options", async (request, env) => {
-    const limited = await rateLimited(request, env);
+    // Passkey registration start: 10/h/IP, fail-closed (plan §13).
+    const limited = await enforcePurposeRateLimit(request, env, {
+      purpose: "auth.registration.start",
+      limit: REGISTRATION_START_LIMIT,
+      failClosed: true,
+    });
     if (limited !== null) {
       return limited;
     }
@@ -128,7 +140,12 @@ export function registerAuthRoutes(router: Router): void {
   });
 
   router.post("/api/auth/login/options", async (request, env) => {
-    const limited = await rateLimited(request, env);
+    // Passkey login start: 30/h/IP, fail-closed (plan §13).
+    const limited = await enforcePurposeRateLimit(request, env, {
+      purpose: "auth.login.start",
+      limit: LOGIN_START_LIMIT,
+      failClosed: true,
+    });
     if (limited !== null) {
       return limited;
     }
@@ -137,17 +154,35 @@ export function registerAuthRoutes(router: Router): void {
   });
 
   router.post("/api/auth/login/verify", async (request, env) => {
-    const limited = await rateLimited(request, env);
-    if (limited !== null) {
-      return limited;
-    }
     const body = await readJsonBody(request);
     const { response } = body;
     if (typeof response !== "object" || response === null) {
       throw Errors.badRequest("INVALID_RESPONSE", "response is required");
     }
     const userAgent = request.headers.get("User-Agent");
-    const result = await finishLogin(env, response as AuthenticationResponseJSON, userAgent);
+    let result: FinishLoginResult;
+    try {
+      result = await finishLogin(env, response as AuthenticationResponseJSON, userAgent);
+    } catch (error) {
+      // Login-verify failure: 30/h/IP, fail-closed (plan §13 "ログイン検証
+      // 失敗"). Counted (and, past the threshold, enforced) only on failure —
+      // a legitimate user's occasional wrong attempt never counts against
+      // anyone else's budget, only repeated failures from one IP do. The
+      // limiter check runs after the failure so this specific request still
+      // gets its own honest 401 unless it is itself the one that trips the
+      // threshold.
+      logAuditEvent("auth.login.failed");
+      const limited = await enforcePurposeRateLimit(request, env, {
+        purpose: "auth.login.verify_failed",
+        limit: LOGIN_VERIFY_FAILED_LIMIT,
+        failClosed: true,
+      });
+      if (limited !== null) {
+        return limited;
+      }
+      throw error;
+    }
+    logAuditEvent("auth.login.succeeded", { accountId: result.account.id });
     const headers = new Headers();
     headers.set("Set-Cookie", buildSessionCookie(result.session.token, result.session.maxAgeSeconds));
     return Response.json({ account: accountDto(result.account) }, { headers });

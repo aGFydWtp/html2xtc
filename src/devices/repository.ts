@@ -199,17 +199,43 @@ export interface DeviceAuthRecord {
   name: string;
   tokenHash: string;
   status: string;
+  lastSeenAt: string | null;
 }
 
 export async function getDeviceForAuth(db: D1Database, deviceId: string): Promise<DeviceAuthRecord | null> {
   const row = await db
-    .prepare(`SELECT id, account_id, name, token_hash, status FROM devices WHERE id = ?`)
+    .prepare(`SELECT id, account_id, name, token_hash, status, last_seen_at FROM devices WHERE id = ?`)
     .bind(deviceId)
-    .first<{ id: string; account_id: string; name: string; token_hash: string; status: string }>();
+    .first<{
+      id: string;
+      account_id: string;
+      name: string;
+      token_hash: string;
+      status: string;
+      last_seen_at: string | null;
+    }>();
   if (row === null) {
     return null;
   }
-  return { id: row.id, accountId: row.account_id, name: row.name, tokenHash: row.token_hash, status: row.status };
+  return {
+    id: row.id,
+    accountId: row.account_id,
+    name: row.name,
+    tokenHash: row.token_hash,
+    status: row.status,
+    lastSeenAt: row.last_seen_at,
+  };
+}
+
+/**
+ * Unconditionally overwrites last_seen_at (plan §10.4 "ダウンロード成功時に
+ * devices.last_seen_at を更新する"). The 5-minute throttle that decides
+ * *whether* to call this lives in src/devices/last-seen.ts's
+ * shouldUpdateLastSeen — this function itself never skips, so it stays a
+ * single trivial UPDATE the caller can unit-test against by mocking D1.
+ */
+export async function touchDeviceLastSeen(db: D1Database, deviceId: string, nowIso: string): Promise<void> {
+  await db.prepare(`UPDATE devices SET last_seen_at = ? WHERE id = ?`).bind(nowIso, deviceId).run();
 }
 
 // ---------------------------------------------------------------------------

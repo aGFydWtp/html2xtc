@@ -4,7 +4,9 @@
 import { verifyCsrf } from "../auth/csrf";
 import type { Account } from "../auth/sessions";
 import { requireSession } from "../auth/sessions";
+import { enforcePurposeRateLimit } from "../ratelimiter";
 import type { Router } from "../router";
+import { logAuditEvent } from "../security/audit";
 import { Errors } from "../security/errors";
 import type { Env } from "../types";
 import {
@@ -86,10 +88,25 @@ function requirePairingSecret(request: Request): string {
   return secret;
 }
 
+/** plan §13's per-purpose table. */
+const PAIRING_START_LIMIT = 20;
+const PAIRING_LOOKUP_LIMIT = 60;
+
 export function registerDeviceRoutes(router: Router): void {
   // --- device-pairings: unauthenticated, called by the Xteink device itself ---
 
   router.post("/api/device-pairings", async (request, env) => {
+    // Pairing start: 20/h/IP, fail-closed (plan §13) — this route is
+    // unauthenticated (called by the Xteink device itself), so the limiter
+    // is the only defense against a flood of pairing rows.
+    const limited = await enforcePurposeRateLimit(request, env, {
+      purpose: "device.pairing.start",
+      limit: PAIRING_START_LIMIT,
+      failClosed: true,
+    });
+    if (limited !== null) {
+      return limited;
+    }
     const body = await readJsonBody(request);
     const { requestedName } = body;
     if (requestedName !== undefined && typeof requestedName !== "string") {
@@ -115,6 +132,15 @@ export function registerDeviceRoutes(router: Router): void {
 
   router.get("/api/pairings/by-code/:userCode", async (request, env, params) => {
     await requireAccount(request, env);
+    // userCode lookup: 60/h/IP, fail-closed (plan §13).
+    const limited = await enforcePurposeRateLimit(request, env, {
+      purpose: "device.pairing.lookup",
+      limit: PAIRING_LOOKUP_LIMIT,
+      failClosed: true,
+    });
+    if (limited !== null) {
+      return limited;
+    }
     const result = await findPairingByCode(env, params.userCode);
     return Response.json(result);
   });
@@ -128,6 +154,11 @@ export function registerDeviceRoutes(router: Router): void {
       throw Errors.badRequest("INVALID_DEVICE_NAME", "name is required");
     }
     const device = await approvePairingForAccount(env, account, params.pairingId, name);
+    logAuditEvent("device.pairing.approved", {
+      accountId: account.id,
+      deviceId: device.id,
+      pairingId: params.pairingId,
+    });
     return Response.json({ device });
   });
 
@@ -162,6 +193,7 @@ export function registerDeviceRoutes(router: Router): void {
     const account = await requireAccount(request, env);
     requireCsrf(request, env);
     await revokeDevice(env, account, params.deviceId);
+    logAuditEvent("device.revoked", { accountId: account.id, deviceId: params.deviceId });
     return new Response(null, { status: 204 });
   });
 
@@ -194,6 +226,12 @@ export function registerDeviceRoutes(router: Router): void {
     const library = await replaceDeviceLibrary(env, account, params.deviceId, {
       expectedVersion,
       itemIds: itemIds as string[],
+    });
+    logAuditEvent("device.library.updated", {
+      accountId: account.id,
+      deviceId: params.deviceId,
+      version: library.version,
+      itemCount: library.items.length,
     });
     return Response.json(library);
   });

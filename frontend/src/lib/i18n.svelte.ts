@@ -303,7 +303,7 @@ export const I18N: Record<Lang, Messages> = {
 
     library_loading: "読み込み中…",
     library_load_failed: "ライブラリの取得に失敗しました。",
-    library_empty: "保存されたXTCはまだありません。",
+    library_empty: "保存されたXTCファイルはまだありません。",
     library_download: "ダウンロード",
     library_item_edit: "編集",
     library_delete: "削除",

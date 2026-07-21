@@ -24,6 +24,8 @@
       if (menuEl.matches(":popover-open")) menuEl.hidePopover(); // toggle イベントが menuOpen を戻す
       return;
     }
+    // メニュー内にフォーカスが残ったまま閉じるとフォーカスが body に落ちるので ≡ へ返す
+    if (menuEl.contains(document.activeElement)) btnEl?.focus();
     menuOpen = false;
   }
 
@@ -93,7 +95,7 @@
   <button
     type="button"
     class="menu-btn"
-    aria-haspopup="true"
+    aria-controls="header-menu"
     aria-expanded={menuOpen}
     aria-label={t("menu_open")}
     bind:this={btnEl}
@@ -104,6 +106,7 @@
 </header>
 
 <div
+  id="header-menu"
   class="hd-menu"
   class:open={!POPOVER_OK && menuOpen}
   popover="auto"

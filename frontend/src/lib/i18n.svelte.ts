@@ -9,7 +9,6 @@ export interface Messages {
   brand: string;
   intro: string;
   convert: string;
-  keep_layout: string;
   agree_before: string;
   agree_link: string;
   agree_after: string;
@@ -140,7 +139,6 @@ export const I18N: Record<Lang, Messages> = {
     brand: "XTC 変換",
     intro: "公開されているWebサイトやコンテンツを、電子ペーパー端末 Xteink X3 用の XTC ファイルに変換します。",
     convert: "変換する",
-    keep_layout: "レイアウトを保持して変換する",
     agree_before: "「変換する」を押すことで、",
     agree_link: "利用規約",
     agree_after: "に同意したものとします。",
@@ -268,7 +266,6 @@ export const I18N: Record<Lang, Messages> = {
     brand: "XTC Converter",
     intro: "Converts publicly available websites and content into XTC files for the Xteink X3 e-paper reader.",
     convert: "Convert",
-    keep_layout: "Keep the page layout",
     agree_before: "By pressing “Convert”, you agree to the ",
     agree_link: "Terms of Use",
     agree_after: ". ",

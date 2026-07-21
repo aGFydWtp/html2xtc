@@ -122,7 +122,7 @@ export function startPolling(job: JobEntry): void {
 
 // displayTitle は青空文庫など、投入元が作品名を持つ場合の初期表示タイトル。
 // 指定時は poll でサーバー由来タイトルに上書きされない（下の !job.title ガード）。
-export async function submitUrl(rawUrl: string, keepLayout: boolean, displayTitle?: string): Promise<void> {
+export async function submitUrl(rawUrl: string, displayTitle?: string): Promise<void> {
   const url = rawUrl.trim();
   if (!url) return;
   submitting.busy = true;
@@ -130,9 +130,9 @@ export async function submitUrl(rawUrl: string, keepLayout: boolean, displayTitl
     const res = await fetch("/jobs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      // mode は常に明示送信する: UI の既定（未チェック）は extract だが、
+      // フロントは常に extract モード。full（レイアウト保持）は API 直叩き専用で、
       // API 自体の mode 省略時既定は "full" のまま。
-      body: JSON.stringify({ url, mode: keepLayout ? "full" : "extract" }),
+      body: JSON.stringify({ url, mode: "extract" }),
     });
     const body = await res.json().catch(() => null) as JobsPostResponse | null;
     if (!res.ok || !body || typeof body.jobId !== "string") {

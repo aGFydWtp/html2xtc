@@ -5,11 +5,10 @@
   import { t } from "../lib/i18n.svelte";
 
   let url = $state("");
-  let keepLayout = $state(false);
 
   function onsubmit(event: SubmitEvent) {
     event.preventDefault();
-    void submitUrl(url, keepLayout);
+    void submitUrl(url);
   }
 </script>
 
@@ -29,12 +28,6 @@
       />
       <button class="primary" type="submit" disabled={submitting.busy}>{t("convert")}</button>
     </div>
-    <!-- 未チェック（既定）= extract モード、チェックあり = full モード。API 側の
-         mode 省略時既定は "full" のままなので、submitUrl() は常に mode を明示送信する。 -->
-    <label class="mode-row">
-      <input type="checkbox" bind:checked={keepLayout} />
-      <span>{t("keep_layout")}</span>
-    </label>
   </form>
   <div class="aozora-open-row">
     <button type="button" class="secondary" onclick={() => aozora.show()}>{t("aozora_open")}</button>
@@ -60,11 +53,6 @@
     border: 0; background: var(--ink); color: var(--ink-text); cursor: pointer; white-space: nowrap;
   }
   button.primary:disabled { opacity: .55; cursor: default; }
-  .mode-row {
-    display: flex; align-items: center; gap: 8px; margin-top: 12px;
-    font-size: 14px; color: var(--muted2); cursor: pointer; width: fit-content;
-  }
-  .mode-row input { accent-color: var(--ink); width: 16px; height: 16px; margin: 0; flex: none; }
   .form-note { font-size: 14px; color: var(--muted); margin: 0 0 10px; }
   .aozora-open-row { margin-top: 16px; }
   button.secondary {

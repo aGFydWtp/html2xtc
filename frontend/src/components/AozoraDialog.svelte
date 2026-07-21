@@ -132,10 +132,19 @@
     padding: 0; border: 1.5px solid var(--ink); border-radius: 4px;
     background: var(--bg); color: var(--text);
     width: min(480px, calc(100vw - 32px));
+    /* iOS Safari ではツールバー分を除いた dvh を優先（非対応環境は vh にフォールバック） */
     max-height: calc(100vh - 96px);
+    max-height: calc(100dvh - 96px);
     box-shadow: 4px 4px 0 rgba(28, 26, 23, .35);
   }
   dialog.aozora-dialog[open] { display: flex; flex-direction: column; }
+  /* スマホでは検索結果リストを広く使えるよう、内容量によらず常にほぼ全高で表示する */
+  @media (max-width: 600px) {
+    dialog.aozora-dialog[open] {
+      height: calc(100vh - 96px);
+      height: calc(100dvh - 96px);
+    }
+  }
   dialog.aozora-dialog::backdrop { background: rgba(28, 26, 23, .45); }
   .dlg-head {
     display: flex; align-items: center; justify-content: space-between; gap: 12px;

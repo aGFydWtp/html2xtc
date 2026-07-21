@@ -526,6 +526,7 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
           const normalized = normalizeText(decoded.text, {
             maxConsecutiveBlankLines: textOptions.maxConsecutiveBlankLines,
             preserveSpaces: textOptions.preserveSpaces,
+            joinHardWrappedLines: textOptions.joinHardWrappedLines,
           });
           // The removed characters themselves are never logged (spec §8.3/§17) —
           // only the count.

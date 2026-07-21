@@ -137,6 +137,15 @@
             <button type="button" aria-pressed={options.preserveSpaces} onclick={() => (options.preserveSpaces = true)}>{t("text_preserve_spaces_on")}</button>
           </div>
         </div>
+
+        <div class="field">
+          <div class="opt-label">{t("text_join_lines_label")}</div>
+          <div class="seg">
+            <button type="button" aria-pressed={options.joinHardWrappedLines} onclick={() => (options.joinHardWrappedLines = true)}>{t("text_join_lines_on")}</button>
+            <button type="button" aria-pressed={!options.joinHardWrappedLines} onclick={() => (options.joinHardWrappedLines = false)}>{t("text_join_lines_off")}</button>
+          </div>
+          <p class="field-note">{t("text_join_lines_note")}</p>
+        </div>
       </div>
     {/if}
   </div>
@@ -148,6 +157,7 @@
   .field-row { display: flex; flex-wrap: wrap; gap: 20px; }
   .field-row .field { flex: 1; min-width: 160px; }
   .opt-label { font-size: 13px; font-weight: 600; color: var(--muted2); letter-spacing: .02em; }
+  .field-note { margin: 2px 0 0; font-size: 12px; color: var(--muted); }
 
   .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; align-self: flex-start; }
   .seg button {

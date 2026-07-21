@@ -145,9 +145,104 @@ function trimTrailingLineWhitespace(text: string): string {
     .join("\n");
 }
 
+// --- Hard-wrapped line joining ---------------------------------------------
+//
+// Many Japanese-book TXT sources are fixed-width hard-wrapped (~40-50 chars
+// per line, breaking mid-sentence). This heuristic re-joins those lines
+// within a paragraph so they read as flowing prose instead of a <br> per
+// source line. It must stay byte-for-byte identical to
+// frontend/src/lib/text-normalize.ts's copy — the two implementations are
+// deliberately duplicated (frontend can't import from src/) rather than
+// shared.
+
+/** A line ending in one of these keeps its break: it reads as a sentence or
+ * quotation boundary, not a mid-sentence hard wrap. */
+const SENTENCE_END_CHARS = new Set([
+  "。", "！", "？", "…", "‥", "」", "』", "）", "】", "〕", "〉", "》", ".", "!", "?",
+]);
+
+/** A line starting with one of these keeps the break before it: it reads as
+ * a new paragraph-style unit (indent or opening quote), not a wrapped
+ * continuation. */
+const PARAGRAPH_HEAD_MARKERS = new Set(["　", "\t", "「", "『", "（", "〈", "《", "【"]);
+
+/** Characters where joining two lines needs an inserted space to avoid
+ * mashing words together (Latin text); anything else (Japanese prose) joins
+ * with no separator. */
+const ASCII_JOIN_CHAR_RE = /^[A-Za-z0-9,;:)]$/;
+
+function lastCodePoint(value: string): string {
+  const chars = Array.from(value);
+  return chars.length > 0 ? chars[chars.length - 1] : "";
+}
+
+function firstCodePoint(value: string): string {
+  const chars = Array.from(value);
+  return chars.length > 0 ? chars[0] : "";
+}
+
+/** Whether the break between adjacent lines A (before) and B (after) should
+ * be kept as a <br> rather than joined. */
+function shouldPreserveLineBreak(a: string, b: string): boolean {
+  const aTrimmed = a.replace(/[ \t]+$/, "");
+  if (aTrimmed.length === 0 || b.length === 0) {
+    return true;
+  }
+  if (SENTENCE_END_CHARS.has(lastCodePoint(aTrimmed))) {
+    return true;
+  }
+  if (PARAGRAPH_HEAD_MARKERS.has(firstCodePoint(b))) {
+    return true;
+  }
+  return false;
+}
+
+/** The character inserted between A and B when they are joined. */
+function lineJoinSeparator(a: string, b: string): string {
+  const aTrimmed = a.replace(/[ \t]+$/, "");
+  const lastChar = lastCodePoint(aTrimmed);
+  const firstChar = firstCodePoint(b);
+  return ASCII_JOIN_CHAR_RE.test(lastChar) && ASCII_JOIN_CHAR_RE.test(firstChar) ? " " : "";
+}
+
+/** Joins hard-wrapped lines within a single paragraph block (no blank
+ * lines inside `paragraph`). */
+function joinLinesInParagraph(paragraph: string): string {
+  const lines = paragraph.split("\n");
+  let result = lines[0] ?? "";
+  for (let i = 1; i < lines.length; i++) {
+    const a = lines[i - 1];
+    const b = lines[i];
+    if (shouldPreserveLineBreak(a, b)) {
+      result += "\n" + b;
+    } else {
+      // A's trailing space/tab is always dropped at a join boundary, even
+      // when preserveSpaces=true (that flag only protects whitespace that
+      // survives as a real line break elsewhere).
+      result = result.replace(/[ \t]+$/, "") + lineJoinSeparator(a, b) + b;
+    }
+  }
+  return result;
+}
+
+/**
+ * Joins hard-wrapped lines within each blank-line-delimited paragraph
+ * (spec: TXT join-lines heuristic). Operates on already-normalized text
+ * (line endings unified, control chars stripped, blank runs collapsed) and
+ * must run before paragraph splitting / <br> conversion (text-html.ts's
+ * textToParagraphHtml).
+ */
+export function joinWrappedLines(text: string): string {
+  return text
+    .split(/(\n{2,})/)
+    .map((chunk, index) => (index % 2 === 0 ? joinLinesInParagraph(chunk) : chunk))
+    .join("");
+}
+
 export interface NormalizeOptions {
   maxConsecutiveBlankLines: number;
   preserveSpaces: boolean;
+  joinHardWrappedLines: boolean;
 }
 
 export interface NormalizeResult {
@@ -159,13 +254,16 @@ export interface NormalizeResult {
 /**
  * Full normalization pipeline (spec §8): CRLF/CR → LF, control-character
  * removal, NFC (never NFKC — spec §8.2), consecutive-blank-line collapsing,
- * and (when preserveSpaces is false) trailing-whitespace trimming per line.
+ * (when preserveSpaces is false) trailing-whitespace trimming per line, and
+ * (when joinHardWrappedLines is true) hard-wrapped line joining. Runs
+ * entirely before paragraph splitting / <br> conversion (text-html.ts).
  */
 export function normalizeText(text: string, options: NormalizeOptions): NormalizeResult {
   const lfOnly = normalizeLineEndings(text);
   const { text: stripped, removed } = stripControlChars(lfOnly);
   const nfc = stripped.normalize("NFC");
   const collapsed = collapseBlankLines(nfc, options.maxConsecutiveBlankLines);
-  const final = options.preserveSpaces ? collapsed : trimTrailingLineWhitespace(collapsed);
+  const trimmed = options.preserveSpaces ? collapsed : trimTrailingLineWhitespace(collapsed);
+  const final = options.joinHardWrappedLines ? joinWrappedLines(trimmed) : trimmed;
   return { text: final, controlCharsRemoved: removed };
 }

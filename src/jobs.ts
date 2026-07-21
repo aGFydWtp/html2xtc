@@ -107,6 +107,16 @@ export function needsPhaseProbe(status: InstanceStatus["status"]): boolean {
 }
 
 /**
+ * The Workflows runtime prefixes instance.error.message with the error class
+ * name (e.g. "NonRetryableError: text file is empty"). The class name is an
+ * internal detail and breaks the frontend's exact-match error → i18n mapping
+ * (frontend/src/lib/server-error-text.ts), so strip it before exposing.
+ */
+export function stripWorkflowErrorPrefix(message: string): string {
+  return message.replace(/^[A-Za-z]*Error:\s+/, "");
+}
+
+/**
  * Maps a Workflows instance status onto the public API status. status() does
  * not expose the currently running step, so within the running family the
  * rendering/converting split is derived from whether the intermediate PDF
@@ -134,7 +144,7 @@ export function mapInstanceStatus(
       return {
         jobId,
         status: "failed",
-        error: instance.error?.message ?? "unknown error",
+        error: stripWorkflowErrorPrefix(instance.error?.message ?? "unknown error"),
       };
     default:
       // running / waiting / paused / waitingForPause / unknown
@@ -200,7 +210,7 @@ export function mapTextInstanceStatus(
       return {
         jobId,
         status: "failed",
-        error: instance.error?.message ?? "unknown error",
+        error: stripWorkflowErrorPrefix(instance.error?.message ?? "unknown error"),
       };
     default:
       // running / waiting / paused / waitingForPause / unknown

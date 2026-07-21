@@ -114,8 +114,8 @@
   }
 </script>
 
-<section class="history">
-  {#if jobsStore.list.length}
+{#if jobsStore.list.length}
+  <section class="history">
     <div class="history-head">
       <h2>{t("history")}</h2>
       <button type="button" onclick={clearAll}>{t("clear_all")}</button>
@@ -141,8 +141,8 @@
         </li>
       {/each}
     </ul>
-  {/if}
-</section>
+  </section>
+{/if}
 
 <footer class="site">
   <a href="/about">{t("about_link")}</a><br />

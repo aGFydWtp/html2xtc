@@ -250,7 +250,7 @@ export const I18N: Record<Lang, Messages> = {
     form_note: "Conversion takes 1–2 minutes. Files are deleted automatically after about 24 hours.",
     agree_before: "By pressing “Convert”, you agree to the ",
     agree_link: "Terms of Use",
-    agree_after: ".",
+    agree_after: ". ",
     history: "History",
     clear_all: "Clear all",
     about_link: "About this service",

@@ -16,6 +16,7 @@
 <section class="convert">
   <p class="intro">{t("intro")}</p>
   <form {onsubmit}>
+    <div class="form-note"><span>{t("agree_before")}</span><a href="/about#terms">{t("agree_link")}</a><span>{t("agree_after")}</span><span>{t("form_note")}</span></div>
     <div class="input-row">
       <input
         type="url"
@@ -34,8 +35,6 @@
       <input type="checkbox" bind:checked={keepLayout} />
       <span>{t("keep_layout")}</span>
     </label>
-    <div class="form-note">{t("form_note")}</div>
-    <div class="form-note"><span>{t("agree_before")}</span><a href="/about#terms">{t("agree_link")}</a><span>{t("agree_after")}</span></div>
   </form>
   <div class="aozora-open-row">
     <button type="button" class="secondary" onclick={() => aozora.show()}>{t("aozora_open")}</button>
@@ -66,7 +65,7 @@
     font-size: 14px; color: var(--muted2); cursor: pointer; width: fit-content;
   }
   .mode-row input { accent-color: var(--ink); width: 16px; height: 16px; margin: 0; flex: none; }
-  .form-note { font-size: 14px; color: var(--muted); margin-top: 10px; }
+  .form-note { font-size: 14px; color: var(--muted); margin: 0 0 10px; }
   .aozora-open-row { margin-top: 16px; }
   button.secondary {
     padding: 8px 18px; font: inherit; font-size: 14px; font-weight: 500; border-radius: 4px;

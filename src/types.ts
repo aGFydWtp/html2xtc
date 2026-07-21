@@ -163,6 +163,12 @@ export interface Env {
    */
   RATE_LIMIT_PER_HOUR?: string;
   /**
+   * Per-IP request limit for POST /preview/text (fixed 1-hour window,
+   * namespaced separately from RATE_LIMIT_PER_HOUR via
+   * enforcePurposeRateLimit). Default 20 (preview spec §8).
+   */
+  TEXT_PREVIEW_RATE_LIMIT_PER_HOUR?: string;
+  /**
    * WebAuthn relying party ID (e.g. "xtc.hr20k.com"). Required once the
    * passkey routes (a later phase) are wired up; unset in this phase.
    */

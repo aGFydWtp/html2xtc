@@ -176,6 +176,58 @@ X-Text-Options: <TextConvertOptions の JSON を base64url エンコード>
 
 **対応しないもの（MVP）**: Markdown/HTML の解釈・青空文庫注記・ルビ/傍点/脚注/目次・OCR・画像埋め込み・外部画像/外部 CSS/外部 JavaScript の参照・複数 TXT の結合・ページ単位の個別書式・変換開始後のジョブキャンセル。
 
+### POST /preview/text
+
+TXT本文の先頭部分だけを、`POST /jobs/text` と同じ本番処理系（テキスト正規化・段落分割・HTMLエスケープ・読書用HTML生成・フォント埋め込み・Browser RunによるPDF生成・ContainerによるPDF→XTC変換）で同期的にXTCへ変換して返す、実機プレビュー専用のエンドポイント（`frontend/` のTXT設定画面「X3実機プレビューを生成」ボタンから使用）。R2への保存・Workflowの起動は一切行わない。
+
+```http
+POST /preview/text
+Content-Type: application/json
+
+{
+  "text": "プレビュー対象本文（先頭部分のみ）",
+  "options": { ...TextConvertOptions（POST /jobs/text と同じ型） }
+}
+```
+
+- `text`: Unicodeコードポイント数で最大 4,000。フロントエンドは全文から先頭 2,500〜4,000 文字相当（段落末まで延長、最大 4,000 文字で打ち切り）をあらかじめ切り出して送るが（`frontend/src/lib/text-preview.ts` の `selectTextPreview`）、サーバー側でも同じ上限（コードポイント数 4,000、UTF-8バイト数 32 KiB）を再検証する。どちらか超過は 413。
+- `options`: `POST /jobs/text` と同じ `TextConvertOptions`（`src/text-options.ts` の `validateTextConvertOptions` で検証）。`showPageNumbers` はプレビューでは常に `false` へ強制される（送信値に関わらず）。
+- リクエスト全体のサイズ上限は 64 KiB（超過は413。`Content-Length` 指定時はボディ読み込み前に、未指定時は読み込み中に判定）。
+- レート制限は `POST /convert`・`POST /jobs` 系とは別枠（IPごと 1 時間あたり 20 件、Worker の var `TEXT_PREVIEW_RATE_LIMIT_PER_HOUR` で変更可）。超過時は 429 + `Retry-After`。
+
+成功時 200:
+
+```http
+HTTP/1.1 200 OK
+Content-Type: application/octet-stream
+Content-Length: <XTCバイト数>
+Content-Disposition: inline; filename="preview.xtc"
+Cache-Control: no-store, private
+Pragma: no-cache
+X-Content-Type-Options: nosniff
+X-Xtc-Page-Count: <ページ数>
+X-Preview-Character-Count: <正規化後の文字数>
+```
+
+レスポンス本文はXTCバイト列そのもの（`Content-Disposition`は`inline`で、ダウンロードではなくブラウザ内蔵XTCデコーダーへ直接渡す用途）。`X-Xtc-Page-Count`はContainerからは送信されないため、Worker側でXTCバイト列自身のヘッダー（オフセット6、Uint16 LE）を読んで導出している（`converter/app.py`側の変更は不要）。フォント取得に失敗した場合（`buildInlineFontCss`のフェイルソフト）は変換自体は継続し、`X-Preview-Font-Fallback: true`を追加して200のまま返す。
+
+| ステータス | 意味 |
+|---:|---|
+| 400 | JSON不正、`text`欠落/型不正、`options`不正 |
+| 413 | `text`のコードポイント数/UTF-8バイト数超過、またはリクエスト本体が64 KiB超過 |
+| 415 | `Content-Type`が`application/json`以外 |
+| 422 | 正規化後の本文が空、または生成PDFがサイズ上限超過 |
+| 429 | IPごとのレート制限超過（`Retry-After`ヘッダ付き） |
+| 502 | Browser RunのPDF生成失敗、またはContainerのXTC変換失敗 |
+| 504 | Container呼び出しのタイムアウト |
+| 500 | その他の内部エラー |
+
+エラーレスポンスはすべて `{"error": "<メッセージ>", "code": "<機械可読コード>"}` のフラットな形（`TEXT_TOO_LONG`・`EMPTY_TEXT`・`INVALID_OPTIONS`・`PDF_TOO_LARGE`・`CONTAINER_UNAVAILABLE`・`XTC_CONVERSION_FAILED`・`TIMEOUT`・`RATE_LIMITED`等）。本文・タイトル・著者・生成HTMLはログへ出力しない。
+
+**保存しない**: 送信された本文・生成されたHTML/フォントCSS/PDF/XTCは、いずれもR2へ保存されない。処理中のデータはWorkerとContainerの間だけで受け渡され、リクエスト処理後に破棄される。
+
+**一致性の限界（MVP）**: 先頭部分だけの変換のため、本文途中で切れた段落の末尾や、全文のページ数を前提にした表示（目次・奥付など、現状のTXT出力にはそもそも存在しない）は、本番の全文変換結果と一致しない場合がある。
+
 ### POST /convert（短ページ用・非推奨。/jobs 推奨）
 
 ```json

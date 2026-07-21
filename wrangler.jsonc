@@ -153,6 +153,7 @@
 			"/convert",
 			"/jobs",
 			"/jobs/*",
+			"/preview/*",
 			"/download/*",
 			// Device-facing OPDS feeds (src/opds/routes.ts, plan §9.5/§12):
 			// without this, the edge could serve a static asset at the same

@@ -69,19 +69,22 @@
 
   <div class="dlg-search">
     <div class="dlg-search-row">
-      <span class="dlg-search-icon" aria-hidden="true">⌕</span>
+      <span class="dlg-search-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-4.05-4.05" /></svg>
+      </span>
       <!-- svelte-ignore a11y_autofocus 開いた直後の $effect でフォーカスするため autofocus は使わない -->
       <input
         class="dlg-q"
         type="search"
         autocomplete="off"
         spellcheck="false"
+        placeholder={t("aozora_hint")}
+        aria-label={t("aozora_hint")}
         bind:this={input}
         value={aozora.query}
         oninput={(e) => aozora.onInput(e.currentTarget.value)}
       />
     </div>
-    <div class="dlg-hint">{t("aozora_hint")}</div>
   </div>
 
   <div class="dlg-list-head">
@@ -163,11 +166,11 @@
     border-radius: 4px; background: var(--card); padding: 11px 14px;
   }
   .dlg-search-row:focus-within { outline: 2px solid var(--ink); outline-offset: 1px; }
-  .dlg-search-icon { flex: none; color: var(--muted); font-size: 15px; line-height: 1; }
+  .dlg-search-icon { flex: none; display: flex; align-items: center; color: var(--muted); }
   .dlg-q { flex: 1; min-width: 0; border: 0; background: none; font: inherit; font-size: 16px; color: var(--text); }
   .dlg-q:focus { outline: none; }
   .dlg-q::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
-  .dlg-hint { margin-top: 8px; font-size: 12px; color: var(--muted); }
+  .dlg-q::placeholder { color: var(--muted); }
   .dlg-list-head {
     display: flex; align-items: baseline; justify-content: space-between;
     padding: 10px 22px 4px; font-family: var(--mono); font-size: 12px; color: var(--muted);

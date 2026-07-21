@@ -157,18 +157,11 @@ export interface Messages {
   devices_empty: string;
   devices_rename: string;
   devices_edit_library: string;
-  devices_rotate_token: string;
-  devices_rotate_confirm: string;
   devices_revoke: string;
   devices_revoke_confirm: string;
   devices_status_active: string;
   devices_status_revoked: string;
   devices_last_seen_never: string;
-  devices_token_dialog_title: string;
-  devices_token_shown_once: string;
-  devices_token_copy: string;
-  devices_token_copied: string;
-  devices_token_close: string;
 
   device_library_title: (name: string) => string;
   device_library_select_all: string;
@@ -339,18 +332,11 @@ export const I18N: Record<Lang, Messages> = {
     devices_empty: "ペアリング済みの端末はまだありません。",
     devices_rename: "名前を変更",
     devices_edit_library: "配信リストを編集",
-    devices_rotate_token: "トークンを再発行",
-    devices_rotate_confirm: "トークンを再発行しますか？古いトークンは即座に無効になります。",
     devices_revoke: "解除",
     devices_revoke_confirm: "この端末を解除しますか？以後、この端末からのアクセスはできなくなります。",
     devices_status_active: "有効",
     devices_status_revoked: "解除済み",
     devices_last_seen_never: "未接続",
-    devices_token_dialog_title: "新しいトークン",
-    devices_token_shown_once: "このトークンは今だけ表示されます。閉じると二度と表示できません。端末側の設定にコピーしてください。",
-    devices_token_copy: "コピー",
-    devices_token_copied: "コピーしました",
-    devices_token_close: "閉じる",
 
     device_library_title: (name) => `配信リストの編集 — ${name}`,
     device_library_select_all: "すべて追加",
@@ -521,18 +507,11 @@ export const I18N: Record<Lang, Messages> = {
     devices_empty: "No paired devices yet.",
     devices_rename: "Rename",
     devices_edit_library: "Edit reading list",
-    devices_rotate_token: "Rotate token",
-    devices_rotate_confirm: "Rotate the token? The old token stops working immediately.",
     devices_revoke: "Unpair",
     devices_revoke_confirm: "Unpair this device? It will no longer be able to connect.",
     devices_status_active: "Active",
     devices_status_revoked: "Unpaired",
     devices_last_seen_never: "Never connected",
-    devices_token_dialog_title: "New token",
-    devices_token_shown_once: "This token is only shown now. Once you close this dialog it can't be shown again — copy it into your device's settings.",
-    devices_token_copy: "Copy",
-    devices_token_copied: "Copied",
-    devices_token_close: "Close",
 
     device_library_title: (name) => `Edit reading list — ${name}`,
     device_library_select_all: "Add all",

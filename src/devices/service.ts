@@ -3,7 +3,6 @@
 
 import type { Account } from "../auth/sessions";
 import { isValidItemId } from "../library/service";
-import { randomToken, sha256Hex } from "../security/crypto";
 import { Errors } from "../security/errors";
 import type { Env } from "../types";
 import {
@@ -14,7 +13,6 @@ import {
   listDevicesForAccount,
   replaceDeviceLibraryEntries,
   revokeDeviceRow,
-  rotateDeviceTokenHash,
   updateDeviceName,
 } from "./repository";
 import type { DeviceLibraryEntry, DeviceRecord } from "./repository";
@@ -26,7 +24,6 @@ import type { DeviceLibraryEntry, DeviceRecord } from "./repository";
  * src/library/service.ts + src/library/routes.ts.
  */
 
-const DEVICE_TOKEN_BYTES = 32;
 const MAX_DEVICE_NAME_LENGTH = 100;
 
 /** Same sanitization shape as src/library/service.ts's sanitizeText / src/auth/webauthn.ts's sanitizeDisplayName. */
@@ -106,36 +103,6 @@ export async function revokeDevice(env: Pick<Env, "APP_DB">, account: Account, d
     return;
   }
   await revokeDeviceRow(env.APP_DB, account.id, deviceId, new Date().toISOString());
-}
-
-export interface RotatedToken {
-  deviceId: string;
-  deviceToken: string;
-}
-
-/**
- * POST /api/devices/:deviceId/token (plan §9.3): issues a fresh
- * deviceToken, replacing token_hash so the old token stops authenticating
- * immediately. Only allowed on an active device; the plaintext token is
- * returned exactly once and never persisted or logged.
- */
-export async function rotateDeviceToken(
-  env: Pick<Env, "APP_DB">,
-  account: Account,
-  deviceId: string,
-): Promise<RotatedToken> {
-  const device = await requireOwnedDevice(env, account, deviceId);
-  if (device.status !== "active") {
-    throw Errors.conflict("DEVICE_REVOKED", "device is revoked");
-  }
-  const deviceToken = randomToken(DEVICE_TOKEN_BYTES);
-  const tokenHash = await sha256Hex(deviceToken);
-  const rotated = await rotateDeviceTokenHash(env.APP_DB, account.id, deviceId, tokenHash, new Date().toISOString());
-  if (!rotated) {
-    // Lost a race against a concurrent revoke.
-    throw Errors.conflict("DEVICE_REVOKED", "device is revoked");
-  }
-  return { deviceId, deviceToken };
 }
 
 // ---------------------------------------------------------------------------
@@ -237,7 +204,7 @@ export async function replaceDeviceLibrary(
   if (device.status !== "active") {
     // A revoked device can never authenticate to fetch its OPDS feed again,
     // so editing its delivery list is a no-op the UI shouldn't offer —
-    // same "revoked means frozen" rule as rotateDeviceToken above.
+    // same "revoked means frozen" rule as revokeDevice enforces.
     throw Errors.conflict("DEVICE_REVOKED", "device is revoked");
   }
 

@@ -99,10 +99,16 @@ export async function getDeviceById(
   return row === null ? null : fromDeviceRow(row);
 }
 
-/** Lists an account's devices, newest first. */
+/**
+ * Lists an account's devices, newest first. Scoped to status='active' —
+ * revoked devices are a soft-delete (revokeDeviceRow below) with no
+ * un-revoke path, so a revoked row would otherwise linger in this list
+ * forever; excluding it here is how "端末解除" reads as a real removal from
+ * the WebUI without a physical DELETE.
+ */
 export async function listDevicesForAccount(db: D1Database, accountId: string): Promise<DeviceRecord[]> {
   const { results } = await db
-    .prepare(`SELECT ${DEVICE_COLUMNS} FROM devices WHERE account_id = ? ORDER BY created_at DESC`)
+    .prepare(`SELECT ${DEVICE_COLUMNS} FROM devices WHERE account_id = ? AND status = 'active' ORDER BY created_at DESC`)
     .bind(accountId)
     .all<DeviceRow>();
   return results.map(fromDeviceRow);
@@ -136,24 +142,6 @@ export async function revokeDeviceRow(
        WHERE id = ? AND account_id = ? AND status = 'active'`,
     )
     .bind(revokedAt, revokedAt, deviceId, accountId)
-    .run();
-  return (result.meta.changes ?? 0) > 0;
-}
-
-/** Replaces an active device's token hash (rotation invalidates the old token immediately, plan §9.3). Conditional on status='active' — a revoked device can't be reissued a token. */
-export async function rotateDeviceTokenHash(
-  db: D1Database,
-  accountId: string,
-  deviceId: string,
-  newTokenHash: string,
-  updatedAt: string,
-): Promise<boolean> {
-  const result = await db
-    .prepare(
-      `UPDATE devices SET token_hash = ?, updated_at = ?
-       WHERE id = ? AND account_id = ? AND status = 'active'`,
-    )
-    .bind(newTokenHash, updatedAt, deviceId, accountId)
     .run();
   return (result.meta.changes ?? 0) > 0;
 }

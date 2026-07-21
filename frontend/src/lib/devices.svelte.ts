@@ -37,10 +37,6 @@ interface DevicesResponse {
 interface DeviceResponse {
   device?: unknown;
 }
-interface RotatedResponse {
-  deviceId?: unknown;
-  deviceToken?: unknown;
-}
 
 function parseDevice(raw: unknown): Device | null {
   if (!raw || typeof raw !== "object") return null;
@@ -165,16 +161,6 @@ class DevicesStore {
       return true;
     } catch {
       return false;
-    }
-  }
-
-  /** 成功時は平文 deviceToken を一度だけ返す。サーバー側もハッシュのみ保持し、以後は取得不能。 */
-  async rotateToken(deviceId: string): Promise<string | null> {
-    try {
-      const body = await apiSend<RotatedResponse>("POST", `/api/devices/${encodeURIComponent(deviceId)}/token`, {});
-      return typeof body.deviceToken === "string" ? body.deviceToken : null;
-    } catch {
-      return null;
     }
   }
 

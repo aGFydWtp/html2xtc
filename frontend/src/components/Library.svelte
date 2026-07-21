@@ -116,26 +116,25 @@
   {:else if libraryStore.items.length === 0}
     <p class="note">{t("library_empty")}</p>
   {:else}
-    {#if selectedIds.length > 0}
-      <div class="bulk-bar">
-        <span class="bulk-count">{t("library_selected_count")(selectedIds.length)}</span>
-        <button type="button" class="bulk-btn" disabled={bulkBusy} onclick={() => void downloadSelected()}>
-          {t("library_download")}
-        </button>
-        <RowMenu label={t("library_add_to_device")} disabled={bulkBusy} items={bulkDeviceMenuItems} />
-        <button type="button" class="bulk-btn danger" disabled={bulkBusy} onclick={() => void deleteSelected()}>
-          {bulkDeleting ? t("library_deleting") : t("library_delete")}
-        </button>
-        {#if bulkFailedCount > 0}
-          <p class="error-text bulk-note">{t("library_delete_selected_failed")(bulkFailedCount)}</p>
-        {/if}
-        {#if bulkAddNote === "ok"}
-          <p class="note bulk-note">{t("library_add_to_device_done")}</p>
-        {:else if bulkAddNote === "fail"}
-          <p class="error-text bulk-note">{t("library_add_to_device_failed")}</p>
-        {/if}
-      </div>
-    {/if}
+    <!-- 選択 0 件でも高さを確保したまま visibility で隠す（チェック時のレイアウトシフト防止） -->
+    <div class="bulk-bar" class:invisible={selectedIds.length === 0}>
+      <span class="bulk-count">{t("library_selected_count")(selectedIds.length)}</span>
+      <button type="button" class="bulk-btn" disabled={bulkBusy} onclick={() => void downloadSelected()}>
+        {t("library_download")}
+      </button>
+      <RowMenu label={t("library_add_to_device")} disabled={bulkBusy} items={bulkDeviceMenuItems} />
+      <button type="button" class="bulk-btn danger" disabled={bulkBusy} onclick={() => void deleteSelected()}>
+        {bulkDeleting ? t("library_deleting") : t("library_delete")}
+      </button>
+      {#if bulkFailedCount > 0}
+        <p class="error-text bulk-note">{t("library_delete_selected_failed")(bulkFailedCount)}</p>
+      {/if}
+      {#if bulkAddNote === "ok"}
+        <p class="note bulk-note">{t("library_add_to_device_done")}</p>
+      {:else if bulkAddNote === "fail"}
+        <p class="error-text bulk-note">{t("library_add_to_device_failed")}</p>
+      {/if}
+    </div>
     <ul class="items">
       {#each libraryStore.items as item (item.id)}
         <li>
@@ -155,8 +154,19 @@
   section.library { padding: 0 0 24px; }
   .login-gate { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; }
   .note { color: var(--muted); font-size: 14px; }
-  .bulk-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
-  .bulk-bar .bulk-count { font-size: 14px; color: var(--muted2); margin-right: 4px; }
+  /* 折り返さず横スクロール。スクロールバーは細く。 */
+  .bulk-bar {
+    display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
+    flex-wrap: nowrap; overflow-x: auto; padding-bottom: 4px;
+    scrollbar-width: thin; scrollbar-color: var(--line) transparent;
+  }
+  .bulk-bar::-webkit-scrollbar { height: 4px; }
+  .bulk-bar::-webkit-scrollbar-thumb { background: var(--line); border-radius: 2px; }
+  .bulk-bar::-webkit-scrollbar-track { background: transparent; }
+  /* 選択 0 件時も高さを保ったまま隠す（レイアウトシフト防止） */
+  .bulk-bar.invisible { visibility: hidden; }
+  .bulk-bar > :global(*) { flex: none; }
+  .bulk-bar .bulk-count { font-size: 14px; color: var(--muted2); margin-right: 4px; white-space: nowrap; }
   /* ConvertForm.svelte の button.secondary（「青空文庫から選択」）と同じ見た目 */
   .bulk-bar .bulk-btn {
     padding: 8px 18px; font: inherit; font-size: 14px; font-weight: 500; border-radius: 4px;
@@ -166,7 +176,7 @@
   .bulk-bar .bulk-btn:disabled { border-color: var(--disabled); color: var(--disabled); cursor: default; }
   .bulk-bar .bulk-btn.danger { border-color: var(--error); color: var(--error); }
   .bulk-bar .bulk-btn.danger:disabled { border-color: var(--disabled); color: var(--disabled); }
-  .bulk-bar .bulk-note { margin-top: 0; }
+  .bulk-bar .bulk-note { margin-top: 0; white-space: nowrap; }
   ul.items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
   ul.items li + li { border-top: 1px solid var(--line); }
   ul.items li:last-child { border-bottom: 1px solid var(--line); }

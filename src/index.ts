@@ -8,6 +8,7 @@ import {
   searchBooks,
 } from "./catalog-db";
 import { convertInContainer } from "./container";
+import { registerDeviceRoutes } from "./devices/routes";
 import { prepareRenderInput } from "./extract";
 import {
   decideMissingDownload,
@@ -48,6 +49,7 @@ const SYNC_CONVERTER_FETCH_TIMEOUT_MS = 150_000;
 const router = new Router();
 registerAuthRoutes(router);
 registerLibraryRoutes(router);
+registerDeviceRoutes(router);
 
 export default {
   async fetch(request, env) {

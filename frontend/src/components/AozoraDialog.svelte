@@ -50,7 +50,7 @@
     if (!books.length) return;
     aozora.hide();
     for (const b of books) {
-      await submitUrl(b.htmlUrl, false, jobTitle(b));
+      await submitUrl(b.htmlUrl, jobTitle(b));
     }
   }
 </script>

@@ -3,8 +3,10 @@
 // 複数ジョブを jobId ごとに並行してポーリングし、画面上部（旧 #current）へ
 // in-flight のジョブと直近の完了 / 失敗エントリ（上限あり）をまとめて表示する。
 
+import { authStore } from "./auth.svelte";
 import type { Note } from "./i18n.svelte";
 import { IN_FLIGHT, jobsStore, type JobEntry } from "./jobs.svelte";
+import { libraryStore } from "./library.svelte";
 
 const POLL_MS = 4000;
 const MAX_POLL_FAILURES = 5;
@@ -78,6 +80,11 @@ interface Poller {
 
 const pollers = new Map<string, Poller>();
 
+// このセッションで submitUrl から投入した jobId。リロード後に refreshStale で
+// 再開したジョブと区別し、自動保存（maybeAutoSave）の対象を「このセッションで
+// 投入したジョブが完了した瞬間」だけに限定する。
+const sessionJobIds = new Set<string>();
+
 let errSeq = 0; // ジョブ非依存エラー用の一意キー採番
 
 // この poll ループが既に別のループ（差し替え / 削除）に取って代わられているか。
@@ -146,12 +153,25 @@ export async function submitUrl(rawUrl: string, keepLayout: boolean, displayTitl
       ...(displayTitle ? { title: displayTitle } : {}),
     };
     jobsStore.upsert({ ...job });
+    sessionJobIds.add(job.jobId);
     startPolling(job);
   } catch {
     submissionError({ url, jobId: "", status: "failed" }, "no_server");
   } finally {
     submitting.busy = false;
   }
+}
+
+// このセッションで投入したジョブが completed へ遷移した瞬間、ログイン中なら
+// ライブラリへ自動保存する。失敗しても何もしない（saveFromJob は throw せず
+// false を返す）— 手動保存（SaveToLibraryButton）に任せる。sessionJobIds.delete
+// が true を返すのは 1 回だけなので、同一ジョブで二重発火しない。
+function maybeAutoSave(job: JobEntry): void {
+  if (job.status !== "completed") return;
+  if (!sessionJobIds.delete(job.jobId)) return;
+  if (!authStore.account) return;
+  if (libraryStore.isSavedJob(job.jobId)) return;
+  void libraryStore.saveFromJob(job.jobId, job.title);
 }
 
 async function poll(p: Poller): Promise<void> {
@@ -191,6 +211,7 @@ async function poll(p: Poller): Promise<void> {
       current.upsert(job.jobId, { ...job }, null);
       if (!IN_FLIGHT.includes(job.status)) { // completed / failed: 終了
         pollers.delete(job.jobId);
+        maybeAutoSave(job);
         return;
       }
     } else if (++p.failures >= MAX_POLL_FAILURES) {

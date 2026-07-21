@@ -8,6 +8,7 @@ import {
   searchBooks,
 } from "./catalog-db";
 import { convertInContainer } from "./container";
+import { cleanupAppDb } from "./db/cleanup";
 import { registerDeviceRoutes } from "./devices/routes";
 import { prepareRenderInput } from "./extract";
 import {
@@ -71,6 +72,9 @@ export default {
   // Daily Cron (see wrangler.jsonc triggers.crons). Kicks off the Aozora
   // catalog sync Workflow and returns; the heavy work (fetch, parse, D1 load)
   // runs in the Workflow, never in this short-lived scheduled invocation.
+  // Also runs the Phase 7 (plan §19) APP_DB cleanup (src/db/cleanup.ts) in
+  // its own try/catch, so the two jobs can never take each other down: a
+  // failed catalog sync still lets cleanup run, and vice versa.
   async scheduled(controller, env) {
     // Deriving the instance ID from scheduledTime dedupes a doubled Cron
     // delivery: a second create() with the same ID throws instead of starting
@@ -95,6 +99,16 @@ export default {
       // A duplicate-ID error means this scheduledTime already has a run; that
       // is the intended dedupe, not a failure worth escalating.
       console.error(`[${id}] catalog sync workflow create failed`, error);
+    }
+
+    try {
+      // cleanupAppDb() already catches per-table D1 errors internally and
+      // never throws; this catch is defense-in-depth only, so a genuinely
+      // unexpected error here (e.g. in cutoff computation) still can't take
+      // down the rest of scheduled().
+      await cleanupAppDb(env);
+    } catch (error) {
+      console.error(`[${id}] app-db cleanup failed`, error);
     }
   },
 } satisfies ExportedHandler<Env>;

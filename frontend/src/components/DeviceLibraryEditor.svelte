@@ -180,7 +180,7 @@
   .conflict-box { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; }
   .bulk-actions { display: flex; gap: 16px; margin-bottom: 12px; }
   .text-btn {
-    border: 0; background: none; font: inherit; font-size: 13px; color: var(--muted2);
+    border: 0; background: none; font: inherit; font-size: 14px; color: var(--muted2);
     text-decoration: underline; cursor: pointer; padding: 0;
   }
   .text-btn:disabled { opacity: .5; cursor: default; }
@@ -202,7 +202,7 @@
   .dle-order-btns { display: flex; gap: 4px; flex: none; }
   .dle-order-btns button {
     width: 28px; height: 28px; border: 1px solid var(--line); border-radius: 4px;
-    background: var(--card); color: var(--text); cursor: pointer; font-size: 12px;
+    background: var(--card); color: var(--text); cursor: pointer; font-size: 14px;
   }
   .dle-order-btns button:disabled { color: var(--disabled); cursor: default; }
 </style>

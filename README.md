@@ -25,11 +25,13 @@ Worker
 - Container は固定プール名（`converter-0` / `converter-1`、`max_instances: 2` に対応）に jobId のハッシュで振り分け、ウォームインスタンスを再利用する。
 - 変換設定は `converter/config-x3.toml`（528×792、1-bit xtg、日本語メタデータ）。
 - PDF の最終ページに奥付（タイトル・サイト名・著者・URL・変換日時・個人利用の注記）を追加する（`src/pdf.ts` の `buildColophonScript`。addScriptTag による DOM 注入。ページの CSP でブロックされた場合は奥付なしで変換される）。
-- 変換パイプラインとは別に、青空文庫の公式書誌カタログを 1 日 1 回 Cron で D1（`AOZORA_DB`）へ同期する（`src/catalog-workflow.ts` の `AozoraCatalogSyncWorkflow`）。`scheduled()` は Workflow を起動するだけで、ZIP 取得・CSV 解析・D1 投入は Workflow の各 step が担う。全書誌を新しい `generation` として投入・検証しきってから `active_generation` を 1 回の UPDATE で切り替えるため、検索側（`aozora_books_active` / `aozora_book_contributors_active` ビュー）が中途半端なデータを見ることはない。詳細は「青空文庫カタログ同期（D1）」を参照。この同期は既存の変換 API（`/convert` `/jobs` `/download`）には一切ルートを追加しない。
+- 変換パイプラインとは別に、青空文庫の公式書誌カタログを 1 日 1 回 Cron で D1（`AOZORA_DB`）へ同期する（`src/catalog-workflow.ts` の `AozoraCatalogSyncWorkflow`）。`scheduled()` は Workflow を起動するだけで、ZIP 取得・CSV 解析・D1 投入は Workflow の各 step が担う。全書誌を新しい `generation` として投入・検証しきってから `active_generation` を 1 回の UPDATE で切り替えるため、検索側（`aozora_books_active` / `aozora_book_contributors_active` ビュー）が中途半端なデータを見ることはない。詳細は「青空文庫カタログ同期（D1）」を参照。同期した書誌は `GET /api/books` で検索でき、WebUI の「青空文庫から選択」ダイアログから一括変換できる。
 
 ## WebUI
 
-`frontend/`（Vite + Svelte 5 の SPA、スマホファースト）をビルドした `frontend/dist` を Workers static assets として `/` で配信する。URL を入力すると `POST /jobs` → 数秒間隔のポーリングで進捗（待機中 → PDF 生成中 → XTC 変換中）を表示し、完了するとダウンロードリンクとプレビューボタンが出る。変換モードは「レイアウトを保持して変換する」チェックボックスで選び、**未チェック（既定）が本文抽出（extract）、チェックありがページ丸ごと（full）**。WebUI は常に `mode` を明示送信する（API 自体の `mode` 省略時既定は full のまま）。履歴はブラウザの localStorage に保存（最大 50 件。サーバー上のファイルは約 24 時間で自動削除される旨を表示）。
+`frontend/`（Vite + Svelte 5 の SPA、スマホファースト）をビルドした `frontend/dist` を Workers static assets として `/` で配信する。URL を入力すると `POST /jobs` → 数秒間隔のポーリングで進捗（待機中 → PDF 生成中 → XTC 変換中）を表示し、完了するとダウンロードリンクとプレビューボタンが出る。変換モードは「レイアウトを保持して変換する」チェックボックスで選び、**未チェック（既定）が本文抽出（extract）、チェックありがページ丸ごと（full）**。WebUI は常に `mode` を明示送信する（API 自体の `mode` 省略時既定は full のまま）。履歴はブラウザの localStorage に保存（最大 50 件。履歴が空の間は履歴エリア自体を表示しない。サーバー上のファイルは約 24 時間で自動削除される旨を表示）。変換中の表示はジョブごとの並行ポーリングで複数件を同時に追跡する（in-flight ＋直近の完了/失敗を上限 10 件で表示）。
+
+**青空文庫から選択**: フォーム下のボタンからダイアログを開き、タイトル・作者名で書誌を検索（`GET /api/books`、350ms デバウンス）して最大 5 件を選択し、まとめて変換ジョブへ投入できる（各作品の XHTML 版 URL を `POST /jobs` へ送る。青空文庫 URL は自動で縦書き・明朝の専用パスに載る）。
 
 **XTC プレビュー**: 生成済み XTC をブラウザ内でデコードしてモーダルダイアログ（ネイティブ `<dialog>`）の canvas に描画する。XTC コンテナ（48B ヘッダー + 16B/ページのインデックス）と 1-bit XTG フレーム（22B ヘッダー、行方向 MSB 詰め）のパーサーを WebUI 内に持ち、fetch した ArrayBuffer はジョブ ID キーでキャッシュ（上限 5 件）してページ送りで再取得しない。マジック・version・colorMode・compression が想定外のファイルはプレビューのみ無効化してダウンロードリンクは維持する（将来 xtctool の出力形式が変わった場合のフォールバック）。履歴の各行には ⋮ ボタンがあり、ポップオーバーメニュー（Popover API、非対応ブラウザはクラス切替にフォールバック）から XTC ダウンロード / プレビューを選べる。サービス概要・利用規約・クローラー情報・連絡先は `/about`（`frontend/public/about.html`、ビルドで dist へそのままコピーされる静的ページ）に掲示し、フッターからリンクする。
 
@@ -119,6 +121,19 @@ R2 上の XTC（`jobs/{jobId}/output.xtc`）を attachment で返す。未完了
 
 同期 API のため、Container fetch 全体で 150 秒のタイムアウト内に収まる必要がある（xtctool 自体は 600 秒まで動けるが、同期パスは短ページ向けに 150 秒で打ち切る）。長いドキュメントは POST /jobs を使うこと。
 
+### GET /api/books
+
+同期済みの青空文庫書誌カタログ（D1 の `aozora_books_active` ビュー）を検索する。
+
+```
+GET /api/books?q=<検索語>&limit=<1..50 省略時 50>
+```
+
+- `q` はタイトル・作者名のどちらでもよい。NFKC・小文字化・カタカナ→ひらがな・記号/空白除去の正規化を通してから、`search_text` の部分一致で検索する（タイトル前方一致 > 作者名前方一致の順に整列）。`q` が空（正規化後に空になる場合を含む）は `{"books": []}` を返す。
+- XHTML 版 URL（`htmlUrl`）を持たない作品（全体の約 0.5%、本文がなく変換不能）は結果から除外する。
+- 応答例: `{"books": [{"workId": "000773", "title": "こころ", "subtitle": null, "author": "夏目 漱石", "htmlUrl": "https://...", "cardUrl": "https://...", "copyrighted": false}]}`
+- `Cache-Control: public, max-age=300`。レート制限の対象外（変換を起動しない読み取りのため。重い操作は `POST /jobs` 側で制限済み）。
+
 ### GET /download/{jobId}
 
 R2 上の XTC を `application/octet-stream` + `Content-Length` + `Content-Disposition: attachment; filename="{jobId}.xtc"` で返す。jobId が UUID 形式でなければ 400、未生成なら 404。
@@ -135,7 +150,7 @@ R2 上の XTC を `application/octet-stream` + `Content-Length` + `Content-Dispo
 
 ## 青空文庫カタログ同期（D1）
 
-青空文庫の公式書誌 CSV（「公開中 作家別作品一覧拡充版：全て」UTF-8・zip）を 1 日 1 回取得し、`html2xtc` から検索可能な形で D1（binding `AOZORA_DB`、DB 名 `html2xtc-aozora-catalog`）へ保存する。現フェーズは同期のみで、書誌検索 API・WebUI はまだ含まない。
+青空文庫の公式書誌 CSV（「公開中 作家別作品一覧拡充版：全て」UTF-8・zip）を 1 日 1 回取得し、`html2xtc` から検索可能な形で D1（binding `AOZORA_DB`、DB 名 `html2xtc-aozora-catalog`）へ保存する。書誌検索 API（`GET /api/books`、「API」の節を参照）と WebUI（「青空文庫から選択」ダイアログ）も実装済み。
 
 - **起動**: Cron Trigger（`wrangler.jsonc` の `triggers.crons`）で `scheduled()` を叩き、`AOZORA_SYNC_WORKFLOW` を起動する。Cron は UTC 指定で、既定は `30 18 * * *`（= 03:30 JST）の 1 日 1 回。同期のたびに青空文庫へアクセスするのは ZIP 1 ファイルのみ。
 - **未変更検出**: 保存済みの `ETag` / `Last-Modified` で条件付き GET し、304 か、本文の SHA-256 が前回と同じなら投入せず `unchanged` で終了する。
@@ -220,64 +235,6 @@ npm run deploy
 フロントエンド（`frontend/`、Vite + Svelte 5）の開発は `npm install --prefix frontend` 後に `npm run dev:frontend` で Vite dev サーバーを起動する。`/convert` `/jobs` `/download` `/version.json` は `http://localhost:8787`（`npx wrangler dev`）へプロキシされるので、Worker を並行起動すれば実 API で動作確認できる。型チェックは `npm run check:frontend`（svelte-check）、本番ビルドは `npm run build:frontend`（`frontend/dist` に出力。デプロイ時は scripts/deploy.sh が自動でビルドする）。
 
 デプロイは必ず `npm run deploy`（[scripts/deploy.sh](scripts/deploy.sh)）で行う。作業ツリーがクリーンで HEAD が origin/main に push 済みであることを検証したうえで、フロントエンドをビルド（`npm ci --prefix frontend && npm run build --prefix frontend`）し、稼働コミットを WebUI フッターに表示するための `frontend/dist/version.json`（dist ごと gitignore 済み）を生成してから `wrangler deploy` を実行し、成功時に `deploy-<UTC日時>-<短縮コミットハッシュ>` の Git タグを自動作成・push する。AGPL-3.0 対応として「デプロイごとに対応する Git タグを記録する」運用は、このスクリプトで自動化されている。`wrangler deploy` の直叩きはしないこと。
-
-## 構成ファイル
-
-```
-frontend/
-  index.html               SPA のエントリ HTML（Vite）
-  vite.config.ts           Vite 設定（dev proxy: /convert /jobs /download /version.json → :8787）
-  public/about.html        サービス概要・利用規約・クローラー情報・連絡先（/about、静的配信。dist へそのままコピー）
-  src/
-    App.svelte             ルートコンポーネント
-    components/            Header / ConvertForm / CurrentJob / History / PreviewDialog
-    lib/i18n.svelte.ts     日英 i18n（localStorage の xtc-lang、about.html と共有）
-    lib/jobs.svelte.ts     localStorage 履歴（最大 50 件・24h expired 判定）
-    lib/convert.svelte.ts  POST /jobs 送信とポーリング（4 秒間隔・タブ非表示で停止）
-    lib/preview.svelte.ts  XTC プレビュー状態（キャッシュ 5 件・破損ファイル無効化）
-    lib/xtc.ts             XTC/XTG デコーダ（純関数）
-src/
-  index.ts       ルーティング・エラーハンドリング
-  workflow.ts    ConvertWorkflow（[extract-content →] render-pdf → convert-xtc → delete-intermediate-pdf）
-  jobs.ts        ジョブ状態写像・R2 キー導出・上限解決（純関数、vitest 対象）
-  pdf.ts         印刷 CSS 生成（layout/font オプション駆動、横書き/縦書き）+ Browser Run quickAction("pdf") 呼び出し（LAZY_IMAGE_SCRIPT・奥付注入含む）
-  extract.ts     extract モードの本文抽出（Readability + Browser Rendering フォールバック）
-  aozora.ts      青空文庫 XHTML 専用の前処理（main_text 抽出・ルビ保持・傍点/字下げ CSS）
-  sitepresets.ts サイト別デフォルト解決（青空文庫 URL 判定 → vertical + BIZ UDMincho）
-  printhtml.ts   抽出本文の印刷用 HTML 生成・sanitize（lazy 画像正規化含む、vitest 対象）
-  pipeline.ts    XTC 出力の R2 保存などモード共通処理
-  fonts.ts       PDF 本文フォントのサブセット取得・インライン化（ファミリー名は font オプションで可変、既定 BIZ UDPGothic）
-  container.ts   XtcConverterContainer + convertInContainer（@cloudflare/containers）
-  ratelimit.ts   レート制限の純関数（IP キー正規化・固定窓判定、vitest 対象）
-  ratelimiter.ts RateLimiter Durable Object + enforceRateLimit（429 応答）
-  validate.ts    SSRF 対策の URL 検証（DoH 事前解決含む）
-  types.ts       Env 型・ConvertJobParams・AozoraCatalogSyncParams
-  catalog.ts        青空文庫 CSV の純粋ロジック（ヘッダー検証・正規化・作品/人物集約・チャンク分割・整合性検証、vitest 対象）
-  catalog-db.ts     青空文庫カタログの D1 操作（ロック・run 記録・世代付き UPSERT・件数検証・active 切替・旧世代削除）
-  catalog-keys.ts   同期中間ファイルの R2 キー生成（aozora-sync/<runId>/…）
-  catalog-workflow.ts AozoraCatalogSyncWorkflow（ZIP 取得 → CSV 解析 → R2 チャンク → D1 投入 → 検証 → active 切替 → 後始末）
-migrations/
-  aozora/
-    0001_init.sql   青空文庫カタログの D1 スキーマ（state / sync_runs / books / contributors + active ビュー）
-converter/
-  Dockerfile     マルチステージ（builder で xtctool を venv へ）+ 非 root 実行
-  app.py         POST /convert（PDF bytes → XTC bytes）/ GET /healthz
-                 graceful shutdown（SIGTERM でドレイン）、同時変換制限付き
-  config-x3.toml X3 用変換設定
-test/
-  validate.test.ts        vitest
-  jobs.test.ts            vitest（状態写像・キー導出の単体テスト）
-  pdf.test.ts             vitest（印刷 CSS・quickAction オプションのピン留め）
-  extract.test.ts         vitest（本文抽出）
-  printhtml.test.ts       vitest（sanitize・lazy 画像正規化）
-  fonts.test.ts           vitest
-  aozora.test.ts          vitest（青空文庫抽出・オプション解決・縦書き CSS のピン留め）
-  ratelimit.test.ts       vitest（IP キー正規化・固定窓判定・上限パース）
-  catalog.test.ts         vitest（青空文庫 CSV の正規化・集約・重複排除・整合性検証・チャンク分割）
-  fixtures/
-    aozora-catalog-small.csv  catalog.test.ts 用の小さな書誌 CSV
-  converter/test_app.py   pytest
-```
 
 ## ライセンス
 

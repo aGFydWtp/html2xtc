@@ -138,13 +138,13 @@ pending から reject (POST /api/pairings/:id/reject) でも遷移する:
 - ペアリング全体の有効期限: 発行から **10分**（`PAIRING_TTL_MS = 10 * 60 * 1000`）。
   `approved`/`rejected`/`completed` に遷移した後は、この期限は判定に使われなくなる
   （`decidePairingStatus` は `pending` の行にだけ期限切れ判定を適用する）。
-- 期限切れの `pending` 行は自動削除されない: `decidePairingStatus` は読み取り時に
-  `expired` として見せているだけで、DB上の行・`pairing_secret_hash` はそのまま残り続ける
-  （物理的なクリーンアップジョブは本実装には無い。運用上の扱いは `docs/operations.md` を参照）。
-- 承認後、完了通知が来ないまま放置された `approved` 行に含まれる暗号化トークン材料
-  (`encrypted_device_token` 等) についても、期限切れによる自動削除は実装されていない
-  （実装計画は「完了通知がなくてもペアリング期限後に削除」を挙げているが、この削除処理自体は
-  未実装 — Phase 7 のcleanup作業として残っている）。
+- 期限切れの行は日次のクリーンアップで物理削除される（`src/db/cleanup.ts`、既存の
+  日次Cron 18:30 UTC に相乗り）: `expires_at` を過ぎた行はステータスを問わず削除される。
+  承認後に完了通知が来ないまま放置された `approved` 行の暗号化トークン材料
+  (`encrypted_device_token` 等) も、この削除により `expires_at`（発行から10分）を超えて
+  最長でも次回Cronまでしか残らない（実装計画 §6「完了通知がなくてもペアリング期限後に削除」に対応）。
+  `completed`/`rejected`/`expired` の行は7日経過後に削除される。読み取り時には従来どおり
+  `decidePairingStatus` が期限切れ `pending` を `expired` として見せる（Cron前でも取得不可）。
 
 ## 6. 暗号化されたトークン受け渡しの仕組み
 

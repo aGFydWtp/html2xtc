@@ -109,12 +109,12 @@ export async function cleanupAppDb(
   // expires_at < now fires for *any* status, including 'approved' — see the
   // module doc: encrypted_device_token must never outlive expires_at, and
   // this is the only condition that guarantees it (approved rows have no
-  // separate expiry of their own). Rows that left 'pending' before expiring
-  // (completed/rejected/expired) are additionally swept once
-  // completed_at/created_at is older than the 7-day retention window, so a
-  // quickly-completed pairing doesn't linger for the full plan-noted "later"
-  // period just because expires_at (fixed at creation, 10 minutes out) has
-  // nothing left to check.
+  // separate expiry of their own). Since expires_at is fixed at creation
+  // (10 minutes out) and never extended, in practice this first condition
+  // deletes EVERY row — terminal (completed/rejected/expired) ones included —
+  // at the first daily cron after creation. The second branch is a safety
+  // net only: it becomes load-bearing if a future change ever extends
+  // expires_at, capping terminal-row retention at 7 days.
   const devicePairings = await deleteBestEffort(
     db,
     "device_pairings",

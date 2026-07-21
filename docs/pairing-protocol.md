@@ -143,7 +143,9 @@ pending から reject (POST /api/pairings/:id/reject) でも遷移する:
   承認後に完了通知が来ないまま放置された `approved` 行の暗号化トークン材料
   (`encrypted_device_token` 等) も、この削除により `expires_at`（発行から10分）を超えて
   最長でも次回Cronまでしか残らない（実装計画 §6「完了通知がなくてもペアリング期限後に削除」に対応）。
-  `completed`/`rejected`/`expired` の行は7日経過後に削除される。読み取り時には従来どおり
+  `expires_at` は作成時の10分固定で以後延長されないため、`completed`/`rejected`/`expired` の
+  行も実際には作成の翌日Cronで削除される（7日保持の条件は将来 `expires_at` を延長する変更が
+  入った場合の安全網）。読み取り時には従来どおり
   `decidePairingStatus` が期限切れ `pending` を `expired` として見せる（Cron前でも取得不可）。
 
 ## 6. 暗号化されたトークン受け渡しの仕組み

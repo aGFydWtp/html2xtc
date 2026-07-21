@@ -19,14 +19,22 @@
           {#if busy}<span class="spinner"></span>{/if}
           <span class="badge" class:err={job.status === "failed" || job.status === "expired"}>{statusLabel(job.status)}</span>
           {#if job.status === "completed"}
-            <a class="dl" href="/jobs/{encodeURIComponent(job.jobId)}/download">{t("dl")}</a>
-            <button
-              type="button"
-              class="preview-btn"
-              disabled={previewBroken.has(job.jobId)}
-              onclick={() => void openPreview(job.jobId)}
-            >{t("preview")}</button>
             <SaveToLibraryButton jobId={job.jobId} title={job.title} />
+            <span class="actions">
+              <a class="dl" href="/jobs/{encodeURIComponent(job.jobId)}/download" aria-label={t("dl")} title={t("dl")}>
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v10" /><path d="M7 10l5 5 5-5" /><path d="M4 19h16" /></svg>
+              </a>
+              <button
+                type="button"
+                class="preview-btn"
+                disabled={previewBroken.has(job.jobId)}
+                onclick={() => void openPreview(job.jobId)}
+                aria-label={t("preview")}
+                title={t("preview")}
+              >
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-6.5 10-6.5S22 12 22 12s-3.5 6.5-10 6.5S2 12 2 12Z" /><circle cx="12" cy="12" r="3" /></svg>
+              </button>
+            </span>
           {/if}
         </div>
         {#if entry.note}<div class="error-text">{noteText(entry.note)}</div>{/if}
@@ -47,13 +55,16 @@
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px;
   }
   .status-line { display: flex; align-items: center; gap: 12px; margin-top: 14px; flex-wrap: wrap; }
+  .actions { margin-left: auto; display: inline-flex; align-items: center; gap: 10px; }
   a.dl {
-    display: inline-block; padding: 9px 20px; border-radius: 4px;
-    background: var(--ink); color: var(--ink-text); font-weight: 700; text-decoration: none;
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 36px; height: 36px; border-radius: 4px;
+    background: var(--ink); color: var(--ink-text); text-decoration: none;
   }
   a.dl:hover { color: var(--ink-text); opacity: .88; }
   button.preview-btn {
-    padding: 9px 20px; border-radius: 4px; font: inherit; font-weight: 700; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 36px; height: 36px; padding: 0; border-radius: 4px; cursor: pointer;
     border: 1.5px solid var(--ink); background: none; color: var(--ink);
   }
   button.preview-btn:hover { opacity: .7; }

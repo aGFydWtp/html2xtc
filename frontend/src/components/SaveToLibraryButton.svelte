@@ -24,13 +24,17 @@
 </script>
 
 {#if authStore.account}
-  <button
-    type="button"
-    class="save-btn"
-    disabled={busy || libraryStore.isSavedJob(jobId)}
-    onclick={() => void save()}
-  >{libraryStore.isSavedJob(jobId) ? t("library_saved") : busy ? t("library_saving") : t("library_save")}</button>
-  {#if failed}<span class="save-fail">{t("library_save_failed")}</span>{/if}
+  {#if libraryStore.isSavedJob(jobId)}
+    <span class="saved-text">{t("library_saved_inline")}</span>
+  {:else}
+    <button
+      type="button"
+      class="save-btn"
+      disabled={busy}
+      onclick={() => void save()}
+    >{busy ? t("library_saving") : t("library_save")}</button>
+    {#if failed}<span class="save-fail">{t("library_save_failed")}</span>{/if}
+  {/if}
 {/if}
 
 <style>
@@ -41,4 +45,5 @@
   button.save-btn:hover:not(:disabled) { opacity: .7; }
   button.save-btn:disabled { border-color: var(--disabled); color: var(--disabled); cursor: default; opacity: 1; }
   .save-fail { color: var(--error); font-size: 13px; }
+  .saved-text { color: var(--faint); font-size: 14px; }
 </style>

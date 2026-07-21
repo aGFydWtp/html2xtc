@@ -104,11 +104,13 @@ describe("buildTextPrintCss", () => {
     expect(css).toContain('--font-family: "BIZ UDPGothic", sans-serif;');
   });
 
-  it("emits vertical-rl writing mode for vertical layout", () => {
+  it("emits vertical-rl writing mode on the root element for vertical layout", () => {
     const css = buildTextPrintCss({ ...DEFAULT_TEXT_OPTIONS, layout: "vertical" });
-    expect(css).toContain("writing-mode: vertical-rl;");
+    // 入れ子要素への writing-mode 指定は Chromium の印刷ページ分割で2ページ目
+    // 以降が白紙になるため、必ず html（ルート）に付ける（src/text-html.ts）。
+    expect(css).toMatch(/html \{\s*writing-mode: vertical-rl;/);
     expect(css).toContain('--font-family: "BIZ UDPGothic", serif;');
-    expect(css).toContain("height: 100%;");
+    expect(css).not.toContain("height: 100%;");
   });
 
   it("adds justify + inter-character rules only when textAlign is justify", () => {

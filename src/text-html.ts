@@ -90,11 +90,17 @@ export function buildTextPrintCss(options: TextConvertOptions): string {
   const contentRules =
     options.layout === "vertical"
       ? `
-  .content {
+  /* 縦書きは html（ルート）に指定する。入れ子要素に writing-mode を付けると
+     Chromium の印刷ページ分割が縦書きブロックを分割できず、2ページ目以降が
+     白紙の PDF になる（528×792 の @page で実測確認済み）。ルート適用なら
+     ページが右から左へ正しく分割される。 */
+  html {
     writing-mode: vertical-rl;
+  }
+
+  .content {
     text-orientation: mixed;
     overflow-wrap: anywhere;
-    height: 100%;
   }
 
   .content p {

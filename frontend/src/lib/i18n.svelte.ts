@@ -86,6 +86,11 @@ export interface Messages {
   library_delete_selected_confirm: (n: number) => string;
   library_deleting: string;
   library_delete_selected_failed: (n: number) => string;
+  library_selected_count: (n: number) => string;
+  library_add_to_device: string;
+  library_add_to_device_none: string;
+  library_add_to_device_done: string;
+  library_add_to_device_failed: string;
   library_author_none: string;
   library_save: string;
   library_saving: string;
@@ -212,6 +217,11 @@ export const I18N: Record<Lang, Messages> = {
     library_delete_selected_confirm: (n) => `選択した${n}件のXTCをライブラリから削除しますか？（端末の配信リストからも外れます）`,
     library_deleting: "削除中…",
     library_delete_selected_failed: (n) => `${n}件の削除に失敗しました。`,
+    library_selected_count: (n) => `${n} 件選択中`,
+    library_add_to_device: "端末に追加",
+    library_add_to_device_none: "端末に追加（端末未登録）",
+    library_add_to_device_done: "端末に追加しました。",
+    library_add_to_device_failed: "端末への追加に失敗しました。",
     library_author_none: "著者（任意）",
     library_save: "ライブラリへ保存",
     library_saving: "保存中…",
@@ -338,6 +348,11 @@ export const I18N: Record<Lang, Messages> = {
       : `Remove the ${n} selected XTC files from your library? (They will also be removed from every device's list.)`,
     library_deleting: "Deleting…",
     library_delete_selected_failed: (n) => n === 1 ? "Failed to delete 1 item." : `Failed to delete ${n} items.`,
+    library_selected_count: (n) => `${n} selected`,
+    library_add_to_device: "Add to device",
+    library_add_to_device_none: "Add to device (no devices)",
+    library_add_to_device_done: "Added to the device.",
+    library_add_to_device_failed: "Failed to add to the device.",
     library_author_none: "Author (optional)",
     library_save: "Save to library",
     library_saving: "Saving…",

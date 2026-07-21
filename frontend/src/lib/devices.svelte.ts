@@ -188,6 +188,26 @@ class DevicesStore {
     }
   }
 
+  /**
+   * 対象端末の配信リスト末尾に itemIds を追加する（既に載っているものはスキップ）。
+   * 全件が既載なら PUT を送らず成功扱い（冪等）。バージョン競合（409）は最新を
+   * 再取得して 1 回だけ再試行する。
+   */
+  async addItemsToDevice(deviceId: string, itemIds: string[]): Promise<boolean> {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const lib = await this.getLibrary(deviceId);
+      if (!lib) return false;
+      const existing = lib.items.slice().sort((a, b) => a.position - b.position).map((i) => i.id);
+      const toAdd = itemIds.filter((id) => !existing.includes(id));
+      if (toAdd.length === 0) return true;
+      const result = await this.replaceLibrary(deviceId, lib.version, [...existing, ...toAdd]);
+      if (result.ok) return true;
+      if (!result.conflict) return false;
+      // 409: 他の画面で更新された → 最新版で再試行
+    }
+    return false;
+  }
+
   async lookupPairing(userCode: string): Promise<PairingLookup | null> {
     try {
       const body = await apiGet<unknown>(`/api/pairings/by-code/${encodeURIComponent(userCode)}`);

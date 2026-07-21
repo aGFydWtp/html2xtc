@@ -104,6 +104,7 @@ export interface SessionRecord {
 }
 
 interface SessionJoinRow {
+  session_id: string;
   account_id: string;
   display_name: string;
   expires_at: string;
@@ -160,17 +161,11 @@ export async function createSession(
   return { token, expiresAt: expiresAt.toISOString(), maxAgeSeconds };
 }
 
-/**
- * Verifies the session cookie on `request` and returns the authenticated
- * Account, or null when there is no cookie, the token doesn't match any
- * session, the session is revoked, or it has expired. This is the auth gate
- * for every session-protected route (library now; devices/pairings in a
- * later phase).
- */
-export async function requireSession(
+/** Internal: loads the sessions+accounts join row for the request's session cookie, without yet deciding validity — shared by requireSession and requireSessionWithId. */
+async function loadSessionRecord(
   request: Request,
   env: Pick<Env, "APP_DB" | "SESSION_PEPPER">,
-): Promise<Account | null> {
+): Promise<{ sessionId: string; record: SessionRecord } | null> {
   const token = parseSessionCookie(request);
   if (token === null) {
     return null;
@@ -186,7 +181,7 @@ export async function requireSession(
 
   const tokenHash = await hashSessionToken(token, pepper);
   const row = await env.APP_DB.prepare(
-    `SELECT s.account_id, a.display_name, s.expires_at, s.revoked_at
+    `SELECT s.id AS session_id, s.account_id, a.display_name, s.expires_at, s.revoked_at
      FROM sessions AS s
      JOIN accounts AS a ON a.id = s.account_id
      WHERE s.token_hash = ?`,
@@ -197,16 +192,48 @@ export async function requireSession(
     return null;
   }
 
-  const record: SessionRecord = {
-    accountId: row.account_id,
-    displayName: row.display_name,
-    expiresAt: row.expires_at,
-    revokedAt: row.revoked_at,
+  return {
+    sessionId: row.session_id,
+    record: {
+      accountId: row.account_id,
+      displayName: row.display_name,
+      expiresAt: row.expires_at,
+      revokedAt: row.revoked_at,
+    },
   };
-  if (!isSessionValid(record, Date.now())) {
+}
+
+/**
+ * Verifies the session cookie on `request` and returns the authenticated
+ * Account, or null when there is no cookie, the token doesn't match any
+ * session, the session is revoked, or it has expired. This is the auth gate
+ * for every session-protected route (library, and the new /api/me* and
+ * passkey-management routes).
+ */
+export async function requireSession(
+  request: Request,
+  env: Pick<Env, "APP_DB" | "SESSION_PEPPER">,
+): Promise<Account | null> {
+  const loaded = await loadSessionRecord(request, env);
+  if (loaded === null || !isSessionValid(loaded.record, Date.now())) {
     return null;
   }
-  return { id: record.accountId, displayName: record.displayName };
+  return { id: loaded.record.accountId, displayName: loaded.record.displayName };
+}
+
+/** Same validity check as requireSession, but also returns the session's own id — needed by GET /api/me/sessions to mark which row is "this session". */
+export async function requireSessionWithId(
+  request: Request,
+  env: Pick<Env, "APP_DB" | "SESSION_PEPPER">,
+): Promise<{ account: Account; sessionId: string } | null> {
+  const loaded = await loadSessionRecord(request, env);
+  if (loaded === null || !isSessionValid(loaded.record, Date.now())) {
+    return null;
+  }
+  return {
+    account: { id: loaded.record.accountId, displayName: loaded.record.displayName },
+    sessionId: loaded.sessionId,
+  };
 }
 
 /** Revokes a session by its raw token (logout). No-op if the token is unknown or already revoked. */
@@ -221,4 +248,57 @@ export async function revokeSessionByToken(
   )
     .bind(new Date().toISOString(), tokenHash)
     .run();
+}
+
+/** Summary of one session for GET /api/me/sessions — no token_hash, ever. */
+export interface SessionSummary {
+  id: string;
+  userAgent: string | null;
+  createdAt: string;
+  lastSeenAt: string;
+  expiresAt: string;
+}
+
+interface SessionSummaryRow {
+  id: string;
+  user_agent: string | null;
+  created_at: string;
+  last_seen_at: string;
+  expires_at: string;
+}
+
+/** Lists an account's active (not revoked, not expired) sessions, most recent first. Never selects token_hash. */
+export async function listSessionsForAccount(
+  env: Pick<Env, "APP_DB">,
+  accountId: string,
+): Promise<SessionSummary[]> {
+  const result = await env.APP_DB.prepare(
+    `SELECT id, user_agent, created_at, last_seen_at, expires_at
+     FROM sessions
+     WHERE account_id = ? AND revoked_at IS NULL AND expires_at > ?
+     ORDER BY created_at DESC`,
+  )
+    .bind(accountId, new Date().toISOString())
+    .all<SessionSummaryRow>();
+  return result.results.map((row) => ({
+    id: row.id,
+    userAgent: row.user_agent,
+    createdAt: row.created_at,
+    lastSeenAt: row.last_seen_at,
+    expiresAt: row.expires_at,
+  }));
+}
+
+/** Revokes one session by id, scoped to accountId so an account can only ever revoke its own sessions (plan §16 "端末は必ずaccount_idでスコープする" — the same principle applied to sessions). Returns false if no matching, still-active session was found. */
+export async function revokeSessionById(
+  env: Pick<Env, "APP_DB">,
+  accountId: string,
+  sessionId: string,
+): Promise<boolean> {
+  const result = await env.APP_DB.prepare(
+    `UPDATE sessions SET revoked_at = ? WHERE id = ? AND account_id = ? AND revoked_at IS NULL`,
+  )
+    .bind(new Date().toISOString(), sessionId, accountId)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
 }

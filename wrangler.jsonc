@@ -13,7 +13,14 @@
 		// (src/container.ts) so both sides enforce the same limit. Memory:
 		// each workflow step holds at most one PDF-sized buffer, so 48 MiB
 		// keeps ample headroom under the Worker's 128 MB limit.
-		"MAX_PDF_BYTES": "50331648"
+		"MAX_PDF_BYTES": "50331648",
+		// WebAuthn relying party ID/origin (src/auth/webauthn.ts, plan §5.1 /
+		// §12). Not secret — the RP ID is the bare domain and the origin is
+		// just that domain's HTTPS URL, both already public via the custom
+		// domain route below. SESSION_PEPPER / PAIRING_ENCRYPTION_KEY /
+		// REGISTRATION_INVITE_SECRET stay Wrangler secrets, never vars.
+		"WEBAUTHN_RP_ID": "xtc.hr20k.com",
+		"WEBAUTHN_ORIGIN": "https://xtc.hr20k.com"
 	},
 	"browser": {
 		"binding": "BROWSER",

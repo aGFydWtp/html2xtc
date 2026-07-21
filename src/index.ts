@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 aGFydWtp
 
+import { registerAuthRoutes } from "./auth/routes";
 import {
   clampBookSearchLimit,
   normalizeBookSearchQuery,
@@ -45,6 +46,7 @@ const SYNC_CONVERTER_FETCH_TIMEOUT_MS = 150_000;
 // moved onto this router; router.handle() returns null for any path it
 // doesn't own, and fetch() falls back to the legacy route() unchanged.
 const router = new Router();
+registerAuthRoutes(router);
 registerLibraryRoutes(router);
 
 export default {

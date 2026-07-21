@@ -3,7 +3,11 @@
   import type { Snippet } from "svelte";
   import { t } from "../lib/i18n.svelte";
 
-  let { onFileSelected, children }: { onFileSelected: (file: File) => void; children: Snippet } = $props();
+  let {
+    onFileSelected,
+    children,
+    below,
+  }: { onFileSelected: (file: File) => void; children: Snippet; below?: Snippet } = $props();
 
   let dragActive = $state(false);
   let fileInput = $state<HTMLInputElement | null>(null);
@@ -49,9 +53,9 @@
 >
   {@render children()}
   <div class="zone-hint">
-    <span>{t("pdf_or_drop")}</span>
-    <button type="button" class="linkish" onclick={onPick}>{t("pdf_pick_file")}</button>
+    <span>{t("pdf_or_drop")}</span><button type="button" class="linkish" onclick={onPick}>{t("pdf_pick_file")}</button>
   </div>
+  {#if below}{@render below()}{/if}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <input bind:this={fileInput} type="file" accept="application/pdf,.pdf" hidden onchange={onFileInputChange} />
   {#if dragActive}<div class="zone-drag-label" aria-hidden="true">{t("pdf_drop_active")}</div>{/if}

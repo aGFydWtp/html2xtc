@@ -245,10 +245,11 @@ D1側の状態（デバイス一覧・ペアリング状態等）は引き続き
   （`docs/security-model.md` §4）。切り分けるには:
   1. `npx wrangler d1 execute html2xtc-app --remote --command "SELECT id, status FROM devices WHERE id = '<deviceId>'"`
      で端末が存在するか・`status = 'active'` かを確認する。
-  2. `revoked` であれば `POST /api/devices/{deviceId}/token` （トークン再発行）は使えない
-     （`409 DEVICE_REVOKED`）——再ペアリングが必要。
-  3. `active` なのに401が続く場合は保存済み `deviceToken` の破損・取り違えを疑う
-     （WebUIからトークンを再発行し、端末側の保存値を更新する）。
+  2. `revoked` であれば新トークンを発行するAPIは存在しない——端末を再ペアリングする以外の
+     回復手段はない（`revoked` の端末は一覧からも非表示になる。plan §9.3）。
+  3. `active` なのに401が続く場合は保存済み `deviceToken` の破損・取り違えを疑う。
+     トークン単体を再発行する手段はないため、WebUIから端末を解除し、端末を再ペアリング
+     する（`docs/pairing-protocol.md`）。
 - `429`/`503`: 端末認証失敗レート制限（IP＋deviceId、60回/時）に達している可能性。
   `Retry-After` を確認し、それでも続く場合は正しい認証情報を使っているか再確認する
   （誤った認証情報でのリトライがさらに閾値を消費する）。

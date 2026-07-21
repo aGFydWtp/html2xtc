@@ -24,7 +24,6 @@ import {
   renameDevice,
   replaceDeviceLibrary,
   revokeDevice,
-  rotateDeviceToken,
 } from "./service";
 
 /**
@@ -197,13 +196,6 @@ export function registerDeviceRoutes(router: Router): void {
     await revokeDevice(env, account, params.deviceId);
     logAuditEvent("device.revoked", { accountId: account.id, deviceId: params.deviceId });
     return new Response(null, { status: 204 });
-  });
-
-  router.post("/api/devices/:deviceId/token", async (request, env, params) => {
-    const account = await requireAccount(request, env);
-    requireCsrf(request, env);
-    const rotated = await rotateDeviceToken(env, account, params.deviceId);
-    return Response.json(rotated);
   });
 
   // --- Phase 4: per-device library ---

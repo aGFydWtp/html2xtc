@@ -124,6 +124,40 @@ describe("decideFixedWindow", () => {
       count: 1,
     });
   });
+
+  describe("custom windowMs (登録モード仕様 Phase1 §5.7/§8d — 5/日/account)", () => {
+    const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+
+    it("keeps counting within the custom window instead of the default 1-hour one", () => {
+      let state: RateLimitWindow | undefined;
+      let decision = decideFixedWindow(state, T0, 5, ONE_DAY_MS);
+      for (let i = 1; i < 5; i++) {
+        state = decision.next;
+        // 1 hour apart — would have opened a fresh window under the default
+        // RATE_LIMIT_WINDOW_MS, but must NOT under a 24h window.
+        decision = decideFixedWindow(state, T0 + i * RATE_LIMIT_WINDOW_MS, 5, ONE_DAY_MS);
+      }
+      expect(decision.allowed).toBe(true);
+      expect(decision.next.count).toBe(5);
+
+      const sixth = decideFixedWindow(decision.next, T0 + 5 * RATE_LIMIT_WINDOW_MS, 5, ONE_DAY_MS);
+      expect(sixth.allowed).toBe(false);
+    });
+
+    it("opens a fresh window only after the custom window has fully elapsed", () => {
+      const decision = decideFixedWindow(undefined, T0, 5, ONE_DAY_MS);
+      const stillDenied = decideFixedWindow({ ...decision.next, count: 5 }, T0 + ONE_DAY_MS - 1, 5, ONE_DAY_MS);
+      expect(stillDenied.allowed).toBe(false);
+      const fresh = decideFixedWindow({ ...decision.next, count: 5 }, T0 + ONE_DAY_MS, 5, ONE_DAY_MS);
+      expect(fresh.allowed).toBe(true);
+    });
+
+    it("defaults to RATE_LIMIT_WINDOW_MS when windowMs is omitted (existing callers unaffected)", () => {
+      const withDefault = decideFixedWindow(undefined, T0, 5);
+      const withExplicit = decideFixedWindow(undefined, T0, 5, RATE_LIMIT_WINDOW_MS);
+      expect(withDefault).toEqual(withExplicit);
+    });
+  });
 });
 
 describe("resolveRateLimitPerHour", () => {

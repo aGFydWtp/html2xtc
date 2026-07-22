@@ -32,6 +32,13 @@ describe("Errors factories", () => {
     expect(Errors.forbidden("X", "m").status).toBe(403);
   });
 
+  it("payloadTooLarge carries the given code and 413 status", () => {
+    const error = Errors.payloadTooLarge("LIBRARY_STORAGE_LIMIT_EXCEEDED", "too big");
+    expect(error.status).toBe(413);
+    expect(error.code).toBe("LIBRARY_STORAGE_LIMIT_EXCEEDED");
+    expect(error.message).toBe("too big");
+  });
+
   it("internal defaults to a generic message, never echoing caller detail unless explicit", () => {
     expect(Errors.internal().message).toBe("internal error");
     expect(Errors.internal().status).toBe(500);

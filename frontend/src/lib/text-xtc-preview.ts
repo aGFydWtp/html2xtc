@@ -94,6 +94,19 @@ export class LimitedCache<K, V> {
 }
 
 /**
+ * 切り出し済みのプレビュー本文（selectTextPreview の戻り値）から直接キャッシュ
+ * キーを組み立てる。呼び出し側が既に selectTextPreview 済みの文字列を持っている
+ * 場合（例: 本文全文スキャンを normalizedText 変更時だけに限定し、options の
+ * 編集ごとには走らせたくない場合）はこちらを使い、buildTextXtcPreviewCacheKey は
+ * 内部でこれを呼ぶ薄いラッパーにする。
+ * セパレータにNUL文字(\u0000)を使い、本文とoptionsのJSON文字列が偶然結合して
+ * 衝突することを避ける（NULは通常テキスト本文に現れない）。
+ */
+export function textXtcPreviewCacheKeyFromSelected(selectedText: string, options: TextConvertOptions): string {
+  return `${selectedText}\u0000${JSON.stringify(options)}`;
+}
+
+/**
  * X3プレビューのキャッシュキーを生成する。実際にサーバーへ送信されるテキスト
  * （selectTextPreviewで切り詰め後）と options のJSON表現を連結する — 見た目に
  * 影響するフィールドは options の全フィールドなので、options全体をそのまま使う。
@@ -102,9 +115,7 @@ export class LimitedCache<K, V> {
  * 追加しないため）。
  */
 export function buildTextXtcPreviewCacheKey(fullText: string, options: TextConvertOptions): string {
-  // セパレータにNUL文字(\u0000)を使い、本文とoptionsのJSON文字列が偶然結合して
-  // 衝突することを避ける（NULは通常テキスト本文に現れない）。
-  return `${selectTextPreview(fullText)}\u0000${JSON.stringify(options)}`;
+  return textXtcPreviewCacheKeyFromSelected(selectTextPreview(fullText), options);
 }
 
 async function parsePreviewError(response: Response): Promise<TextPreviewRequestError> {

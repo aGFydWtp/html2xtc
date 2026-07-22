@@ -6,8 +6,8 @@
 // でも同じ上限（MAX_TEXT_PREVIEW_CODE_POINTS/UTF8_BYTES、src/preview/text-preview.ts）
 // で再検証されるため、ここでの抽出はあくまで「送信量を削る」ための一次防御であり、
 // 信頼はしていない（仕様書 §5.3）。
-export const PREVIEW_TARGET_CHARS = 1_500;
-export const PREVIEW_MAX_CHARS = 2_000;
+export const PREVIEW_TARGET_CHARS = 800;
+export const PREVIEW_MAX_CHARS = 1_000;
 
 /**
  * 抽出規則（仕様書 §5.1）:

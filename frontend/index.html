@@ -20,6 +20,13 @@
   </head>
   <body>
     <div id="app"></div>
+    <!-- Cloudflare Turnstile 公式スクリプト（登録モード仕様 Phase2 §5.2 (4)）。
+         defer で読み込み、実際のウィジェット描画は
+         frontend/src/components/PasskeyRegistrationDialog.svelte が
+         publicConfig.turnstileSiteKey 設定時のみ window.turnstile を使って
+         明示的に行う（本番の invite/closed 環境ではこのスクリプトが読み込ま
+         れても turnstile.render() は一度も呼ばれない）。 -->
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" defer></script>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

@@ -110,16 +110,28 @@ class AuthStore {
   }
 
   /**
-   * inviteToken 指定時は新規アカウント作成、未指定時はログイン中アカウントへの
-   * 追加パスキー登録（サーバー側がセッションから既存アカウントを判定する）。
+   * inviteToken 指定時は招待新規登録、turnstileToken/acceptedTermsVersion
+   * 指定時は公開登録（mode==="open"、登録モード仕様 Phase2 §5.2 (5)）、
+   * どちらも未指定時はログイン中アカウントへの追加パスキー登録（サーバー側が
+   * セッションから既存アカウントを判定する）。turnstileToken/
+   * acceptedTermsVersion は招待/追加パスキー経路では常に undefined のまま
+   * サーバーへ送られる（サーバー側もそれらの経路ではこの2フィールドを
+   * 読まない — src/auth/routes.ts の mode==="open" 分岐参照）。
    */
-  async register(inviteToken: string | undefined, displayName: string): Promise<boolean> {
+  async register(params: {
+    inviteToken?: string;
+    displayName: string;
+    turnstileToken?: string;
+    acceptedTermsVersion?: string;
+  }): Promise<boolean> {
     this.busy = true;
     this.errorCode = null;
     try {
       const optionsBody = await apiSend<OptionsResponse>("POST", "/api/auth/registration/options", {
-        inviteToken,
-        displayName,
+        inviteToken: params.inviteToken,
+        displayName: params.displayName,
+        turnstileToken: params.turnstileToken,
+        acceptedTermsVersion: params.acceptedTermsVersion,
       });
       const credential = await startRegistration(optionsBody.options);
       const verifyBody = await apiSend<AccountResponse>("POST", "/api/auth/registration/verify", {
@@ -149,7 +161,7 @@ class AuthStore {
   /** ログイン中アカウントへ追加のパスキーを登録する（招待コード不要）。 */
   async addPasskey(): Promise<boolean> {
     if (!this.account) return false;
-    return this.register(undefined, this.account.displayName);
+    return this.register({ displayName: this.account.displayName });
   }
 
   async login(): Promise<boolean> {

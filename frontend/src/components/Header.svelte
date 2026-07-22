@@ -4,6 +4,7 @@
   import { authStore } from "../lib/auth.svelte";
   import { openAccountDialog, openLoginDialog, openRegistrationDialog } from "../lib/authDialogs.svelte";
   import { getLang, setLang, t } from "../lib/i18n.svelte";
+  import { publicConfigStore } from "../lib/publicConfig.svelte";
 
   // ハンバーガーメニュー（ポップオーバー）。History.svelte のジョブ操作メニューと
   // 同じ方式: Popover API 非対応ブラウザ（Chrome <114, Safari <17, Firefox <125）は
@@ -72,7 +73,7 @@
   // ダイアログを開く項目は、popover と <dialog> の重なりを避けるため先にメニューを閉じる。
   function menuAddPasskey(): void {
     hideMenu();
-    openRegistrationDialog(null);
+    openRegistrationDialog({ mode: "add" });
   }
   function menuAccount(): void {
     hideMenu();
@@ -81,6 +82,13 @@
   function menuLogin(): void {
     hideMenu();
     openLoginDialog();
+  }
+  // 本番の REGISTRATION_MODE は "invite" のまま据え置かれるため、この
+  // ボタンは publicConfig.registrationMode === "open" のときだけ描画される
+  // （invite/closed では従来通りログインボタンのみ — 実装計画の最重要方針）。
+  function menuRegisterOpen(): void {
+    hideMenu();
+    openRegistrationDialog({ mode: "open" });
   }
   async function onLogout(): Promise<void> {
     if (busy) return;
@@ -124,6 +132,9 @@
     <button type="button" class="item" disabled={busy} onclick={() => void onLogout()}>{t("account_logout")}</button>
   {:else if authStore.ready}
     <button type="button" class="item" onclick={menuLogin}>{t("account_login")}</button>
+    {#if publicConfigStore.registrationMode === "open"}
+      <button type="button" class="item" onclick={menuRegisterOpen}>{t("account_register_open")}</button>
+    {/if}
   {/if}
   {#if authStore.account || authStore.ready}
     <hr />

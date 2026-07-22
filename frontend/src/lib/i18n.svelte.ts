@@ -187,6 +187,7 @@ export interface Messages {
   account_add_passkey: string;
   account_add_passkey_intro: string;
   account_menu_item: string;
+  account_register_open: string;
 
   // --- アカウント画面（登録モード仕様 Phase1 §5.9） ---------------------------
   account_dialog_title: string;
@@ -242,6 +243,25 @@ export interface Messages {
   register_submit: string;
   register_failed: string;
   register_logged_in_conflict: (displayName: string) => string;
+
+  // --- 公開登録（登録モード仕様 Phase2 §5.2 (4)(5)(6)） -----------------------
+  register_open_dialog_title: string;
+  register_open_warning: string;
+  register_terms_agree_before: string;
+  register_terms_link: string;
+  register_terms_agree_after: string;
+  register_privacy_agree_before: string;
+  register_privacy_link: string;
+  register_privacy_agree_after: string;
+  register_turnstile_unavailable: string;
+  register_open_failed: string;
+  register_error_capacity_reached: string;
+  register_error_verification_unavailable: string;
+  register_error_invalid_turnstile: string;
+  register_error_terms_mismatch: string;
+  register_done_message: string;
+  register_done_add_passkey: string;
+  register_done_later: string;
 
   library_loading: string;
   library_load_failed: string;
@@ -472,6 +492,7 @@ export const I18N: Record<Lang, Messages> = {
     account_add_passkey: "パスキーを追加登録",
     account_add_passkey_intro: "この端末を新しいパスキーとして、今のアカウントに登録します。",
     account_menu_item: "アカウント",
+    account_register_open: "新規登録",
 
     account_dialog_title: "アカウント",
     account_section_usage: "使用量",
@@ -526,6 +547,24 @@ export const I18N: Record<Lang, Messages> = {
     register_submit: "パスキーを登録する",
     register_failed: "登録に失敗しました。招待リンクの有効期限が切れている可能性があります。",
     register_logged_in_conflict: (displayName) => `現在 ${displayName} でログイン中です。新しいアカウントを作成するには先にログアウトしてください。`,
+
+    register_open_dialog_title: "新規登録",
+    register_open_warning: "このサービスはパスキーのみでログインします。すべてのパスキーを失うとアカウントを復旧できません。登録後、別の端末にもパスキーを追加してください。",
+    register_terms_agree_before: "",
+    register_terms_link: "利用規約",
+    register_terms_agree_after: "に同意する",
+    register_privacy_agree_before: "",
+    register_privacy_link: "プライバシー",
+    register_privacy_agree_after: "に同意する",
+    register_turnstile_unavailable: "認証ウィジェットを読み込めませんでした。しばらくしてから再読み込みしてください。",
+    register_open_failed: "登録に失敗しました。しばらくしてから再試行してください。",
+    register_error_capacity_reached: "現在、新規登録の受付上限に達しています。しばらくしてから再試行してください。",
+    register_error_verification_unavailable: "現在、登録の確認処理を利用できません。しばらくしてから再試行してください。",
+    register_error_invalid_turnstile: "認証に失敗しました。チェックをやり直してください。",
+    register_error_terms_mismatch: "利用規約が更新されました。ページを再読み込みしてから、もう一度お試しください。",
+    register_done_message: "登録が完了しました。別の端末にもバックアップ用パスキーを追加することをおすすめします。",
+    register_done_add_passkey: "パスキーを追加",
+    register_done_later: "あとで",
 
     library_loading: "読み込み中…",
     library_load_failed: "ライブラリの取得に失敗しました。",
@@ -754,6 +793,7 @@ export const I18N: Record<Lang, Messages> = {
     account_add_passkey: "Register another passkey",
     account_add_passkey_intro: "Register this device as a new passkey for your current account.",
     account_menu_item: "Account",
+    account_register_open: "Sign up",
 
     account_dialog_title: "Account",
     account_section_usage: "Usage",
@@ -808,6 +848,24 @@ export const I18N: Record<Lang, Messages> = {
     register_submit: "Register passkey",
     register_failed: "Registration failed. The invite link may have expired.",
     register_logged_in_conflict: (displayName) => `You're currently logged in as ${displayName}. To create a new account, please log out first.`,
+
+    register_open_dialog_title: "Sign up",
+    register_open_warning: "This service signs you in with passkeys only. If you lose every passkey, your account cannot be recovered. After signing up, please add a passkey on another device too.",
+    register_terms_agree_before: "I agree to the ",
+    register_terms_link: "Terms of Use",
+    register_terms_agree_after: "",
+    register_privacy_agree_before: "I agree to the ",
+    register_privacy_link: "Privacy Policy",
+    register_privacy_agree_after: "",
+    register_turnstile_unavailable: "Could not load the verification widget. Please reload and try again later.",
+    register_open_failed: "Registration failed. Please try again later.",
+    register_error_capacity_reached: "New registrations are temporarily full. Please try again later.",
+    register_error_verification_unavailable: "Registration verification is currently unavailable. Please try again later.",
+    register_error_invalid_turnstile: "Verification failed. Please retry the check.",
+    register_error_terms_mismatch: "The terms of use have been updated. Please reload the page and try again.",
+    register_done_message: "Registration complete. We recommend adding a backup passkey on another device.",
+    register_done_add_passkey: "Add a passkey",
+    register_done_later: "Later",
 
     library_loading: "Loading…",
     library_load_failed: "Failed to load your library.",

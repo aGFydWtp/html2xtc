@@ -17,6 +17,7 @@
   import { openPairingDialog, openRegistrationDialog } from "./lib/authDialogs.svelte";
   import { refreshStale } from "./lib/convert.svelte";
   import { t } from "./lib/i18n.svelte";
+  import { publicConfigStore } from "./lib/publicConfig.svelte";
 
   type Tab = "convert" | "library" | "devices";
 
@@ -53,11 +54,14 @@
   // URL から取り除き、再読み込みでの再表示・ブックマークでの露出を避ける。
   onMount(() => {
     void refreshStale();
+    // publicConfig は認証状態と無関係に取得できるので authStore.init() と
+    // 並列で走らせる（Header の「新規登録」ボタン表示判定に使う）。
+    void publicConfigStore.init();
     void authStore.init().then(() => {
       const params = new URLSearchParams(location.search);
       const registerToken = params.get("register");
       const pairCode = params.get("pair");
-      if (registerToken) openRegistrationDialog(registerToken);
+      if (registerToken) openRegistrationDialog({ mode: "invite", inviteToken: registerToken });
       if (pairCode) {
         openPairingDialog(pairCode);
         tab = "devices";

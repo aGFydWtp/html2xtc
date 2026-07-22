@@ -89,6 +89,8 @@ describe("GET /api/public/config", () => {
     expect(body).toEqual({
       registrationMode: "invite",
       registrationAvailable: true,
+      registrationReason: null,
+      registrationMessage: null,
       termsVersion: "2026-01-01",
       limits: {
         maxLibraryItemsPerAccount: 100,
@@ -145,7 +147,15 @@ describe("GET /api/public/config", () => {
     const body = JSON.parse(rawBody) as Record<string, unknown>;
     const topLevelKeys = Object.keys(body);
     expect(topLevelKeys.sort()).toEqual(
-      ["registrationMode", "registrationAvailable", "termsVersion", "limits", "turnstileSiteKey"].sort(),
+      [
+        "registrationMode",
+        "registrationAvailable",
+        "registrationReason",
+        "registrationMessage",
+        "termsVersion",
+        "limits",
+        "turnstileSiteKey",
+      ].sort(),
     );
     // No key named after a secret env var, the raw account count, or the
     // raw admin storage-percent thresholds (only the boolean composite
@@ -157,6 +167,54 @@ describe("GET /api/public/config", () => {
     expect(rawBody).not.toContain("accountCount");
     expect(rawBody).not.toContain("libraryBytes");
     expect(rawBody).not.toContain("R2");
+  });
+
+  describe("registrationReason / registrationMessage (登録モード仕様 Phase3 §4)", () => {
+    it("are both null when mode is not closed, even if REGISTRATION_CLOSED_REASON is set", async () => {
+      const env = buildEnv({ REGISTRATION_MODE: "invite", REGISTRATION_CLOSED_REASON: "maintenance" } as Partial<Env>);
+      const body = (await (await callPublicConfig(env)).json()) as Record<string, unknown>;
+      expect(body.registrationReason).toBeNull();
+      expect(body.registrationMessage).toBeNull();
+    });
+
+    it("are both null/generic-message when closed but REGISTRATION_CLOSED_REASON is unset", async () => {
+      const env = buildEnv({ REGISTRATION_MODE: "closed" } as Partial<Env>);
+      const body = (await (await callPublicConfig(env)).json()) as Record<string, unknown>;
+      expect(body.registrationReason).toBeNull();
+      expect(typeof body.registrationMessage).toBe("string");
+      expect(body.registrationMessage).not.toMatch(/security|abuse/i);
+    });
+
+    it.each(["maintenance", "capacity", "manual"] as const)(
+      "exposes the reason code + a matching message for the public reason %s",
+      async (reason) => {
+        const env = buildEnv({ REGISTRATION_MODE: "closed", REGISTRATION_CLOSED_REASON: reason } as Partial<Env>);
+        const body = (await (await callPublicConfig(env)).json()) as Record<string, unknown>;
+        expect(body.registrationReason).toBe(reason);
+        expect(typeof body.registrationMessage).toBe("string");
+        expect((body.registrationMessage as string).length).toBeGreaterThan(0);
+      },
+    );
+
+    it.each(["security", "abuse"] as const)(
+      "never exposes the reason code or the word %s itself for a non-public reason — only the generic message",
+      async (reason) => {
+        const env = buildEnv({ REGISTRATION_MODE: "closed", REGISTRATION_CLOSED_REASON: reason } as Partial<Env>);
+        const response = await callPublicConfig(env);
+        const rawBody = await response.text();
+        expect(rawBody).not.toContain(reason);
+        const body = JSON.parse(rawBody) as Record<string, unknown>;
+        expect(body.registrationReason).toBeNull();
+        expect(typeof body.registrationMessage).toBe("string");
+      },
+    );
+
+    it("falls back to null/generic message for an unknown REGISTRATION_CLOSED_REASON value", async () => {
+      const env = buildEnv({ REGISTRATION_MODE: "closed", REGISTRATION_CLOSED_REASON: "banana" } as Partial<Env>);
+      const body = (await (await callPublicConfig(env)).json()) as Record<string, unknown>;
+      expect(body.registrationReason).toBeNull();
+      expect(typeof body.registrationMessage).toBe("string");
+    });
   });
 
   describe("registrationAvailable composite judgement (mode=open)", () => {

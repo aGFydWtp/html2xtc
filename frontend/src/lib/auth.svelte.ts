@@ -3,6 +3,7 @@
 // account: ログイン中のアカウント。null は未ログイン。ready は /api/me の
 // 初回取得が完了したかどうか（未確定の間はログインボタンを出さない）。
 
+import { accountStore } from "./account.svelte";
 import { apiGet, apiSend, ApiError } from "./api";
 import { devicesStore } from "./devices.svelte";
 import { libraryStore } from "./library.svelte";
@@ -11,14 +12,16 @@ import { startAuthentication, startRegistration } from "./passkeys";
 /**
  * Clears every other store's cached, account-scoped state. Called whenever
  * the logged-in identity changes (logout, or a fresh login/register success)
- * — without this, libraryStore/devicesStore keep loadState "loaded" from the
- * previous account, so their load-on-idle $effect (Library.svelte,
- * Devices.svelte) never re-fires and the new account's tab briefly shows the
- * previous account's titles/devices until a manual reload.
+ * — without this, libraryStore/devicesStore/accountStore keep loadState
+ * "loaded" from the previous account, so their load-on-idle $effect
+ * (Library.svelte, Devices.svelte, Account.svelte) never re-fires and the new
+ * account's tab briefly shows the previous account's titles/devices/usage
+ * until a manual reload.
  */
 function resetAccountScopedStores(): void {
   libraryStore.reset();
   devicesStore.reset();
+  accountStore.reset();
 }
 
 export interface Account {
@@ -202,6 +205,23 @@ class AuthStore {
       return true;
     } catch {
       return false;
+    }
+  }
+
+  /**
+   * アカウントを完全削除する（登録モード仕様 Phase1 §5.5）。呼び出し側は事前に
+   * "DELETE" の入力確認を取っていること — confirmation はここで固定文字列を送る。
+   * 成功時は logout() と同様にログアウト状態のUIへ戻す。
+   */
+  async deleteAccount(): Promise<{ ok: true } | { ok: false; errorCode: string }> {
+    try {
+      await apiSend("DELETE", "/api/me/account", { confirmation: "DELETE" });
+      this.account = null;
+      this.sessions = [];
+      resetAccountScopedStores();
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, errorCode: errorCodeOf(e) };
     }
   }
 }

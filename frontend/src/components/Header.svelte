@@ -2,7 +2,7 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import { authStore } from "../lib/auth.svelte";
-  import { openLoginDialog, openRegistrationDialog } from "../lib/authDialogs.svelte";
+  import { openAccountDialog, openLoginDialog, openRegistrationDialog } from "../lib/authDialogs.svelte";
   import { getLang, setLang, t } from "../lib/i18n.svelte";
 
   // ハンバーガーメニュー（ポップオーバー）。History.svelte のジョブ操作メニューと
@@ -74,6 +74,10 @@
     hideMenu();
     openRegistrationDialog(null);
   }
+  function menuAccount(): void {
+    hideMenu();
+    openAccountDialog();
+  }
   function menuLogin(): void {
     hideMenu();
     openLoginDialog();
@@ -115,6 +119,7 @@
 >
   {#if authStore.account}
     <div class="account-name">{authStore.account.displayName}</div>
+    <button type="button" class="item" onclick={menuAccount}>{t("account_menu_item")}</button>
     <button type="button" class="item" onclick={menuAddPasskey}>{t("account_add_passkey")}</button>
     <button type="button" class="item" disabled={busy} onclick={() => void onLogout()}>{t("account_logout")}</button>
   {:else if authStore.ready}

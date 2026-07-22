@@ -186,6 +186,50 @@ export interface Messages {
   account_login_prompt: string;
   account_add_passkey: string;
   account_add_passkey_intro: string;
+  account_menu_item: string;
+
+  // --- アカウント画面（登録モード仕様 Phase1 §5.9） ---------------------------
+  account_dialog_title: string;
+  account_section_usage: string;
+  account_section_passkeys: string;
+  account_section_sessions: string;
+  account_section_devices: string;
+  account_section_danger: string;
+
+  account_usage_loading: string;
+  account_usage_load_failed: string;
+  account_usage_library_items: string;
+  account_usage_library_bytes: string;
+  account_usage_devices: string;
+  account_usage_sessions: string;
+  account_usage_passkeys: string;
+  account_usage_count: (used: number, limit: number) => string;
+  account_usage_bytes: (used: string, limit: string) => string;
+  account_usage_warning: string;
+  account_usage_full: string;
+
+  account_passkeys_loading: string;
+  account_passkeys_load_failed: string;
+  account_passkey_created: (date: string) => string;
+  account_passkey_last_used: (date: string) => string;
+  account_passkey_last_used_never: string;
+  account_passkey_synced: string;
+  account_passkey_delete: string;
+  account_passkey_delete_confirm: string;
+  account_passkey_delete_failed: string;
+  account_passkey_last_passkey: string;
+  account_passkey_last_passkey_title: string;
+
+  account_sessions_loading: string;
+  account_session_current: string;
+  account_session_revoke: string;
+  account_session_revoke_confirm: string;
+
+  account_delete_intro: string;
+  account_delete_input_label: string;
+  account_delete_input_placeholder: string;
+  account_delete_button: string;
+  account_delete_failed: string;
 
   login_dialog_title: string;
   login_dialog_intro: string;
@@ -427,6 +471,49 @@ export const I18N: Record<Lang, Messages> = {
     account_login_prompt: "この機能を使うにはログインしてください。",
     account_add_passkey: "パスキーを追加登録",
     account_add_passkey_intro: "この端末を新しいパスキーとして、今のアカウントに登録します。",
+    account_menu_item: "アカウント",
+
+    account_dialog_title: "アカウント",
+    account_section_usage: "使用量",
+    account_section_passkeys: "パスキー",
+    account_section_sessions: "セッション",
+    account_section_devices: "端末",
+    account_section_danger: "アカウント削除",
+
+    account_usage_loading: "読み込み中…",
+    account_usage_load_failed: "使用量の取得に失敗しました。",
+    account_usage_library_items: "保存件数",
+    account_usage_library_bytes: "保存容量",
+    account_usage_devices: "端末登録数",
+    account_usage_sessions: "アクティブセッション数",
+    account_usage_passkeys: "パスキー登録数",
+    account_usage_count: (used, limit) => `${used} / ${limit}`,
+    account_usage_bytes: (used, limit) => `${used} / ${limit}`,
+    account_usage_warning: "上限に近づいています。",
+    account_usage_full: "上限に達しています。これ以上保存できません。",
+
+    account_passkeys_loading: "読み込み中…",
+    account_passkeys_load_failed: "パスキー一覧の取得に失敗しました。",
+    account_passkey_created: (date) => `登録日: ${date}`,
+    account_passkey_last_used: (date) => `最終使用: ${date}`,
+    account_passkey_last_used_never: "最終使用: なし",
+    account_passkey_synced: "クラウド同期済み",
+    account_passkey_delete: "削除",
+    account_passkey_delete_confirm: "このパスキーを削除しますか？以後、この端末ではログインできなくなります。",
+    account_passkey_delete_failed: "パスキーの削除に失敗しました。",
+    account_passkey_last_passkey: "このアカウントにはパスキーが1つだけ登録されています。端末の紛失や初期化に備えて、別の端末にも追加してください。",
+    account_passkey_last_passkey_title: "最後の1本は削除できません",
+
+    account_sessions_loading: "読み込み中…",
+    account_session_current: "この端末（現在のセッション）",
+    account_session_revoke: "ログアウト",
+    account_session_revoke_confirm: "このセッションをログアウトさせますか？",
+
+    account_delete_intro: "アカウントを完全に削除します。ライブラリ、端末登録、パスキー、セッションなど、すべてのデータが失われ、元に戻せません。",
+    account_delete_input_label: "続行するには、下の欄に「DELETE」と入力してください。",
+    account_delete_input_placeholder: "DELETE",
+    account_delete_button: "アカウントを削除",
+    account_delete_failed: "アカウントの削除に失敗しました。しばらくしてから再試行してください。",
 
     login_dialog_title: "ログイン",
     login_dialog_intro: "登録済みのパスキーでログインします。",
@@ -666,6 +753,49 @@ export const I18N: Record<Lang, Messages> = {
     account_login_prompt: "Please log in to use this feature.",
     account_add_passkey: "Register another passkey",
     account_add_passkey_intro: "Register this device as a new passkey for your current account.",
+    account_menu_item: "Account",
+
+    account_dialog_title: "Account",
+    account_section_usage: "Usage",
+    account_section_passkeys: "Passkeys",
+    account_section_sessions: "Sessions",
+    account_section_devices: "Devices",
+    account_section_danger: "Delete account",
+
+    account_usage_loading: "Loading…",
+    account_usage_load_failed: "Failed to load usage.",
+    account_usage_library_items: "Saved items",
+    account_usage_library_bytes: "Storage used",
+    account_usage_devices: "Registered devices",
+    account_usage_sessions: "Active sessions",
+    account_usage_passkeys: "Registered passkeys",
+    account_usage_count: (used, limit) => `${used} / ${limit}`,
+    account_usage_bytes: (used, limit) => `${used} / ${limit}`,
+    account_usage_warning: "Approaching the limit.",
+    account_usage_full: "Limit reached. Nothing more can be saved.",
+
+    account_passkeys_loading: "Loading…",
+    account_passkeys_load_failed: "Failed to load your passkeys.",
+    account_passkey_created: (date) => `Registered: ${date}`,
+    account_passkey_last_used: (date) => `Last used: ${date}`,
+    account_passkey_last_used_never: "Last used: never",
+    account_passkey_synced: "Synced to cloud",
+    account_passkey_delete: "Delete",
+    account_passkey_delete_confirm: "Delete this passkey? You won't be able to sign in from that device anymore.",
+    account_passkey_delete_failed: "Failed to delete the passkey.",
+    account_passkey_last_passkey: "This account has only one passkey registered. Add one on another device in case you lose or reset this one.",
+    account_passkey_last_passkey_title: "You can't delete your only passkey",
+
+    account_sessions_loading: "Loading…",
+    account_session_current: "This device (current session)",
+    account_session_revoke: "Log out",
+    account_session_revoke_confirm: "Log out this session?",
+
+    account_delete_intro: "This permanently deletes your account. Your library, devices, passkeys, and sessions will all be lost and cannot be recovered.",
+    account_delete_input_label: "Type \"DELETE\" below to continue.",
+    account_delete_input_placeholder: "DELETE",
+    account_delete_button: "Delete account",
+    account_delete_failed: "Failed to delete the account. Please try again later.",
 
     login_dialog_title: "Log in",
     login_dialog_intro: "Log in with one of your registered passkeys.",

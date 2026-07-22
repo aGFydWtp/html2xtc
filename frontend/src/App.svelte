@@ -1,6 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import { onMount } from "svelte";
+  import Account from "./components/Account.svelte";
   import AozoraDialog from "./components/AozoraDialog.svelte";
   import ConvertForm from "./components/ConvertForm.svelte";
   import CurrentJob from "./components/CurrentJob.svelte";
@@ -104,6 +105,7 @@
 <PasskeyLoginDialog />
 <PasskeyRegistrationDialog />
 <PairingApprovalDialog />
+<Account />
 
 <style>
   main { max-width: 44rem; margin: 0 auto; padding: 28px 20px 48px; }

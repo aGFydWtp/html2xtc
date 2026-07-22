@@ -41,3 +41,13 @@ export function openPairingDialog(code: string): void {
 export function closePairingDialog(): void {
   pairingDialog.open = false;
 }
+
+// アカウント画面（登録モード仕様 Phase1 §5.9）。Header のメニューから開く。
+export const accountDialog = $state({ open: false });
+
+export function openAccountDialog(): void {
+  accountDialog.open = true;
+}
+export function closeAccountDialog(): void {
+  accountDialog.open = false;
+}

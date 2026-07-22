@@ -6,8 +6,9 @@ import type { Env } from "../types";
 
 /**
  * Phase 7 (plan §19) scheduled cleanup of expired APP_DB rows: auth
- * challenges, device pairings, sessions, and registration invites — the
- * tables that otherwise only ever grow. Invoked once per day off the back
+ * challenges, device pairings, sessions, registration invites, and (登録
+ * モード仕様 Phase2 §4b) registration_events — the tables that otherwise
+ * only ever grow. Invoked once per day off the back
  * of the existing Aozora-sync cron (src/index.ts's scheduled()); no
  * dedicated cron of its own (plan doesn't call for a separate schedule).
  *
@@ -63,6 +64,7 @@ export interface CleanupCounts {
   devicePairings: number;
   sessions: number;
   registrationInvites: number;
+  registrationEvents: number;
 }
 
 /** Runs one table's DELETE and returns rows removed, or 0 (logged) on failure — isolates one table's D1 error from the others. */
@@ -152,11 +154,24 @@ export async function cleanupAppDb(
     [cutoffs.nowIso, cutoffs.inviteConsumedRetentionCutoffIso],
   );
 
+  // registration_events (登録モード仕様 Phase2 §4b/§3): expires_at is set at
+  // insert time (7 days out, src/auth/webauthn.ts's
+  // REGISTRATION_EVENT_RETENTION_MS), so — unlike device_pairings above —
+  // no separate retention-window cutoff is needed here; expires_at < now is
+  // the whole rule.
+  const registrationEvents = await deleteBestEffort(
+    db,
+    "registration_events",
+    `DELETE FROM registration_events WHERE expires_at < ?`,
+    [cutoffs.nowIso],
+  );
+
   const counts: CleanupCounts = {
     authChallenges,
     devicePairings,
     sessions,
     registrationInvites,
+    registrationEvents,
   };
   // Spread into a fresh object literal: logAuditEvent's forbidden-key guard
   // only applies to object literals (it needs the extra properties to be

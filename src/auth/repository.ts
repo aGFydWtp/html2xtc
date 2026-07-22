@@ -297,3 +297,89 @@ export async function runNewAccountRegistrationBatch(
   ]);
   return { inviteConsumed: (inviteResult.meta.changes ?? 0) > 0 };
 }
+
+// --- 登録モード仕様 Phase 2 (open, invite-less registration) ---
+
+/** Builds (without running) the account_terms_acceptances INSERT statement — used only by the atomic open-account db.batch() below (runOpenAccountRegistrationBatch). */
+function buildInsertTermsAcceptanceStatement(
+  db: D1Database,
+  accountId: string,
+  acceptance: { id: string; termsVersion: string; acceptedAt: string },
+): D1PreparedStatement {
+  return db
+    .prepare(
+      `INSERT INTO account_terms_acceptances (id, account_id, terms_version, accepted_at) VALUES (?, ?, ?, ?)`,
+    )
+    .bind(acceptance.id, accountId, acceptance.termsVersion, acceptance.acceptedAt);
+}
+
+/** Builds (without running) the registration_events INSERT statement — used only by the atomic open-account db.batch() below. status is always 'succeeded' here: this row is only ever written once the account itself is being created. ip_hash is a REGISTRATION_IP_PEPPER-hashed value (src/security/crypto.ts's hashClientIp), never a raw IP. */
+function buildInsertRegistrationEventStatement(
+  db: D1Database,
+  event: { id: string; ipHash: string; createdAt: string; expiresAt: string },
+): D1PreparedStatement {
+  return db
+    .prepare(
+      `INSERT INTO registration_events (id, ip_hash, status, created_at, expires_at) VALUES (?, ?, 'succeeded', ?, ?)`,
+    )
+    .bind(event.id, event.ipHash, event.createdAt, event.expiresAt);
+}
+
+export interface OpenAccountRegistrationBatchParams {
+  account: { id: string; displayName: string; createdAt: string };
+  credential: NewCredential;
+  termsAcceptance: { id: string; termsVersion: string; acceptedAt: string };
+  registrationEvent: { id: string; ipHash: string; createdAt: string; expiresAt: string };
+}
+
+/**
+ * Atomically runs account creation + credential insertion + terms-acceptance
+ * recording + registration-event recording as one D1 batch() (登録モード仕様
+ * Phase2 §3c): a credential UNIQUE violation (this passkey already
+ * registered elsewhere) rolls back every statement, so no orphan account or
+ * dangling terms-acceptance row is ever left behind. Unlike
+ * runNewAccountRegistrationBatch (the invite path), there is no invite to
+ * race against here, so this thrown-error case is the only failure mode —
+ * no post-batch cleanup call is ever needed for the open path.
+ */
+export async function runOpenAccountRegistrationBatch(
+  db: D1Database,
+  params: OpenAccountRegistrationBatchParams,
+): Promise<void> {
+  await db.batch([
+    buildCreateAccountStatement(db, params.account),
+    buildInsertCredentialStatement(db, params.credential),
+    buildInsertTermsAcceptanceStatement(db, params.account.id, params.termsAcceptance),
+    buildInsertRegistrationEventStatement(db, params.registrationEvent),
+  ]);
+}
+
+/** Total account count, service-wide (登録モード仕様 Phase2 §4a's MAX_TOTAL_ACCOUNTS check, both at registration/options and again at registration/verify). */
+export async function countTotalAccounts(db: D1Database): Promise<number> {
+  const row = await db.prepare(`SELECT COUNT(*) AS count FROM accounts`).first<{ count: number }>();
+  return row?.count ?? 0;
+}
+
+/** Accounts created at or after sinceIso, service-wide (登録モード仕様 Phase2 §4b's MAX_NEW_ACCOUNTS_PER_DAY check; also GET /internal/registration/status's accountsCreatedToday). */
+export async function countAccountsCreatedSince(db: D1Database, sinceIso: string): Promise<number> {
+  const row = await db
+    .prepare(`SELECT COUNT(*) AS count FROM accounts WHERE created_at >= ?`)
+    .bind(sinceIso)
+    .first<{ count: number }>();
+  return row?.count ?? 0;
+}
+
+/** Succeeded registration_events for one ip_hash at or after sinceIso — 登録モード仕様 Phase2 §4b's MAX_NEW_ACCOUNTS_PER_IP_PER_DAY check (this is exactly the "日次/IP別レート制限用カウンタ材料" role migrations/app/0004_registration_open.sql's module comment assigns to registration_events). */
+export async function countSucceededRegistrationEventsForIpSince(
+  db: D1Database,
+  ipHash: string,
+  sinceIso: string,
+): Promise<number> {
+  const row = await db
+    .prepare(
+      `SELECT COUNT(*) AS count FROM registration_events WHERE ip_hash = ? AND status = 'succeeded' AND created_at >= ?`,
+    )
+    .bind(ipHash, sinceIso)
+    .first<{ count: number }>();
+  return row?.count ?? 0;
+}

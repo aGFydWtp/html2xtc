@@ -117,6 +117,20 @@ export function accountRateLimitKey(purpose: string, accountId: string): string 
   return `${purpose}:account:${accountId}`;
 }
 
+/**
+ * IP- and account-independent key for a purpose's single, service-wide
+ * counter (登録モード仕様 Phase2 §8's "全体50/日" open-registration-success
+ * budget) — every caller of a given purpose funnels into the exact same
+ * RateLimiter Durable Object instance, opted into per call site via
+ * enforcePurposeRateLimit's `scope: "global"` option (src/ratelimiter.ts).
+ * Reserved for low-frequency purposes only: unlike purposeRateLimitKey/
+ * accountRateLimitKey, a global key can never be sharded by anything, so a
+ * busy purpose would hotspot a single DO instance.
+ */
+export function globalRateLimitKey(purpose: string): string {
+  return `${purpose}:global`;
+}
+
 /** Window state as persisted in the Durable Object's storage. */
 export interface RateLimitWindow {
   windowStartMs: number;

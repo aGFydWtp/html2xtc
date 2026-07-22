@@ -11,6 +11,7 @@ import { convertInContainer } from "./container";
 import { cleanupAppDb } from "./db/cleanup";
 import { registerDeviceRoutes } from "./devices/routes";
 import { prepareRenderInput } from "./extract";
+import { registerInternalRoutes } from "./internal/routes";
 import {
   articleHtmlKey,
   decideMissingDownload,
@@ -38,6 +39,7 @@ import {
   saveUploadedPdf,
 } from "./pdf-upload";
 import { storeXtcOutput } from "./pipeline";
+import { registerPublicConfigRoute } from "./public-config";
 import { enforceRateLimit } from "./ratelimiter";
 import { Router } from "./router";
 import { newRequestId, withSecurityHeaders } from "./security/headers";
@@ -74,6 +76,8 @@ registerAuthRoutes(router);
 registerLibraryRoutes(router);
 registerDeviceRoutes(router);
 registerOpdsRoutes(router);
+registerPublicConfigRoute(router);
+registerInternalRoutes(router);
 
 export default {
   async fetch(request, env) {

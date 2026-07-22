@@ -238,3 +238,11 @@ export async function sumLibraryBytes(db: D1Database, accountId: string): Promis
     .first<{ total: number }>();
   return row?.total ?? 0;
 }
+
+/** Sums size_bytes across every non-deleted library_items row, service-wide — the "total library bytes" quota (登録モード仕様 Phase2 §4e's MAX_TOTAL_LIBRARY_BYTES check, used by GET /api/public/config and GET /internal/registration/status). */
+export async function sumTotalLibraryBytes(db: D1Database): Promise<number> {
+  const row = await db
+    .prepare(`SELECT COALESCE(SUM(size_bytes), 0) AS total FROM library_items WHERE deleted_at IS NULL`)
+    .first<{ total: number }>();
+  return row?.total ?? 0;
+}

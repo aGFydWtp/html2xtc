@@ -6,6 +6,7 @@ import {
   RATE_LIMIT_WINDOW_MS,
   accountRateLimitKey,
   decideFixedWindow,
+  globalRateLimitKey,
   purposeRateLimitKey,
   rateLimitKey,
   resolveRateLimitPerHour,
@@ -139,8 +140,13 @@ export interface PurposeRateLimitOptions {
    *   accountRateLimitKey — the client's IP plays no part, so switching IPs
    *   cannot reset the budget. Requires `extraKey` (treated as the
    *   accountId). Only account.deletion (src/auth/routes.ts) uses this.
+   * - "global": a single counter for the whole purpose, via
+   *   globalRateLimitKey — neither IP nor accountId plays any part
+   *   (登録モード仕様 Phase2 §8's "全体50/日" open-registration-success
+   *   budget). Reserved for low-frequency purposes only (see
+   *   globalRateLimitKey's own doc, src/ratelimit.ts).
    */
-  scope?: "ip" | "account";
+  scope?: "ip" | "account" | "global";
 }
 
 /**
@@ -169,6 +175,8 @@ export async function enforcePurposeRateLimit(
       );
     }
     key = accountRateLimitKey(options.purpose, options.extraKey);
+  } else if (options.scope === "global") {
+    key = globalRateLimitKey(options.purpose);
   } else {
     const ipKey = rateLimitKey(request.headers.get("CF-Connecting-IP"));
     key = purposeRateLimitKey(options.purpose, ipKey, options.extraKey);
@@ -177,7 +185,8 @@ export async function enforcePurposeRateLimit(
     // No client IP to scope by (local dev, or an edge that stripped the
     // header) — see rateLimitKey's own doc; this cannot happen from the
     // real Cloudflare edge in production. Only reachable for scope: "ip"
-    // (the default) — scope: "account" always produces a key.
+    // (the default) — scope: "account" and scope: "global" always produce
+    // a key.
     return null;
   }
 

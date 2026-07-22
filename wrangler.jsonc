@@ -37,7 +37,22 @@
 		"MAX_LIBRARY_BYTES_PER_ACCOUNT": "1073741824",
 		"MAX_DEVICES_PER_ACCOUNT": "5",
 		"MAX_ACTIVE_SESSIONS_PER_ACCOUNT": "10",
-		"MAX_PASSKEYS_PER_ACCOUNT": "5"
+		"MAX_PASSKEYS_PER_ACCOUNT": "5",
+		// 登録モード仕様 Phase 2 (open, コード実装のみ — REGISTRATION_MODE は
+		// 上記のとおり "invite" のまま据え置く): サービス全体クォータ既定値
+		// （src/quotas.ts）。TURNSTILE_SECRET_KEY / REGISTRATION_IP_PEPPER /
+		// INTERNAL_STATUS_SECRET は Wrangler secret（`wrangler secret put`）
+		// でのみ設定し、ここには絶対に書かない。TURNSTILE_SITE_KEY も open を
+		// 実際に有効化する運用判断の一部としてここに追加する（実サイトキー
+		// が無い間は未設定のままでよい — 未設定なら /api/public/config は
+		// turnstileSiteKey: null を返す）。
+		"MAX_TOTAL_ACCOUNTS": "500",
+		"MAX_NEW_ACCOUNTS_PER_DAY": "50",
+		"MAX_NEW_ACCOUNTS_PER_IP_PER_DAY": "3",
+		"MAX_TOTAL_LIBRARY_BYTES": "53687091200",
+		"TOTAL_STORAGE_WARNING_PERCENT": "80",
+		"TOTAL_STORAGE_STOP_PERCENT": "95",
+		"TERMS_VERSION": "2026-07-01"
 	},
 	"browser": {
 		"binding": "BROWSER",

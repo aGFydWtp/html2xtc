@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   base64UrlDecode,
   base64UrlEncode,
+  hashClientIp,
   randomToken,
   sha256Hex,
   timingSafeEqual,
@@ -66,6 +67,43 @@ describe("sha256Hex", () => {
 
   it("differs for different input (pepper mixing changes the hash)", async () => {
     expect(await sha256Hex("pepper1:token")).not.toBe(await sha256Hex("pepper2:token"));
+  });
+});
+
+describe("hashClientIp (登録モード仕様 Phase2 §3/§4b)", () => {
+  it("returns null when there is no IP to hash (mirrors rateLimitKey's null case)", async () => {
+    expect(await hashClientIp(null, "pepper")).toBeNull();
+    expect(await hashClientIp("", "pepper")).toBeNull();
+  });
+
+  it("is deterministic for the same IPv4 + pepper", async () => {
+    const a = await hashClientIp("203.0.113.7", "pepper");
+    const b = await hashClientIp("203.0.113.7", "pepper");
+    expect(a).toBe(b);
+  });
+
+  it("differs when the pepper differs (pepper mixing changes the hash)", async () => {
+    const a = await hashClientIp("203.0.113.7", "pepper1");
+    const b = await hashClientIp("203.0.113.7", "pepper2");
+    expect(a).not.toBe(b);
+  });
+
+  it("differs for different IPv4 addresses", async () => {
+    const a = await hashClientIp("203.0.113.7", "pepper");
+    const b = await hashClientIp("203.0.113.8", "pepper");
+    expect(a).not.toBe(b);
+  });
+
+  it("hashes two IPv6 addresses in the same /64 to the same value (subnet-level accounting, matching the rate limiter)", async () => {
+    const a = await hashClientIp("2001:db8:1234:5678::1", "pepper");
+    const b = await hashClientIp("2001:db8:1234:5678:ffff:ffff:ffff:ffff", "pepper");
+    expect(a).toBe(b);
+  });
+
+  it("hashes two IPv6 addresses in different /64s to different values", async () => {
+    const a = await hashClientIp("2001:db8:1234:5678::1", "pepper");
+    const b = await hashClientIp("2001:db8:1234:5679::1", "pepper");
+    expect(a).not.toBe(b);
   });
 });
 

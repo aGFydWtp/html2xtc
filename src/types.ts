@@ -213,4 +213,56 @@ export interface Env {
   MAX_ACTIVE_SESSIONS_PER_ACCOUNT?: string;
   /** Max webauthn_credentials rows per account. Default 5 — see src/quotas.ts. */
   MAX_PASSKEYS_PER_ACCOUNT?: string;
+
+  // --- 登録モード仕様 Phase 2 (open, invite-less registration) ---
+  /** Max total accounts across the whole service (Phase2 §4a). Default 500 — see src/quotas.ts. */
+  MAX_TOTAL_ACCOUNTS?: string;
+  /** Max new accounts created per rolling 24h, service-wide (Phase2 §4b). Default 50 — see src/quotas.ts. */
+  MAX_NEW_ACCOUNTS_PER_DAY?: string;
+  /** Max new accounts created per rolling 24h from a single client IP (/64 for IPv6) (Phase2 §4b). Default 3 — see src/quotas.ts. */
+  MAX_NEW_ACCOUNTS_PER_IP_PER_DAY?: string;
+  /** Max total library_items.size_bytes across every account (Phase2 §4e). Default 50 GiB (53687091200) — see src/quotas.ts. */
+  MAX_TOTAL_LIBRARY_BYTES?: string;
+  /** Percent of MAX_TOTAL_LIBRARY_BYTES at which storage is considered "warning" level (Phase2 §4e). Default 80 — see src/quotas.ts. */
+  TOTAL_STORAGE_WARNING_PERCENT?: string;
+  /** Percent of MAX_TOTAL_LIBRARY_BYTES at which GET /api/public/config reports registration as unavailable (Phase2 §4e). Default 95 — see src/quotas.ts. */
+  TOTAL_STORAGE_STOP_PERCENT?: string;
+  /**
+   * Terms/privacy version string, returned by GET /api/public/config and
+   * recorded verbatim into account_terms_acceptances.terms_version on open
+   * registration (Phase2 §3d/§11). No numeric default: unset means
+   * resolveTermsVersion (src/quotas.ts) returns null and open registration
+   * fails closed (TERMS_VERSION_MISMATCH) rather than silently accepting an
+   * unversioned agreement.
+   */
+  TERMS_VERSION?: string;
+  /**
+   * Cloudflare Turnstile site key, embedded in the public registration UI.
+   * Public by Turnstile's own design (the paired secret key stays
+   * server-side as TURNSTILE_SECRET_KEY below) — a vars entry, not a secret.
+   */
+  TURNSTILE_SITE_KEY?: string;
+  /**
+   * Cloudflare Turnstile secret key for the siteverify call (src/auth/
+   * turnstile.ts, Phase2 §4c). A Wrangler secret, never a var. Resolved
+   * only once the caller has already confirmed mode === "open" — never on
+   * the invite/closed path — so an invite-only deployment that never sets
+   * this secret is unaffected (Phase2 §6 risk 3).
+   */
+  TURNSTILE_SECRET_KEY?: string;
+  /**
+   * Pepper mixed into registration_events.ip_hash (src/security/crypto.ts's
+   * hashClientIp, Phase2 §3/§4b). A Wrangler secret, never a var. Resolved
+   * only once the caller has already confirmed mode === "open", same
+   * scoping rule as TURNSTILE_SECRET_KEY above.
+   */
+  REGISTRATION_IP_PEPPER?: string;
+  /**
+   * Shared-secret header value required by GET /internal/registration/status
+   * (Phase2 §10). A Wrangler secret, never a var. Cloudflare Access
+   * protection for /internal/* is a dashboard/Terraform concern outside
+   * this repository's scope — this secret is defense-in-depth on the
+   * Worker side only.
+   */
+  INTERNAL_STATUS_SECRET?: string;
 }

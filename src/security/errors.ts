@@ -79,6 +79,9 @@ export const Errors = {
   payloadTooLarge(code: string, message: string): ApiError {
     return new ApiError(413, code, message);
   },
+  serviceUnavailable(code: string, message: string): ApiError {
+    return new ApiError(503, code, message);
+  },
   internal(message = "internal error"): ApiError {
     return new ApiError(500, "INTERNAL_ERROR", message);
   },

@@ -38,14 +38,25 @@ interface RegistrationInviteRow {
   expiresAt: string;
   consumedAt: string | null;
 }
+interface RegistrationEventRow {
+  id: string;
+  expiresAt: string;
+}
 
 class FakeD1 {
   authChallenges: AuthChallengeRow[] = [];
   devicePairings: DevicePairingRow[] = [];
   sessions: SessionRow[] = [];
   registrationInvites: RegistrationInviteRow[] = [];
+  registrationEvents: RegistrationEventRow[] = [];
   /** Set to force the next matching table's DELETE to throw, simulating a D1 outage. */
-  failTable: "auth_challenges" | "device_pairings" | "sessions" | "registration_invites" | null = null;
+  failTable:
+    | "auth_challenges"
+    | "device_pairings"
+    | "sessions"
+    | "registration_invites"
+    | "registration_events"
+    | null = null;
 
   prepare(sql: string): FakeStatement {
     return new FakeStatement(this, sql);
@@ -119,6 +130,16 @@ class FakeStatement {
         return !stale;
       });
       return { meta: { changes: before - this.db.registrationInvites.length } };
+    }
+
+    if (this.sql.includes("FROM registration_events")) {
+      if (this.db.failTable === "registration_events") {
+        throw new Error("D1 unavailable");
+      }
+      const [nowIso] = this.args as [string];
+      const before = this.db.registrationEvents.length;
+      this.db.registrationEvents = this.db.registrationEvents.filter((row) => !(row.expiresAt < nowIso));
+      return { meta: { changes: before - this.db.registrationEvents.length } };
     }
 
     throw new Error(`FakeD1: unhandled SQL: ${this.sql}`);
@@ -238,6 +259,19 @@ describe("cleanupAppDb", () => {
     expect(db.registrationInvites.map((r) => r.id).sort()).toEqual(["consumed-recent", "live"]);
   });
 
+  it("deletes registration_events rows past their own expires_at, keeps live ones (登録モード仕様 Phase2 §4b, no separate retention window — expires_at is set at insert time)", async () => {
+    const db = new FakeD1();
+    db.registrationEvents = [
+      { id: "expired", expiresAt: "2026-07-01T00:00:00.000Z" },
+      { id: "live", expiresAt: "2026-08-01T00:00:00.000Z" },
+    ];
+
+    const counts = await cleanupAppDb({ APP_DB: db as unknown as D1Database }, NOW);
+
+    expect(counts.registrationEvents).toBe(1);
+    expect(db.registrationEvents.map((r) => r.id)).toEqual(["live"]);
+  });
+
   it("logs a single app_db.cleanup.completed audit event with per-table counts and no secrets", async () => {
     const db = new FakeD1();
     db.authChallenges = [{ id: "a", expiresAt: "2026-07-01T00:00:00.000Z", consumedAt: null }];
@@ -251,6 +285,7 @@ describe("cleanupAppDb", () => {
     expect(logged.devicePairings).toBe(0);
     expect(logged.sessions).toBe(0);
     expect(logged.registrationInvites).toBe(0);
+    expect(logged.registrationEvents).toBe(0);
     expect(logged).not.toHaveProperty("deviceToken");
     expect(logged).not.toHaveProperty("pairingSecret");
   });

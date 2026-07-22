@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 aGFydWtp
 
+import { rateLimitKey } from "../ratelimit";
+
 /**
  * Crypto primitives shared by sessions, device tokens, registration invites,
  * and pairing secrets: high-entropy token generation, SHA-256 hashing,
@@ -9,7 +11,9 @@
  * Pure Web Crypto (crypto.getRandomValues, crypto.subtle, atob/btoa) — no
  * cloudflare:* import — so this module is directly unit-testable under plain
  * vitest (see test/security-crypto.test.ts), same rationale as
- * src/ratelimit.ts and src/jobs.ts.
+ * src/ratelimit.ts and src/jobs.ts. The one exception is the import of
+ * rateLimitKey below (also cloudflare:*-free), reused for hashClientIp's
+ * IPv6 normalization.
  */
 
 /** Default token size: 256 bits, matching the plan's "32 bytes+" requirement for session/device/invite tokens. */
@@ -58,6 +62,24 @@ export function base64UrlDecode(value: string): Uint8Array {
     bytes[i] = binary.charCodeAt(i);
   }
   return bytes;
+}
+
+/**
+ * Hashes a client IP for registration_events.ip_hash (登録モード仕様 Phase2
+ * §3/§4b): reuses rateLimitKey's IPv6 /64 normalization (src/ratelimit.ts)
+ * so an entire subnet always hashes to the same value, then mixes in
+ * REGISTRATION_IP_PEPPER before hashing — the same pepper-prefixed
+ * sha256Hex pattern hashSessionToken uses (src/auth/sessions.ts). Returns
+ * null when there's no IP to hash — rateLimitKey's null case (local dev, or
+ * an edge that stripped CF-Connecting-IP), never reachable from the real
+ * Cloudflare edge in production.
+ */
+export async function hashClientIp(ip: string | null, pepper: string): Promise<string | null> {
+  const normalized = rateLimitKey(ip);
+  if (normalized === null) {
+    return null;
+  }
+  return sha256Hex(`${pepper}:${normalized}`);
 }
 
 /**

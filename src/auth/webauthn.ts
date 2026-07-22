@@ -14,14 +14,15 @@ import type {
   PublicKeyCredentialRequestOptionsJSON,
   RegistrationResponseJSON,
 } from "@simplewebauthn/server";
-import { resolveMaxPasskeysPerAccount } from "../quotas";
+import { resolveMaxPasskeysPerAccount, resolveMaxTotalAccounts } from "../quotas";
 import { logAuditEvent } from "../security/audit";
-import { base64UrlDecode, sha256Hex } from "../security/crypto";
+import { base64UrlDecode, hashClientIp, sha256Hex } from "../security/crypto";
 import { Errors } from "../security/errors";
 import type { Env } from "../types";
 import { consumeChallenge, issueChallenge } from "./challenges";
 import { resolveRegistrationMode } from "./registration-mode";
 import {
+  countTotalAccounts,
   deleteAccountById,
   findCredentialByCredentialId,
   findInviteByTokenHash,
@@ -30,6 +31,7 @@ import {
   isInviteUsable,
   listCredentialsForAccount,
   runNewAccountRegistrationBatch,
+  runOpenAccountRegistrationBatch,
   updateCredentialAfterLogin,
 } from "./repository";
 import type { Account } from "./sessions";
@@ -73,6 +75,29 @@ export function resolveWebauthnOrigin(env: Pick<Env, "WEBAUTHN_ORIGIN">): string
 }
 
 /**
+ * Reads REGISTRATION_IP_PEPPER or throws REGISTRATION_VERIFICATION_UNAVAILABLE
+ * (503, fail-closed) — resolved only once the caller has already confirmed
+ * mode === "open" (i.e. only from the open-account branches below), so an
+ * invite-only deployment that never sets this secret is unaffected
+ * (登録モード仕様 Phase2 §6 risk 3).
+ */
+export function resolveRegistrationIpPepper(env: Pick<Env, "REGISTRATION_IP_PEPPER">): string {
+  if (env.REGISTRATION_IP_PEPPER === undefined || env.REGISTRATION_IP_PEPPER.length === 0) {
+    throw Errors.serviceUnavailable(
+      "REGISTRATION_VERIFICATION_UNAVAILABLE",
+      "open registration is not configured",
+    );
+  }
+  return env.REGISTRATION_IP_PEPPER;
+}
+
+/** ip_hash placeholder for the rare case (local dev, or an edge that stripped CF-Connecting-IP) where there is no client IP to hash — never reachable from the real Cloudflare edge in production. Every such request shares one bucket for the per-IP daily count, matching how purposeRateLimitKey/rateLimitKey already treat a missing IP as "skip/shared", not as an error. */
+const UNKNOWN_CLIENT_IP_HASH = "unknown";
+
+/** registration_events retention (matches src/db/cleanup.ts's daily sweep target — Phase2 §4b). */
+const REGISTRATION_EVENT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
  * Extracts the base64url `challenge` embedded in a WebAuthn ceremony's
  * clientDataJSON (itself base64url-encoded) — pure decode + JSON parse, no
  * @simplewebauthn call involved, so it's directly unit-testable (see
@@ -108,13 +133,23 @@ export function extractClientDataChallenge(clientDataJSONB64Url: string): string
 /** Carried from registration/options to registration/verify via the challenge's metadata_json (never trusted from the client again at verify time). */
 export type RegistrationChallengeMetadata =
   | { kind: "new-account"; inviteId: string; pendingAccountId: string; displayName: string }
-  | { kind: "add-credential"; accountId: string };
+  | { kind: "add-credential"; accountId: string }
+  | { kind: "open-account"; pendingAccountId: string; displayName: string; termsVersion: string };
 
 export interface StartRegistrationParams {
   /** Set when the caller already has a valid session — registers an additional passkey on that account, no invite needed (plan §16 "アカウントへ複数パスキーを登録可能にする"). */
   existingAccount?: Account;
   /** Set for a brand-new account: an unconsumed, unexpired registration invite plus the display name to create the account with. */
   invite?: { inviteToken: string; displayName: string };
+  /**
+   * Set for a brand-new account created via open (invite-less) registration
+   * (登録モード仕様 Phase2 §5.1) — only honored when REGISTRATION_MODE is
+   * "open" and no invite was supplied; ignored otherwise (the caller,
+   * src/auth/routes.ts, has already run the total-account-cap/rate-limit/
+   * Turnstile/terms checks by the time this is set). termsVersion is the
+   * already-validated value to record into account_terms_acceptances.
+   */
+  open?: { displayName: string; termsVersion: string };
 }
 
 const REGISTRATION_TIMEOUT_MS = 60_000;
@@ -150,6 +185,15 @@ export async function startRegistration(
 
   let userId: string;
   let userDisplayName: string;
+  /**
+   * WebAuthn "userName" (登録モード仕様 Phase2 §7): invite/add-credential
+   * keep passing the display name itself, byte-for-byte unchanged from
+   * before Phase 2 (the invite-registration WebAuthn UI's account-picker
+   * label must not regress). Open registration explicitly allows duplicate
+   * display names, so it passes the opaque pendingAccountId instead —
+   * see the open branch below.
+   */
+  let userName: string;
   let metadata: RegistrationChallengeMetadata;
   let excludeCredentials: { id: string; transports?: AuthenticatorTransportFuture[] }[] = [];
 
@@ -157,6 +201,7 @@ export async function startRegistration(
     const account = params.existingAccount;
     userId = account.id;
     userDisplayName = account.displayName;
+    userName = account.displayName;
     metadata = { kind: "add-credential", accountId: account.id };
     const existingCredentials = await listCredentialsForAccount(env.APP_DB, account.id);
     // Passkey-count quota (登録モード仕様 Phase1 §5.3), checked here — before
@@ -173,24 +218,49 @@ export async function startRegistration(
     if (mode === "closed") {
       throw Errors.forbidden("REGISTRATION_CLOSED", "new account registration is closed");
     }
-    // Phase 2: open モードで招待なし登録を許可する（mode === "open" は Phase 1
-    // では未実装 — 安全側として従来どおり招待必須のまま扱う）。
-    if (params.invite === undefined) {
-      throw Errors.badRequest("INVITE_REQUIRED", "inviteToken is required to create an account");
+    if (params.invite === undefined && mode === "open" && params.open !== undefined) {
+      // Phase 2: open (invite-less) registration. The caller
+      // (src/auth/routes.ts) has already run the total-account-cap,
+      // open.start rate limit, daily/IP registration count, Turnstile, and
+      // terms-version checks — this branch is WebAuthn-ceremony concerns
+      // only (登録モード仕様 Phase2 §5.1). Duplicate display names are
+      // explicitly allowed (§7), so userName is the opaque pendingAccountId
+      // rather than the display name — never leaking a
+      // possibly-duplicated, user-chosen string into the authenticator's
+      // own account-picker UI the way the invite path's userName does.
+      const displayName = sanitizeDisplayName(params.open.displayName);
+      if (displayName.length === 0) {
+        throw Errors.badRequest("INVALID_DISPLAY_NAME", "displayName is required");
+      }
+      const pendingAccountId = crypto.randomUUID();
+      userId = pendingAccountId;
+      userDisplayName = displayName;
+      userName = pendingAccountId;
+      metadata = {
+        kind: "open-account",
+        pendingAccountId,
+        displayName,
+        termsVersion: params.open.termsVersion,
+      };
+    } else {
+      if (params.invite === undefined) {
+        throw Errors.badRequest("INVITE_REQUIRED", "inviteToken is required to create an account");
+      }
+      const tokenHash = await sha256Hex(params.invite.inviteToken);
+      const invite = await findInviteByTokenHash(env.APP_DB, tokenHash);
+      if (invite === null || !isInviteUsable(invite, Date.now())) {
+        throw Errors.badRequest("INVALID_INVITE", "invite is invalid or expired");
+      }
+      const displayName = sanitizeDisplayName(params.invite.displayName);
+      if (displayName.length === 0) {
+        throw Errors.badRequest("INVALID_DISPLAY_NAME", "displayName is required");
+      }
+      const pendingAccountId = crypto.randomUUID();
+      userId = pendingAccountId;
+      userDisplayName = displayName;
+      userName = displayName;
+      metadata = { kind: "new-account", inviteId: invite.id, pendingAccountId, displayName };
     }
-    const tokenHash = await sha256Hex(params.invite.inviteToken);
-    const invite = await findInviteByTokenHash(env.APP_DB, tokenHash);
-    if (invite === null || !isInviteUsable(invite, Date.now())) {
-      throw Errors.badRequest("INVALID_INVITE", "invite is invalid or expired");
-    }
-    const displayName = sanitizeDisplayName(params.invite.displayName);
-    if (displayName.length === 0) {
-      throw Errors.badRequest("INVALID_DISPLAY_NAME", "displayName is required");
-    }
-    const pendingAccountId = crypto.randomUUID();
-    userId = pendingAccountId;
-    userDisplayName = displayName;
-    metadata = { kind: "new-account", inviteId: invite.id, pendingAccountId, displayName };
   }
 
   const issued = await issueChallenge(env, "registration", null, metadata);
@@ -198,7 +268,7 @@ export async function startRegistration(
   return generateRegistrationOptions({
     rpName: RP_NAME,
     rpID: rpId,
-    userName: userDisplayName,
+    userName,
     userDisplayName,
     // .slice() forces an ArrayBuffer-backed Uint8Array (matching
     // @simplewebauthn's Uint8Array_ = ReturnType<Uint8Array['slice']>) —
@@ -222,6 +292,8 @@ export interface FinishRegistrationResult {
   account: Account;
   /** Only set for a brand-new account; adding a passkey to an already-logged-in account keeps that session as-is. */
   session: { token: string; expiresAt: string; maxAgeSeconds: number } | null;
+  /** True only for the open (invite-less) registration path — src/auth/routes.ts uses this to decide whether to tally the open-registration success rate limits (登録モード仕様 Phase2 §8's "全体50/日"/"3/日/IP" budgets). */
+  isOpenRegistration: boolean;
 }
 
 /** Throws a single, undifferentiated error for every registration-verification failure mode so a client can't distinguish "bad signature" from "challenge expired" from "invite race lost". */
@@ -229,11 +301,29 @@ function registrationFailed(): never {
   throw Errors.badRequest("REGISTRATION_FAILED", "passkey registration could not be verified");
 }
 
-/** POST /api/auth/registration/verify (plan §9.1). */
+/**
+ * POST /api/auth/registration/verify (plan §9.1). `clientIp` is the raw
+ * CF-Connecting-IP header value (or null) — always passed by the caller
+ * (src/auth/routes.ts) regardless of registration kind; it is only ever
+ * used (hashed, via hashClientIp) inside the open-account branch, after
+ * metadata.kind has already confirmed this is an open registration, so
+ * REGISTRATION_IP_PEPPER is never resolved on the invite/add-credential
+ * path (登録モード仕様 Phase2 §6 risk 3).
+ */
 export async function finishRegistration(
-  env: Pick<Env, "APP_DB" | "WEBAUTHN_RP_ID" | "WEBAUTHN_ORIGIN" | "SESSION_PEPPER" | "SESSION_TTL_DAYS">,
+  env: Pick<
+    Env,
+    | "APP_DB"
+    | "WEBAUTHN_RP_ID"
+    | "WEBAUTHN_ORIGIN"
+    | "SESSION_PEPPER"
+    | "SESSION_TTL_DAYS"
+    | "MAX_TOTAL_ACCOUNTS"
+    | "REGISTRATION_IP_PEPPER"
+  >,
   response: RegistrationResponseJSON,
   userAgent: string | null,
+  clientIp: string | null,
 ): Promise<FinishRegistrationResult> {
   const rpId = resolveWebauthnRpId(env);
   const origin = resolveWebauthnOrigin(env);
@@ -307,7 +397,56 @@ export async function finishRegistration(
     }
     const account: Account = { id: accountId, displayName };
     const session = await createSession(env, accountId, userAgent);
-    return { account, session };
+    return { account, session, isOpenRegistration: false };
+  }
+
+  if (metadata.kind === "open-account") {
+    const accountId = metadata.pendingAccountId;
+    const displayName = metadata.displayName;
+
+    // Total-account-cap re-check (登録モード仕様 Phase2 §4a: both
+    // registration/options and registration/verify must enforce
+    // MAX_TOTAL_ACCOUNTS) — closes the race where two concurrent open
+    // registrations both passed the options-time check in
+    // src/auth/routes.ts and would otherwise both still complete here.
+    const totalAccounts = await countTotalAccounts(env.APP_DB);
+    if (totalAccounts >= resolveMaxTotalAccounts(env)) {
+      throw Errors.serviceUnavailable("REGISTRATION_CAPACITY_REACHED", "registration is temporarily full");
+    }
+
+    // REGISTRATION_IP_PEPPER is resolved here — only after metadata.kind has
+    // already confirmed this is the open-account branch — never on the
+    // invite/add-credential paths above (登録モード仕様 Phase2 §6 risk 3).
+    const ipHash = await hashClientIp(clientIp, resolveRegistrationIpPepper(env));
+    const registrationEventId = crypto.randomUUID();
+    const registrationEventExpiresAt = new Date(
+      Date.now() + REGISTRATION_EVENT_RETENTION_MS,
+    ).toISOString();
+
+    try {
+      await runOpenAccountRegistrationBatch(env.APP_DB, {
+        account: { id: accountId, displayName, createdAt: nowIso },
+        credential: { ...newCredential, accountId },
+        termsAcceptance: {
+          id: crypto.randomUUID(),
+          termsVersion: metadata.termsVersion,
+          acceptedAt: nowIso,
+        },
+        registrationEvent: {
+          id: registrationEventId,
+          ipHash: ipHash ?? UNKNOWN_CLIENT_IP_HASH,
+          createdAt: nowIso,
+          expiresAt: registrationEventExpiresAt,
+        },
+      });
+    } catch (error) {
+      console.error("credential insert failed", error);
+      throw Errors.conflict("CREDENTIAL_ALREADY_REGISTERED", "this passkey is already registered");
+    }
+
+    const account: Account = { id: accountId, displayName };
+    const session = await createSession(env, accountId, userAgent);
+    return { account, session, isOpenRegistration: true };
   }
 
   const accountId = metadata.accountId;
@@ -322,7 +461,11 @@ export async function finishRegistration(
     throw Errors.conflict("CREDENTIAL_ALREADY_REGISTERED", "this passkey is already registered");
   }
 
-  return { account: { id: accountId, displayName: existing.displayName }, session: null };
+  return {
+    account: { id: accountId, displayName: existing.displayName },
+    session: null,
+    isOpenRegistration: false,
+  };
 }
 
 const AUTHENTICATION_TIMEOUT_MS = 60_000;

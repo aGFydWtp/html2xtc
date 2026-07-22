@@ -12,16 +12,29 @@ import {
   resolveMaxDevicesPerAccount,
   resolveMaxLibraryBytesPerAccount,
   resolveMaxLibraryItemsPerAccount,
+  resolveMaxNewAccountsPerDay,
+  resolveMaxNewAccountsPerIpPerDay,
   resolveMaxPasskeysPerAccount,
+  resolveMaxTotalAccounts,
+  resolveTermsVersion,
 } from "../quotas";
 import { enforcePurposeRateLimit } from "../ratelimiter";
 import type { Router } from "../router";
 import { logAuditEvent } from "../security/audit";
+import { hashClientIp } from "../security/crypto";
 import { ApiError, Errors } from "../security/errors";
 import type { Env } from "../types";
 import { deleteAccountCompletely } from "./account-deletion";
 import { verifyCsrf } from "./csrf";
-import { credentialExistsForAccount, deleteCredentialById, listCredentialsForAccount } from "./repository";
+import { resolveRegistrationMode } from "./registration-mode";
+import {
+  countAccountsCreatedSince,
+  countSucceededRegistrationEventsForIpSince,
+  countTotalAccounts,
+  credentialExistsForAccount,
+  deleteCredentialById,
+  listCredentialsForAccount,
+} from "./repository";
 import {
   buildExpiredSessionCookie,
   buildSessionCookie,
@@ -34,7 +47,14 @@ import {
   revokeSessionByToken,
 } from "./sessions";
 import type { Account } from "./sessions";
-import { finishLogin, finishRegistration, startLogin, startRegistration } from "./webauthn";
+import { requireTurnstileVerification } from "./turnstile";
+import {
+  finishLogin,
+  finishRegistration,
+  resolveRegistrationIpPepper,
+  startLogin,
+  startRegistration,
+} from "./webauthn";
 import type { FinishLoginResult } from "./webauthn";
 
 /**
@@ -111,6 +131,18 @@ const INVITE_CHECK_FAILED_LIMIT = 20;
 const ACCOUNT_DELETION_LIMIT = 5;
 const ACCOUNT_DELETION_WINDOW_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * 登録モード仕様 Phase2 §8's open-registration purpose table. These are
+ * brand-new purpose constants, entirely separate from
+ * REGISTRATION_START_LIMIT etc. above — the existing invite-path purpose
+ * values are never touched (Phase2's "本番動作を変えない" constraint).
+ */
+const OPEN_REGISTRATION_START_LIMIT = 5;
+const OPEN_REGISTRATION_SUCCEEDED_LIMIT = 50;
+const OPEN_REGISTRATION_SUCCEEDED_PER_IP_LIMIT = 3;
+const TURNSTILE_FAILED_LIMIT = 20;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 export function registerAuthRoutes(router: Router): void {
   router.post("/api/auth/registration/options", async (request, env) => {
     // Passkey registration start: 10/h/IP, fail-closed (plan §13).
@@ -123,13 +155,96 @@ export function registerAuthRoutes(router: Router): void {
       return limited;
     }
     const body = await readJsonBody(request);
-    const { inviteToken, displayName } = body;
+    const { inviteToken, displayName, turnstileToken, acceptedTermsVersion } = body;
 
     // A caller with a live session adds a passkey to their own account and
     // needs no invite; otherwise inviteToken+displayName create a new one.
     const existingAccount = await requireSession(request, env);
     if (existingAccount !== null) {
       const options = await startRegistration(env, { existingAccount });
+      return Response.json({ options });
+    }
+
+    // 登録モード仕様 Phase2 §3a/§5.1: open (invite-less) registration path.
+    // Only taken when mode === "open" AND no inviteToken was supplied (a
+    // caller holding a real invite still uses it, even in open mode).
+    // Processing order per §3a: ①mode確認(済, above)→②総登録上限→
+    // ③open.startレート制限→④日次/IP登録数→⑤Turnstile検証→
+    // ⑥表示名+規約バージョン検証→⑦startRegistration。Every secret
+    // resolution (Turnstile, REGISTRATION_IP_PEPPER) happens strictly
+    // inside this block, i.e. only after mode === "open" is confirmed
+    // (Phase2 §6 risk 3) — the invite path below is completely unaffected
+    // by, and unreachable through, any of this.
+    const mode = resolveRegistrationMode(env);
+    if (mode === "open" && (typeof inviteToken !== "string" || inviteToken.length === 0)) {
+      const totalAccounts = await countTotalAccounts(env.APP_DB);
+      if (totalAccounts >= resolveMaxTotalAccounts(env)) {
+        throw Errors.serviceUnavailable("REGISTRATION_CAPACITY_REACHED", "registration is temporarily full");
+      }
+
+      const openStartLimited = await enforcePurposeRateLimit(request, env, {
+        purpose: "auth.registration.open.start",
+        limit: OPEN_REGISTRATION_START_LIMIT,
+        failClosed: true,
+      });
+      if (openStartLimited !== null) {
+        return openStartLimited;
+      }
+
+      const dailyCutoff = new Date(Date.now() - DAY_MS).toISOString();
+      const accountsToday = await countAccountsCreatedSince(env.APP_DB, dailyCutoff);
+      if (accountsToday >= resolveMaxNewAccountsPerDay(env)) {
+        throw Errors.serviceUnavailable("REGISTRATION_CAPACITY_REACHED", "daily registration limit reached");
+      }
+
+      const clientIp = request.headers.get("CF-Connecting-IP");
+      const ipHash = await hashClientIp(clientIp, resolveRegistrationIpPepper(env));
+      if (ipHash !== null) {
+        const accountsFromIpToday = await countSucceededRegistrationEventsForIpSince(
+          env.APP_DB,
+          ipHash,
+          dailyCutoff,
+        );
+        if (accountsFromIpToday >= resolveMaxNewAccountsPerIpPerDay(env)) {
+          throw Errors.serviceUnavailable(
+            "REGISTRATION_CAPACITY_REACHED",
+            "daily registration limit reached for this network",
+          );
+        }
+      }
+
+      if (typeof turnstileToken !== "string" || turnstileToken.length === 0) {
+        throw Errors.badRequest("TURNSTILE_TOKEN_REQUIRED", "turnstileToken is required");
+      }
+      try {
+        await requireTurnstileVerification(env, turnstileToken, clientIp);
+      } catch (error) {
+        if (error instanceof ApiError && error.code === "INVALID_TURNSTILE_TOKEN") {
+          const turnstileLimited = await enforcePurposeRateLimit(request, env, {
+            purpose: "auth.registration.turnstile_failed",
+            limit: TURNSTILE_FAILED_LIMIT,
+            failClosed: true,
+          });
+          if (turnstileLimited !== null) {
+            return turnstileLimited;
+          }
+        }
+        throw error;
+      }
+
+      if (typeof displayName !== "string" || displayName.length === 0) {
+        throw Errors.badRequest("INVALID_DISPLAY_NAME", "displayName is required");
+      }
+      const termsVersion = resolveTermsVersion(env);
+      if (termsVersion === null || acceptedTermsVersion !== termsVersion) {
+        throw Errors.badRequest(
+          "TERMS_VERSION_MISMATCH",
+          "acceptedTermsVersion does not match the current terms version",
+        );
+      }
+
+      const options = await startRegistration(env, { open: { displayName, termsVersion } });
+      logAuditEvent("auth.registration.started");
       return Response.json({ options });
     }
 
@@ -178,9 +293,10 @@ export function registerAuthRoutes(router: Router): void {
       throw Errors.badRequest("INVALID_RESPONSE", "response is required");
     }
     const userAgent = request.headers.get("User-Agent");
+    const clientIp = request.headers.get("CF-Connecting-IP");
     let result: Awaited<ReturnType<typeof finishRegistration>>;
     try {
-      result = await finishRegistration(env, response as RegistrationResponseJSON, userAgent);
+      result = await finishRegistration(env, response as RegistrationResponseJSON, userAgent, clientIp);
     } catch (error) {
       // 登録検証失敗: 10/h/IP, fail-closed (登録モード仕様 Phase1 §5.7/§8b) —
       // same counted-on-failure-only shape as login/verify below.
@@ -199,6 +315,31 @@ export function registerAuthRoutes(router: Router): void {
       logAuditEvent("auth.registration.completed", { accountId: result.account.id });
     }
     logAuditEvent("passkey.added", { accountId: result.account.id });
+
+    // 登録モード仕様 Phase2 §8: tally a successful OPEN registration against
+    // the global 50/日 and per-IP 3/日 budgets. Best-effort and after the
+    // fact — it never rolls back the account this same request just
+    // created; the actual gate against these caps is the D1-based
+    // daily/IP check in the options handler above plus the
+    // total-account-cap re-check inside finishRegistration itself. See
+    // PHASE2_GAP_ANALYSIS.md §5.1's own note that this ordering is an
+    // implementation-time judgment call.
+    if (result.isOpenRegistration) {
+      await enforcePurposeRateLimit(request, env, {
+        purpose: "auth.registration.open.succeeded",
+        limit: OPEN_REGISTRATION_SUCCEEDED_LIMIT,
+        windowMs: DAY_MS,
+        failClosed: true,
+        scope: "global",
+      });
+      await enforcePurposeRateLimit(request, env, {
+        purpose: "auth.registration.open.succeeded_per_ip",
+        limit: OPEN_REGISTRATION_SUCCEEDED_PER_IP_LIMIT,
+        windowMs: DAY_MS,
+        failClosed: true,
+      });
+    }
+
     const headers = new Headers();
     if (result.session !== null) {
       headers.set("Set-Cookie", buildSessionCookie(result.session.token, result.session.maxAgeSeconds));

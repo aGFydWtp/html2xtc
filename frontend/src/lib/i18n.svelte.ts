@@ -95,10 +95,8 @@ export interface Messages {
   // --- TXTアップロード入力（実装仕様書 §6, §10, §19） -----------------------------
   text_remove_file: string;
   text_meta_line: (size: string, chars: number, lines: number) => string;
-  text_preview_note: string;
   text_tab_body: string;
   text_tab_x3: string;
-  text_show_more: string;
   text_encoding_label: string;
   text_encoding_option_auto: string;
   text_encoding_option_utf8: string;
@@ -155,6 +153,7 @@ export interface Messages {
   // --- X3実機(XTC)プレビュー（POST /preview/text、実装仕様書 §18） -----------------
   text_x3_preview_button: string;
   text_x3_preview_generating: string;
+  text_x3_page_indicator: (n: number, total: number) => string;
   text_x3_preview_note: string;
   text_x3_preview_rate_limited: string;
   text_x3_preview_timeout: string;
@@ -338,10 +337,8 @@ export const I18N: Record<Lang, Messages> = {
 
     text_remove_file: "ファイルを解除",
     text_meta_line: (size, chars, lines) => `${size} ・ ${chars.toLocaleString("ja-JP")}字 ・ ${lines.toLocaleString("ja-JP")}行`,
-    text_preview_note: "プレビューは変換結果の目安です。フォント描画や改ページ位置が実際のXTCとわずかに異なる場合があります。",
     text_tab_body: "本文",
     text_tab_x3: "X3プレビュー",
-    text_show_more: "続きを表示",
     text_encoding_label: "文字コード",
     text_encoding_option_auto: "自動判定",
     text_encoding_option_utf8: "UTF-8",
@@ -351,7 +348,7 @@ export const I18N: Record<Lang, Messages> = {
     text_preset_standard: "標準",
     text_preset_vertical_novel: "小説・縦書き",
     text_preset_large_font: "大きな文字",
-    text_options_heading: "組版設定",
+    text_options_heading: "詳細設定",
     text_options_summary: (layoutLabel, fontSizePx) => `${layoutLabel} ・ ${fontSizePx}px`,
     text_layout_label: "書字方向",
     text_layout_horizontal: "横書き",
@@ -397,6 +394,7 @@ export const I18N: Record<Lang, Messages> = {
 
     text_x3_preview_button: "X3実機プレビューを生成",
     text_x3_preview_generating: "実機プレビューを生成しています…",
+    text_x3_page_indicator: (n, total) => `${n} / ${total}`,
     text_x3_preview_note: "本文先頭部分のみを変換しています。",
     text_x3_preview_rate_limited: "リクエストが多すぎます。しばらくしてから再試行してください。",
     text_x3_preview_timeout: "実機プレビューの生成がタイムアウトしました。",
@@ -577,10 +575,8 @@ export const I18N: Record<Lang, Messages> = {
 
     text_remove_file: "Remove file",
     text_meta_line: (size, chars, lines) => `${size} · ${chars.toLocaleString("en-US")} chars · ${lines.toLocaleString("en-US")} lines`,
-    text_preview_note: "The preview is only an approximation of the conversion result. Font rendering and page break positions may differ slightly from the actual XTC file.",
     text_tab_body: "Text",
     text_tab_x3: "X3 preview",
-    text_show_more: "Show more",
     text_encoding_label: "Encoding",
     text_encoding_option_auto: "Auto-detect",
     text_encoding_option_utf8: "UTF-8",
@@ -590,7 +586,7 @@ export const I18N: Record<Lang, Messages> = {
     text_preset_standard: "Standard",
     text_preset_vertical_novel: "Novel (vertical)",
     text_preset_large_font: "Large text",
-    text_options_heading: "Layout settings",
+    text_options_heading: "Advanced settings",
     text_options_summary: (layoutLabel, fontSizePx) => `${layoutLabel} · ${fontSizePx}px`,
     text_layout_label: "Writing direction",
     text_layout_horizontal: "Horizontal",
@@ -636,6 +632,7 @@ export const I18N: Record<Lang, Messages> = {
 
     text_x3_preview_button: "Generate X3 device preview",
     text_x3_preview_generating: "Generating the device preview…",
+    text_x3_page_indicator: (n, total) => `${n} / ${total}`,
     text_x3_preview_note: "Only the beginning of the text is converted for this preview.",
     text_x3_preview_rate_limited: "Too many requests. Please try again later.",
     text_x3_preview_timeout: "Generating the device preview timed out.",

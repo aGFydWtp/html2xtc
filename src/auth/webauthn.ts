@@ -20,7 +20,7 @@ import { base64UrlDecode, hashClientIp, sha256Hex } from "../security/crypto";
 import { Errors } from "../security/errors";
 import type { Env } from "../types";
 import { consumeChallenge, issueChallenge } from "./challenges";
-import { resolveRegistrationMode } from "./registration-mode";
+import { resolveRegistrationClosedReason, resolveRegistrationMode } from "./registration-mode";
 import {
   countTotalAccounts,
   deleteAccountById,
@@ -93,6 +93,20 @@ export function resolveRegistrationIpPepper(env: Pick<Env, "REGISTRATION_IP_PEPP
 
 /** ip_hash placeholder for the rare case (local dev, or an edge that stripped CF-Connecting-IP) where there is no client IP to hash — never reachable from the real Cloudflare edge in production. Every such request shares one bucket for the per-IP daily count, matching how purposeRateLimitKey/rateLimitKey already treat a missing IP as "skip/shared", not as an error. */
 const UNKNOWN_CLIENT_IP_HASH = "unknown";
+
+/**
+ * 登録モード仕様 Phase3 §9: closed による新規登録拒否1件ごとに一度だけ呼ぶ。
+ * fields は mode/reason のみ — トークン・Cookie・IPは絶対に含めない
+ * (src/security/audit.ts の ForbiddenAuditKey が主要な秘密キー名を型で
+ * ブロックするが、この呼び出し自体もそれらを一切渡さない設計にしてある)。
+ * reason はコード値そのもの（security/abuseも含む）を記録してよい —
+ * これは内部監査ログであり、GET /api/public/config の出し分け
+ * (src/public-config.ts) とは別の経路。
+ */
+function auditRegistrationClosedRejection(env: Pick<Env, "REGISTRATION_CLOSED_REASON">): void {
+  const reason = resolveRegistrationClosedReason(env);
+  logAuditEvent("auth.registration.blocked", { mode: "closed", reason: reason ?? "unset" });
+}
 
 /** registration_events retention (matches src/db/cleanup.ts's daily sweep target — Phase2 §4b). */
 const REGISTRATION_EVENT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
@@ -178,7 +192,10 @@ function toExcludeCredentials(
  * invite-less registration is Phase 2's responsibility.
  */
 export async function startRegistration(
-  env: Pick<Env, "APP_DB" | "WEBAUTHN_RP_ID" | "REGISTRATION_MODE" | "MAX_PASSKEYS_PER_ACCOUNT">,
+  env: Pick<
+    Env,
+    "APP_DB" | "WEBAUTHN_RP_ID" | "REGISTRATION_MODE" | "REGISTRATION_CLOSED_REASON" | "MAX_PASSKEYS_PER_ACCOUNT"
+  >,
   params: StartRegistrationParams,
 ): Promise<PublicKeyCredentialCreationOptionsJSON> {
   const rpId = resolveWebauthnRpId(env);
@@ -216,6 +233,7 @@ export async function startRegistration(
   } else {
     const mode = resolveRegistrationMode(env);
     if (mode === "closed") {
+      auditRegistrationClosedRejection(env);
       throw Errors.forbidden("REGISTRATION_CLOSED", "new account registration is closed");
     }
     if (params.invite === undefined && mode === "open" && params.open !== undefined) {
@@ -320,6 +338,8 @@ export async function finishRegistration(
     | "SESSION_TTL_DAYS"
     | "MAX_TOTAL_ACCOUNTS"
     | "REGISTRATION_IP_PEPPER"
+    | "REGISTRATION_MODE"
+    | "REGISTRATION_CLOSED_REASON"
   >,
   response: RegistrationResponseJSON,
   userAgent: string | null,
@@ -334,6 +354,19 @@ export async function finishRegistration(
     registrationFailed();
   }
   const metadata = consumed.metadata;
+
+  // 登録モード仕様 Phase3 §3: closed への切替後でも、challengeが未消費なら
+  // まだ再利用可能になってしまう — 必ず上の consumeChallenge の「後」に置く
+  // (PHASE3_GAP_ANALYSIS.md §6 risk 1)。add-credential (既存アカウントへの
+  // 追加パスキー)はこの判定に一切含めない — 既存アカウントの認証手段追加は
+  // closed でも常に許可する。
+  if (
+    (metadata.kind === "new-account" || metadata.kind === "open-account") &&
+    resolveRegistrationMode(env) === "closed"
+  ) {
+    auditRegistrationClosedRejection(env);
+    throw Errors.forbidden("REGISTRATION_CLOSED", "new account registration is closed");
+  }
 
   let verification: Awaited<ReturnType<typeof verifyRegistrationResponse>>;
   try {

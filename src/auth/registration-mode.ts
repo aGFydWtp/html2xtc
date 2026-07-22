@@ -24,3 +24,46 @@ export function resolveRegistrationMode(env: Pick<Env, "REGISTRATION_MODE">): Re
   const value = env.REGISTRATION_MODE;
   return value === "invite" || value === "open" || value === "closed" ? value : DEFAULT_REGISTRATION_MODE;
 }
+
+/**
+ * 登録モード仕様 Phase 3 §4: mode==="closed" のとき、なぜ閉じているかの理由。
+ * 公開可(maintenance/capacity/manual) と非公開(security/abuse) の2群に分かれる
+ * — 非公開理由はコード値自体をクライアントに一切露出してはならない
+ * (GET /api/public/config 側の出し分けは src/public-config.ts が担う。
+ * このモジュールは「値の解決」と「公開可否の判定」のみを持つ)。
+ */
+export type RegistrationClosedReason = "maintenance" | "capacity" | "manual" | "security" | "abuse";
+
+const REGISTRATION_CLOSED_REASONS: ReadonlySet<string> = new Set([
+  "maintenance",
+  "capacity",
+  "manual",
+  "security",
+  "abuse",
+]);
+
+/** Reasons safe to expose (code + message) to an unauthenticated client. */
+const PUBLIC_REGISTRATION_CLOSED_REASONS: ReadonlySet<RegistrationClosedReason> = new Set([
+  "maintenance",
+  "capacity",
+  "manual",
+]);
+
+/**
+ * Resolves REGISTRATION_CLOSED_REASON. Unset or any value outside the known
+ * 5 is treated as "no reason" (null) — same safe-fallback shape as
+ * resolveRegistrationMode above. A null result is never itself a leak: the
+ * caller (src/public-config.ts) falls back to a generic "paused" message
+ * whether the reason is null, unset, or a recognized-but-non-public value.
+ */
+export function resolveRegistrationClosedReason(
+  env: Pick<Env, "REGISTRATION_CLOSED_REASON">,
+): RegistrationClosedReason | null {
+  const value = env.REGISTRATION_CLOSED_REASON;
+  return value !== undefined && REGISTRATION_CLOSED_REASONS.has(value) ? (value as RegistrationClosedReason) : null;
+}
+
+/** True for maintenance/capacity/manual — the reasons GET /api/public/config may name directly. */
+export function isPublicRegistrationClosedReason(reason: RegistrationClosedReason): boolean {
+  return PUBLIC_REGISTRATION_CLOSED_REASONS.has(reason);
+}

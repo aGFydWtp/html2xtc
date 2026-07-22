@@ -265,4 +265,39 @@ export interface Env {
    * Worker side only.
    */
   INTERNAL_STATUS_SECRET?: string;
+
+  // --- 登録モード仕様 Phase 3 (closed 運用の仕上げ) ---
+  /**
+   * REGISTRATION_MODE==="closed" のとき、なぜ閉じているかの理由コード:
+   * "maintenance"|"capacity"|"manual" (公開可、GET /api/public/config が
+   * 理由と説明文言を返す) | "security"|"abuse" (非公開、値自体を露出せず
+   * 汎用文言のみ返す) — resolveRegistrationClosedReason
+   * (src/auth/registration-mode.ts) が解決する。未設定・不明値は「理由なし」
+   * (null) にフォールバックし、mode!=="closed" の間はこのフィールドの値に
+   * 関わらず public/config の応答へ一切影響しない。
+   */
+  REGISTRATION_CLOSED_REASON?: string;
+  /**
+   * ライブラリ書き込み可否: "read-write"(既定) | "read-only" — 未設定/不正値
+   * は "read-write" にフォールバックする(resolveLibraryWriteMode,
+   * src/feature-flags.ts)。"read-only" のときは新規ライブラリ保存
+   * (POST /api/library/items/from-job) のみ止め、閲覧・削除・ダウンロード
+   * は継続する。
+   */
+  LIBRARY_WRITE_MODE?: string;
+  /**
+   * 端末ペアリング開始可否: "enabled"(既定) | "disabled" — 未設定/不正値は
+   * "enabled" にフォールバックする(resolvePairingMode, src/feature-flags.ts)。
+   * "disabled" のときは新規ペアリング開始(POST /api/device-pairings)のみ
+   * 止め、既存端末の利用・OPDS・解除・進行中ペアリングの完了/承認/拒否は
+   * 継続する。
+   */
+  PAIRING_MODE?: string;
+  /**
+   * 変換可否: "enabled"(既定) | "disabled" — 未設定/不正値は "enabled" に
+   * フォールバックする(resolveConversionMode, src/feature-flags.ts)。
+   * "disabled" のときは新規変換の開始(/convert, /jobs, /jobs/pdf,
+   * /jobs/text)のみ止め、ジョブ状態参照・ダウンロードは継続する。
+   */
+  CONVERSION_MODE?: string;
 }

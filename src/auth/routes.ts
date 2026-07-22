@@ -298,6 +298,15 @@ export function registerAuthRoutes(router: Router): void {
     try {
       result = await finishRegistration(env, response as RegistrationResponseJSON, userAgent, clientIp);
     } catch (error) {
+      // 登録モード仕様 Phase3 §5.3: closed 拒否は招待の当てずっぽうや壊れた
+      // WebAuthn応答とは性質が異なる（正規のoptionsを取得済みの相手が土壇場で
+      // closedに遭遇しただけ）ので、auth.registration.verify_failed の
+      // レート制限バジェットは消費させない。監査(auth.registration.blocked)は
+      // finishRegistration 内で既に記録済みなので、ここでの
+      // auth.registration.failed も重ねて出さずそのまま再スローする。
+      if (error instanceof ApiError && error.code === "REGISTRATION_CLOSED") {
+        throw error;
+      }
       // 登録検証失敗: 10/h/IP, fail-closed (登録モード仕様 Phase1 §5.7/§8b) —
       // same counted-on-failure-only shape as login/verify below.
       logAuditEvent("auth.registration.failed");

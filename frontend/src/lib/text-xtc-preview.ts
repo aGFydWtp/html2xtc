@@ -68,6 +68,45 @@ export function resolveTextPreviewErrorMessageKey(code: TextPreviewErrorCode): T
   }
 }
 
+// --- X3プレビュー結果のメモリキャッシュ（同じ入力での再生成クリックをAPI再取得
+// せず即時表示するため）。実装は pdf-preview.ts の LimitedPageCache と同じLRUだが、
+// キーがページ番号(number)ではなく「送信テキスト+options」の文字列なので汎用化した。
+export const TEXT_X3_PREVIEW_CACHE_LIMIT = 8;
+
+// 汎用クラスなので text 固有の既定値は持たせず、呼び出し側に上限を明示させる。
+export class LimitedCache<K, V> {
+  private map = new Map<K, V>();
+  constructor(private limit: number) {}
+
+  get(key: K): V | undefined {
+    return this.map.get(key);
+  }
+
+  set(key: K, value: V): void {
+    this.map.delete(key); // LRU: 既存キーは末尾へ移動
+    this.map.set(key, value);
+    while (this.map.size > this.limit) {
+      const oldest = this.map.keys().next().value;
+      if (oldest === undefined) break;
+      this.map.delete(oldest);
+    }
+  }
+}
+
+/**
+ * X3プレビューのキャッシュキーを生成する。実際にサーバーへ送信されるテキスト
+ * （selectTextPreviewで切り詰め後）と options のJSON表現を連結する — 見た目に
+ * 影響するフィールドは options の全フィールドなので、options全体をそのまま使う。
+ * options はフィールドの追加・削除がない限り常に同じキー順でシリアライズされる
+ * （applyTextPreset/setTextLayoutは既存options を spread するのみで新規キーを
+ * 追加しないため）。
+ */
+export function buildTextXtcPreviewCacheKey(fullText: string, options: TextConvertOptions): string {
+  // セパレータにNUL文字(\u0000)を使い、本文とoptionsのJSON文字列が偶然結合して
+  // 衝突することを避ける（NULは通常テキスト本文に現れない）。
+  return `${selectTextPreview(fullText)}\u0000${JSON.stringify(options)}`;
+}
+
 async function parsePreviewError(response: Response): Promise<TextPreviewRequestError> {
   let code: TextPreviewErrorCode = "UNKNOWN";
   let message = `preview request failed with status ${response.status}`;

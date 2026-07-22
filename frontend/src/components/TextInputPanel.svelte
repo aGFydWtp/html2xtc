@@ -13,8 +13,11 @@
     type TextPresetId,
   } from "../lib/text-options";
   import {
+    buildTextXtcPreviewCacheKey,
+    LimitedCache,
     requestTextXtcPreview,
     resolveTextPreviewErrorMessageKey,
+    TEXT_X3_PREVIEW_CACHE_LIMIT,
     TextPreviewRequestError,
   } from "../lib/text-xtc-preview";
   import { decodeFrame, parseXtc, type ParsedXtc } from "../lib/xtc";
@@ -76,6 +79,12 @@
   let x3Parsed = $state<ParsedXtc | null>(null);
   let x3CurrentPage = $state(0);
   let x3CanvasEl = $state<HTMLCanvasElement | null>(null);
+
+  // 同一入力（送信本文+options）でのX3プレビュー再生成をAPI再取得なしで即座に
+  // 表示するためのメモリキャッシュ。素の Map（$state不要）— UI描画には関与せず、
+  // generateX3Preview() 内でのみ読み書きする内部最適化。1ファイル=1インスタンス
+  // のコンポーネントなのでファイル識別子は不要。
+  const x3PreviewCache = new LimitedCache<string, ParsedXtc>(TEXT_X3_PREVIEW_CACHE_LIMIT);
 
   // XTCの現在ページを canvas へデコード描画する（PreviewDialog.svelte の
   // decodeFrame → putImageData パターンを流用）。.pv-page の CSS が
@@ -223,6 +232,20 @@
   // 「中止して再生成」になる（専用の中止ボタンは設けない、仕様書のUIモック通り）。
   async function generateX3Preview(): Promise<void> {
     x3PreviewController?.abort();
+    // キャッシュヒット時はfetchを発行せず即座に表示する。既存の in-flight
+    // リクエストは上のabort()で中断済みなので、世代カウンタだけ進めて
+    // （古い世代のfinally/catchが後から状態を書き換えないようにして）終える。
+    const cacheKey = buildTextXtcPreviewCacheKey(normalizedText, options);
+    const cached = x3PreviewCache.get(cacheKey);
+    if (cached) {
+      x3PreviewGeneration++;
+      x3PreviewController = null;
+      x3PreviewGenerating = false;
+      x3PreviewErrorText = null;
+      x3Parsed = cached;
+      x3CurrentPage = 0;
+      return;
+    }
     const generation = ++x3PreviewGeneration;
     const controller = new AbortController();
     x3PreviewController = controller;
@@ -231,7 +254,9 @@
     try {
       const bytes = await requestTextXtcPreview(normalizedText, options, controller.signal);
       if (generation !== x3PreviewGeneration) return; // 古い世代の結果は破棄
-      x3Parsed = parseXtc(bytes);
+      const parsed = parseXtc(bytes);
+      x3PreviewCache.set(cacheKey, parsed);
+      x3Parsed = parsed;
       x3CurrentPage = 0;
     } catch (e) {
       if (generation !== x3PreviewGeneration) return;

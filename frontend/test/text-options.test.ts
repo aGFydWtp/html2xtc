@@ -136,7 +136,7 @@ describe("TEXT_PRESETS / applyTextPreset (§6.5)", () => {
   });
 
   it("vertical_novel preset matches spec", () => {
-    expect(TEXT_PRESETS.vertical_novel).toEqual({ layout: "vertical", font: "BIZ UDMincho", fontSizePx: 18, lineHeight: 1.9 });
+    expect(TEXT_PRESETS.vertical_novel).toEqual({ layout: "vertical", font: "BIZ UDPMincho", fontSizePx: 18, lineHeight: 1.9 });
   });
 
   it("large_font preset matches spec", () => {
@@ -182,7 +182,7 @@ describe("isUntouchedFromDefault / setTextLayout (§6.3)", () => {
     const result = setTextLayout(touched, "vertical");
     expect(result.layout).toBe("vertical");
     expect(result.fontSizePx).toBe(22); // untouched: user's explicit choice preserved
-    expect(result.font).toBe(DEFAULT_TEXT_OPTIONS.font); // not overridden to BIZ UDMincho
+    expect(result.font).toBe(DEFAULT_TEXT_OPTIONS.font); // not overridden to BIZ UDPMincho
   });
 
   it("switching back to horizontal does not reapply any override", () => {

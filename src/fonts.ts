@@ -34,7 +34,7 @@
 /**
  * Default body family (the pre-options behavior). The request's `font`
  * option may name any Google Fonts family; resolveRenderOptions
- * (src/sitepresets.ts) falls back to this — or to BIZ UDMincho for Aozora
+ * (src/sitepresets.ts) falls back to this — or to BIZ UDPMincho for Aozora
  * Bunko URLs — when the option is absent or fails sanitization.
  */
 export const DEFAULT_FONT_FAMILY = "BIZ UDPGothic";
@@ -47,7 +47,7 @@ export const DEFAULT_FONT_FAMILY = "BIZ UDPGothic";
  * regular (400) only, which every family has; bold text falls back to
  * synthetic bold. Both defaults ship exactly 400/700 on Google Fonts.
  */
-const DUAL_WEIGHT_FAMILIES = new Set(["BIZ UDPGothic", "BIZ UDMincho"]);
+const DUAL_WEIGHT_FAMILIES = new Set(["BIZ UDPGothic", "BIZ UDPMincho"]);
 
 /**
  * css2 stylesheet URL for `family`; spaces become + per the css2 URL

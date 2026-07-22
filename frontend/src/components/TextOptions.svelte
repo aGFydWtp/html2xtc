@@ -2,14 +2,31 @@
 <script lang="ts">
   import { t } from "../lib/i18n.svelte";
   import type { EncodingDetectionResult } from "../lib/text-decode";
-  import { FONT_CANDIDATES, setTextLayout, type TextConvertOptions } from "../lib/text-options";
+  import {
+    FONT_CANDIDATES,
+    isJoinHardWrappedLinesEditable,
+    setTextLayout,
+    type TextConvertOptions,
+    type TextInputFormat,
+  } from "../lib/text-options";
   import FontSelect from "./FontSelect.svelte";
 
   let {
     options = $bindable(),
     detectionResult,
     hasEncodingError = false,
-  }: { options: TextConvertOptions; detectionResult: EncodingDetectionResult | null; hasEncodingError?: boolean } = $props();
+    onInputFormatChange,
+  }: {
+    options: TextConvertOptions;
+    detectionResult: EncodingDetectionResult | null;
+    hasEncodingError?: boolean;
+    /** 入力形式の変更は「ユーザーが手動変更した」印を親（TextInputPanel）に
+     * 残す必要があるため、options.inputFormat への直接代入ではなくコールバック
+     * 経由にする（仕様 §15.2「ユーザーが一度手動変更した後は再判定で上書きしない」）。 */
+    onInputFormatChange: (next: TextInputFormat) => void;
+  } = $props();
+
+  const joinLinesEditable = $derived(isJoinHardWrappedLinesEditable(options.inputFormat));
 
   let advancedOpen = $state(false);
 
@@ -51,6 +68,17 @@
     </button>
     {#if advancedOpen}
       <div class="acc-body">
+        <div class="field">
+          <div class="opt-label">{t("text_input_format_label")}</div>
+          <div class="seg">
+            <button type="button" aria-pressed={options.inputFormat === "plain"} onclick={() => onInputFormatChange("plain")}>{t("text_input_format_plain")}</button>
+            <button type="button" aria-pressed={options.inputFormat === "aozora"} onclick={() => onInputFormatChange("aozora")}>{t("text_input_format_aozora")}</button>
+          </div>
+          <p class="field-note">
+            {options.inputFormat === "aozora" ? t("text_input_format_aozora_hint") : t("text_input_format_plain_hint")}
+          </p>
+        </div>
+
         <div class="field-row">
           <div class="field">
             <div class="opt-label">{t("text_layout_label")}</div>
@@ -166,10 +194,10 @@
         <div class="field">
           <div class="opt-label">{t("text_join_lines_label")}</div>
           <div class="seg">
-            <button type="button" aria-pressed={options.joinHardWrappedLines} onclick={() => (options.joinHardWrappedLines = true)}>{t("text_join_lines_on")}</button>
-            <button type="button" aria-pressed={!options.joinHardWrappedLines} onclick={() => (options.joinHardWrappedLines = false)}>{t("text_join_lines_off")}</button>
+            <button type="button" disabled={!joinLinesEditable} aria-pressed={options.joinHardWrappedLines} onclick={() => (options.joinHardWrappedLines = true)}>{t("text_join_lines_on")}</button>
+            <button type="button" disabled={!joinLinesEditable} aria-pressed={!options.joinHardWrappedLines} onclick={() => (options.joinHardWrappedLines = false)}>{t("text_join_lines_off")}</button>
           </div>
-          <p class="field-note">{t("text_join_lines_note")}</p>
+          <p class="field-note">{joinLinesEditable ? t("text_join_lines_note") : t("text_join_lines_aozora_note")}</p>
         </div>
 
         <div class="bib-heading">{t("text_bibliographic_heading")}</div>
@@ -207,6 +235,8 @@
   }
   .seg button:last-child { border-right: 0; }
   .seg button[aria-pressed="true"] { background: var(--ink); color: var(--ink-text); font-weight: 700; }
+  .seg button:disabled { cursor: default; opacity: .5; }
+  .seg button:disabled[aria-pressed="true"] { background: var(--disabled); }
 
   select {
     padding: 8px 10px; font: inherit; font-size: 14px; border: 1px solid var(--line); border-radius: 4px;

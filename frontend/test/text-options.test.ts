@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vitest";
 import {
+  AOZORA_PRESET_OVERRIDES,
+  applyAozoraPresetIfUntouched,
   applyTextPreset,
   DEFAULT_TEXT_OPTIONS,
   encodeTextOptionsHeader,
+  isJoinHardWrappedLinesEditable,
+  isUntouchedForAozoraPreset,
   isUntouchedFromDefault,
   isValidFontFamily,
   isValidTextOptions,
@@ -21,6 +25,7 @@ function cloneDefaults(): TextConvertOptions {
 describe("DEFAULT_TEXT_OPTIONS", () => {
   it("matches the spec's default values (§6.2)", () => {
     expect(DEFAULT_TEXT_OPTIONS).toEqual({
+      inputFormat: "plain",
       encoding: "auto",
       layout: "horizontal",
       font: "BIZ UDPGothic",
@@ -190,6 +195,58 @@ describe("isUntouchedFromDefault / setTextLayout (§6.3)", () => {
     const back = setTextLayout(vertical, "horizontal");
     expect(back.layout).toBe("horizontal");
     expect(back.font).toBe(VERTICAL_DEFAULT_OVERRIDES.font); // stays as-is; no reset defined by spec
+  });
+});
+
+describe("isUntouchedForAozoraPreset / applyAozoraPresetIfUntouched (§15.3)", () => {
+  it("matches the spec's aozora preset overrides", () => {
+    expect(AOZORA_PRESET_OVERRIDES).toEqual({
+      layout: "vertical",
+      font: "BIZ UDMincho",
+      fontSizePx: 18,
+      lineHeight: 1.9,
+      joinHardWrappedLines: false,
+    });
+  });
+
+  it("is true for a freshly cloned default (layout/font/fontSizePx/lineHeight/joinHardWrappedLines all default)", () => {
+    expect(isUntouchedForAozoraPreset(cloneDefaults())).toBe(true);
+  });
+
+  it("applies the aozora preset when every relevant field is still at its default", () => {
+    const applied = applyAozoraPresetIfUntouched(cloneDefaults());
+    expect(applied.layout).toBe("vertical");
+    expect(applied.font).toBe("BIZ UDMincho");
+    expect(applied.fontSizePx).toBe(18);
+    expect(applied.lineHeight).toBe(1.9);
+    expect(applied.joinHardWrappedLines).toBe(false);
+  });
+
+  it("does NOT apply the preset once the user has changed any of the five fields", () => {
+    const touchedFontSize = applyAozoraPresetIfUntouched({ ...cloneDefaults(), fontSizePx: 22 });
+    expect(touchedFontSize.fontSizePx).toBe(22);
+    expect(touchedFontSize.layout).toBe("horizontal"); // no override applied at all, not just fontSizePx spared
+
+    const touchedLayout = applyAozoraPresetIfUntouched({ ...cloneDefaults(), layout: "vertical" });
+    expect(touchedLayout.font).toBe(DEFAULT_TEXT_OPTIONS.font); // still BIZ UDPGothic, not overridden
+
+    const touchedJoin = applyAozoraPresetIfUntouched({ ...cloneDefaults(), joinHardWrappedLines: false });
+    expect(touchedJoin.layout).toBe("horizontal");
+  });
+
+  it("preserves unrelated fields (title/author/margins) untouched", () => {
+    const opts = { ...cloneDefaults(), title: "My Book", author: "Someone" };
+    const applied = applyAozoraPresetIfUntouched(opts);
+    expect(applied.title).toBe("My Book");
+    expect(applied.author).toBe("Someone");
+    expect(applied.margins).toEqual(DEFAULT_TEXT_OPTIONS.margins);
+  });
+});
+
+describe("isJoinHardWrappedLinesEditable (§15.6)", () => {
+  it("is false for aozora, true for plain", () => {
+    expect(isJoinHardWrappedLinesEditable("aozora")).toBe(false);
+    expect(isJoinHardWrappedLinesEditable("plain")).toBe(true);
   });
 });
 

@@ -23,18 +23,18 @@ import {
 import { storeXtcOutput } from "./pipeline";
 import { isAozoraBunkoUrl, resolveRenderOptions } from "./sitepresets";
 import { decodeTextFile } from "./text-decode";
-import { buildTextArticleHtml, resolveDocumentTitle } from "./text-html";
 import {
   MAX_GENERATED_HTML_BYTES,
   MAX_TEXT_FILE_BYTES,
   TextTooLongError,
-  normalizeText,
   validateTextLimits,
 } from "./text-normalize";
+import { prepareTextDocument } from "./text-prepare";
 import { DEFAULT_TEXT_OPTIONS } from "./text-options";
 import type { TextConvertOptions } from "./text-options";
 import { textPrepareErrorMessage } from "./text-upload";
 import type { ConvertJobParams, ConvertSource, Env, PdfConvertOptions } from "./types";
+import { AozoraAstLimitExceededError } from "../packages/aozora-text/src/index";
 
 // xtctool may run up to 600s (XTC_TIMEOUT_SECONDS in container.ts); allow a
 // 30s margin for transfer and container startup. Must stay below the step
@@ -479,9 +479,16 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
     let articleKey: string | null = null;
     let fontsKey: string | null = null;
     let pdfKey: string | null = null;
+    // Resolved by prepare-text (prepareTextDocument's extracted/aozora-header
+    // author, or the explicit textOptions.author when neither is present —
+    // see prepareTextDocument's resolveDisplayValue priority chain) and
+    // forwarded to convert-xtc's convertInContainer call so an aozora
+    // document's header-extracted author reaches the XTC metadata, not just
+    // whatever textOptions.author the client happened to submit.
+    let resolvedAuthor: string | undefined;
 
     try {
-      ({ articleKey, fontsKey } = await step.do(
+      ({ articleKey, fontsKey, resolvedAuthor } = await step.do(
         "prepare-text",
         {
           // No retry budget beyond one extra attempt: every failure this step
@@ -523,26 +530,55 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
             throw new NonRetryableError(textPrepareErrorMessage(error));
           }
 
-          const normalized = normalizeText(decoded.text, {
-            maxConsecutiveBlankLines: textOptions.maxConsecutiveBlankLines,
-            preserveSpaces: textOptions.preserveSpaces,
-            joinHardWrappedLines: textOptions.joinHardWrappedLines,
-          });
-          // The removed characters themselves are never logged (spec §8.3/§17) —
-          // only the count.
-          if (normalized.controlCharsRemoved > 0) {
-            console.log(
-              `[${jobId}] text: stripped ${normalized.controlCharsRemoved} control character(s)`,
-            );
+          // Single shared preparation entrypoint (aozora-text-conversion spec
+          // §6.3/§13.1-§13.3): branches on textOptions.inputFormat internally
+          // and produces byte-identical `plain` output to the pre-existing
+          // normalizeText -> resolveDocumentTitle -> buildTextArticleHtml
+          // sequence this replaced (test/text-prepare.test.ts's parity pin).
+          // src/preview/text-preview.ts calls the exact same function so
+          // production and the X3 preview can never diverge in how a TXT
+          // body becomes reading HTML (spec §14.1).
+          let prepared;
+          try {
+            prepared = prepareTextDocument({
+              decodedText: decoded.text,
+              filename: source.filename,
+              options: textOptions,
+            });
+          } catch (error) {
+            if (error instanceof AozoraAstLimitExceededError) {
+              // Deterministic for this exact input (spec §17's "AST全体上限
+              // 超過は決定的エラー") — retrying would re-parse the same
+              // oversized document. The thrown error's own message already
+              // holds no document content (AozoraAstLimitExceededError's own
+              // doc comment), and textPrepareErrorMessage falls through to
+              // its generic message for an error type it doesn't
+              // specifically recognize, so nothing body-derived reaches the
+              // job's stored error string either.
+              throw new NonRetryableError(textPrepareErrorMessage(error));
+            }
+            // Every other error prepareTextDocument can throw (TextTooLongError
+            // etc., surfaced via normalizeText/normalizeForAozora) maps the
+            // same way it always has.
+            throw new NonRetryableError(textPrepareErrorMessage(error));
           }
 
-          const documentTitle = resolveDocumentTitle(textOptions.title, source.filename);
-          const html = buildTextArticleHtml({
-            normalizedText: normalized.text,
-            options: textOptions,
-            documentTitle,
-          });
-          const htmlBytes = new TextEncoder().encode(html);
+          // The removed characters themselves are never logged (spec §8.3/§17) —
+          // only the count. Same for every other prepare-text diagnostic below:
+          // counts only, never body/title/author/generated-HTML content.
+          if (prepared.controlCharsRemoved > 0) {
+            console.log(
+              `[${jobId}] text: stripped ${prepared.controlCharsRemoved} control character(s)`,
+            );
+          }
+          console.log(
+            `[${jobId}] text: inputFormat=${textOptions.inputFormat} chars=${prepared.characterCount} lines=${prepared.lineCount} ` +
+              `recognizedAnnotations=${prepared.diagnostics.recognizedAnnotations} ` +
+              `unsupportedAnnotations=${prepared.diagnostics.unsupportedAnnotations} ` +
+              `malformedAnnotations=${prepared.diagnostics.malformedAnnotations}`,
+          );
+
+          const htmlBytes = new TextEncoder().encode(prepared.html);
           if (htmlBytes.byteLength > MAX_GENERATED_HTML_BYTES) {
             // Deterministic for this input+options combination — retrying
             // would regenerate the same oversized HTML.
@@ -560,9 +596,11 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
           // font degrades to the article's own generic font-family fallback
           // (baked into buildTextPrintCss), never fails the job. The subset
           // covers every string that lands in the document — title, author,
-          // and body — so a title/author that uses characters absent from
-          // the body still gets a matching glyph.
-          const fontSubsetText = `${documentTitle}\n${textOptions.title}\n${textOptions.author}\n${normalized.text}`;
+          // and body (prepared.searchableText already folds in the aozora
+          // AST's rendered plain text, or the normalized plain-text body,
+          // per prepareTextDocument's branch) — so a title/author that uses
+          // characters absent from the body still gets a matching glyph.
+          const fontSubsetText = `${prepared.documentTitle}\n${textOptions.title}\n${textOptions.author}\n${prepared.searchableText}`;
           const fontCss = await buildInlineFontCss(fontSubsetText, jobId, fetch, textOptions.font);
           let storedFontsKey: string | null = null;
           if (fontCss !== null) {
@@ -584,8 +622,10 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
             articleKey: key,
             fontsKey: storedFontsKey,
             detectedEncoding: decoded.encoding,
-            characterCount: Array.from(normalized.text).length,
-            lineCount: normalized.text.split("\n").length,
+            resolvedAuthor: prepared.author,
+            characterCount: prepared.characterCount,
+            lineCount: prepared.lineCount,
+            diagnostics: prepared.diagnostics,
           };
         },
       ));
@@ -666,16 +706,21 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
             // Same trusted /convert endpoint + FixedLengthStream requirement
             // as the URL pipeline's convert-xtc step — this PDF was rendered
             // by this service's own Browser Run call above, not uploaded by
-            // the client. textOptions.author rides along as X-Xtc-Author
-            // (src/container.ts): the only /convert caller that ever has an
-            // author to set, since the title alone travels via the PDF's own
-            // metadata (document.title -> Chromium print -> read_pdf_metadata).
+            // the client. resolvedAuthor (prepare-text's prepared.author)
+            // rides along as X-Xtc-Author (src/container.ts): the only
+            // /convert caller that ever has an author to set, since the
+            // title alone travels via the PDF's own metadata
+            // (document.title -> Chromium print -> read_pdf_metadata).
+            // resolvedAuthor is prepareTextDocument's resolveDisplayValue
+            // priority chain (spec §8.2) — an aozora document's own
+            // extracted 著者 header when textOptions.author was left blank,
+            // not just whatever the client explicitly submitted.
             response = await convertInContainer(
               this.env,
               jobId,
               pdfSource.body.pipeThrough(new FixedLengthStream(pdfSource.size)),
               CONVERTER_FETCH_TIMEOUT_MS,
-              textOptions.author,
+              resolvedAuthor,
             );
           } catch (error) {
             if (error instanceof DOMException && error.name === "TimeoutError") {

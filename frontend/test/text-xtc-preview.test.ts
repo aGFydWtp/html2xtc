@@ -122,4 +122,13 @@ describe("buildTextXtcPreviewCacheKey", () => {
     const changed = cloneOptions({ margins: { ...DEFAULT_TEXT_OPTIONS.margins, top: DEFAULT_TEXT_OPTIONS.margins.top + 1 } });
     expect(buildTextXtcPreviewCacheKey("hello", changed)).not.toBe(base);
   });
+
+  // aozora-text-conversion 仕様書 §14.3: inputFormat が異なれば同じ本文でも
+  // 別キーになる（selectTextPreview の抽出結果自体が変わりうる上、options の
+  // JSON化にも inputFormat が含まれるため、二重に分離される）。
+  it("changes when inputFormat differs between plain and aozora for the same body text", () => {
+    const plainKey = buildTextXtcPreviewCacheKey("同じ本文です。", cloneOptions({ inputFormat: "plain" }));
+    const aozoraKey = buildTextXtcPreviewCacheKey("同じ本文です。", cloneOptions({ inputFormat: "aozora" }));
+    expect(plainKey).not.toBe(aozoraKey);
+  });
 });

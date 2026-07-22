@@ -8,12 +8,13 @@
  * /Users/haruki/Downloads/html2xtc-text-preview-endpoint-spec.md).
  *
  * The whole point of this endpoint is to reuse the production TXT pipeline
- * (src/text-normalize.ts's normalizeText, src/text-html.ts's
- * buildTextArticleHtml, src/fonts.ts's buildInlineFontCss,
- * src/pdf.ts's renderSelfStyledHtmlPdf, src/container.ts's
+ * (src/text-prepare.ts's prepareTextDocument — shared verbatim with
+ * src/workflow.ts's prepare-text step, spec §14.1 — src/fonts.ts's
+ * buildInlineFontCss, src/pdf.ts's renderSelfStyledHtmlPdf, src/container.ts's
  * convertInContainer) rather than reimplement a "preview" typesetting path —
  * so the first pages a user sees here should pixel-match what POST /jobs/text
- * would eventually produce for the same input+options (spec §19).
+ * would eventually produce for the same input+options (spec §19), for both
+ * `plain` and `aozora` inputFormat alike.
  *
  * Nothing here ever touches R2: the request body, generated HTML, font CSS,
  * PDF and XTC all stay in Worker/Container memory for the duration of one
@@ -26,11 +27,11 @@ import { resolveMaxPdfBytes } from "../jobs";
 import { renderSelfStyledHtmlPdf } from "../pdf";
 import { resolveTextPreviewRateLimitPerHour } from "../ratelimit";
 import { enforcePurposeRateLimit } from "../ratelimiter";
-import { buildTextArticleHtml, resolveDocumentTitle } from "../text-html";
-import { normalizeText } from "../text-normalize";
 import { validateTextConvertOptions } from "../text-options";
 import type { TextConvertOptions } from "../text-options";
+import { prepareTextDocument } from "../text-prepare";
 import type { Env } from "../types";
+import { AozoraAstLimitExceededError } from "../../packages/aozora-text/src/index";
 
 // --- Limits (spec §5.3/§6.2, §27's recommendation) -------------------------
 
@@ -487,32 +488,42 @@ export async function handleTextPreview(request: Request, env: Env): Promise<Res
     return jsonError(parsed.status, parsed.code, parsed.error);
   }
 
-  const normalized = normalizeText(parsed.text, {
-    maxConsecutiveBlankLines: parsed.options.maxConsecutiveBlankLines,
-    preserveSpaces: parsed.options.preserveSpaces,
-    joinHardWrappedLines: parsed.options.joinHardWrappedLines,
-  });
-  if (!/\S/.test(normalized.text)) {
-    return jsonError(422, "EMPTY_TEXT", "preview text is empty after normalization");
-  }
-
   const jobId = crypto.randomUUID();
 
-  // No filename for a preview (spec: the request carries text, not a file),
-  // so resolveDocumentTitle falls back to options.title or "Untitled" —
-  // same priority order production TXT jobs use (src/workflow.ts).
-  const documentTitle = resolveDocumentTitle(parsed.options.title, "");
-  const html = buildTextArticleHtml({
-    normalizedText: normalized.text,
-    options: parsed.options,
-    documentTitle,
-  });
+  // Same shared preparation entrypoint the production pipeline uses
+  // (src/workflow.ts's prepare-text step, spec §14.1's "production and
+  // preview must run the same preparation") — no filename for a preview
+  // (spec: the request carries text, not a file), so prepareTextDocument's
+  // title fallback lands on options.title or "Untitled", same priority order
+  // production TXT jobs use.
+  let prepared: ReturnType<typeof prepareTextDocument>;
+  try {
+    prepared = prepareTextDocument({ decodedText: parsed.text, filename: "", options: parsed.options });
+  } catch (error) {
+    if (error instanceof AozoraAstLimitExceededError) {
+      // Deterministic for this exact (already size-capped) preview body —
+      // fail-soft per spec §17/§4.3: a content-free, condition-specific
+      // error, never an uncaught 500 and never any document content in the
+      // response (AozoraAstLimitExceededError's own message holds none).
+      return jsonError(
+        413,
+        "TEXT_TOO_LONG",
+        "preview text exceeds the supported document complexity limit",
+      );
+    }
+    console.error(`[${jobId}] preview text: prepare failed`, error);
+    return jsonError(500, "INTERNAL_ERROR", "internal error");
+  }
+
+  if (!/\S/.test(prepared.searchableText)) {
+    return jsonError(422, "EMPTY_TEXT", "preview text is empty after normalization");
+  }
 
   // Same font-subset construction as the production pipeline
   // (src/workflow.ts's runTextSource): title + author + body, so a
   // title/author using characters absent from the body still gets a
   // matching inlined glyph (spec §12).
-  const fontSubsetText = `${documentTitle}\n${parsed.options.title}\n${parsed.options.author}\n${normalized.text}`;
+  const fontSubsetText = `${prepared.documentTitle}\n${parsed.options.title}\n${parsed.options.author}\n${prepared.searchableText}`;
   const fontCss = await buildInlineFontCss(fontSubsetText, jobId, fetch, parsed.options.font);
   const fontFallback = fontCss === null;
 
@@ -521,7 +532,7 @@ export async function handleTextPreview(request: Request, env: Env): Promise<Res
     result = await withOverallTimeout(
       convertHtmlToXtcSync(env, {
         jobId,
-        html,
+        html: prepared.html,
         fontCss,
         timeoutMs: TEXT_PREVIEW_CONTAINER_TIMEOUT_MS,
       }),
@@ -547,7 +558,7 @@ export async function handleTextPreview(request: Request, env: Env): Promise<Res
     "Cache-Control": "no-store, private",
     Pragma: "no-cache",
     "X-Content-Type-Options": "nosniff",
-    "X-Preview-Character-Count": String(Array.from(normalized.text).length),
+    "X-Preview-Character-Count": String(prepared.characterCount),
   };
   if (result.pageCount !== null) {
     headers["X-Xtc-Page-Count"] = String(result.pageCount);

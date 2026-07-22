@@ -2,9 +2,13 @@
 // Copyright (C) 2026 aGFydWtp
 
 import { describe, expect, it } from "vitest";
+import type { AozoraDocument } from "../packages/aozora-text/src/types";
 import { DEFAULT_TEXT_OPTIONS } from "../src/text-options";
 import {
+  buildAozoraContentHtml,
+  buildPlainTextContentHtml,
   buildTextArticleHtml,
+  buildTextDocumentShell,
   buildTextPrintCss,
   escapeHtml,
   resolveDocumentTitle,
@@ -230,5 +234,82 @@ describe("buildTextArticleHtml", () => {
     });
     expect(html).toContain('<html lang="ja">');
     expect(html).toContain('<meta charset="utf-8">');
+  });
+});
+
+describe("buildPlainTextContentHtml", () => {
+  it("returns escaped paragraph HTML for the normalized body", () => {
+    const html = buildPlainTextContentHtml("<script>alert(1)</script>\n\n二段落目");
+    expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(html).not.toContain("<script>");
+    expect(html).toBe(textToParagraphHtml("<script>alert(1)</script>\n\n二段落目"));
+  });
+});
+
+describe("buildAozoraContentHtml", () => {
+  it("renders only the body when there is no bibliography", () => {
+    const doc: AozoraDocument = {
+      blocks: [{ type: "paragraph", children: [{ type: "text", value: "本文です。" }] }],
+      bibliography: [],
+      diagnostics: [],
+    };
+    const html = buildAozoraContentHtml(doc);
+    expect(html).toBe("<p>本文です。</p>");
+    expect(html).not.toContain("bibliographical_information");
+  });
+
+  it("joins the body and the 底本 bibliography block when bibliography is present", () => {
+    const doc: AozoraDocument = {
+      blocks: [{ type: "paragraph", children: [{ type: "text", value: "本文です。" }] }],
+      bibliography: [{ type: "paragraph", children: [{ type: "text", value: "底本：なにか" }] }],
+      diagnostics: [],
+    };
+    const html = buildAozoraContentHtml(doc);
+    expect(html).toContain("<p>本文です。</p>");
+    expect(html).toContain('<div class="bibliographical_information">');
+    expect(html).toContain("<p>底本：なにか</p>");
+    // Body precedes the bibliography block.
+    expect(html.indexOf("本文です。")).toBeLessThan(html.indexOf("底本：なにか"));
+  });
+});
+
+describe("buildTextDocumentShell", () => {
+  it("includes the aozora CSS only when inputFormat is aozora", () => {
+    const contentHtml = buildPlainTextContentHtml("本文");
+    const aozoraHtml = buildTextDocumentShell({
+      contentHtml,
+      options: { ...DEFAULT_TEXT_OPTIONS, inputFormat: "aozora" },
+      documentTitle: "T",
+      displayTitle: "",
+      author: "",
+    });
+    expect(aozoraHtml).toContain(".aozora-page-break");
+    expect(aozoraHtml).toContain(".gaiji-fallback");
+
+    const plainHtml = buildTextDocumentShell({
+      contentHtml,
+      options: { ...DEFAULT_TEXT_OPTIONS, inputFormat: "plain" },
+      documentTitle: "T",
+      displayTitle: "",
+      author: "",
+    });
+    expect(plainHtml).not.toContain(".aozora-page-break");
+    expect(plainHtml).not.toContain(".gaiji-fallback");
+  });
+
+  it("embeds the content HTML verbatim inside the article", () => {
+    const contentHtml = buildAozoraContentHtml({
+      blocks: [{ type: "heading", level: 1, variant: "normal", children: [{ type: "text", value: "第一章" }] }],
+      bibliography: [],
+      diagnostics: [],
+    });
+    const html = buildTextDocumentShell({
+      contentHtml,
+      options: DEFAULT_TEXT_OPTIONS,
+      documentTitle: "T",
+      displayTitle: "",
+      author: "",
+    });
+    expect(html).toContain('<h2 class="aozora-heading aozora-heading-large">第一章</h2>');
   });
 });

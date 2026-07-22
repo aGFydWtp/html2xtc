@@ -239,6 +239,32 @@ export function joinWrappedLines(text: string): string {
     .join("");
 }
 
+export interface AozoraNormalizeResult {
+  text: string;
+  /** Count only (spec §8.3/§17): the removed characters themselves are never logged. */
+  controlCharsRemoved: number;
+}
+
+/**
+ * Pre-parse normalization for `inputFormat === "aozora"` (aozora-text-
+ * conversion spec §10.2): unifies line endings, strips control characters,
+ * and applies NFC — but deliberately does NOT collapse blank-line runs,
+ * trim trailing whitespace, or join hard-wrapped lines. Those three steps
+ * must never run on the raw string before the AST parser sees it (spec
+ * §10.2's explicit "解析前の生文字列へ適用してはならない" list): they would
+ * erase blank lines and whitespace that carry structural meaning (paragraph
+ * boundaries the parser still needs, or annotation-adjacent spacing) before
+ * the parser gets a chance to interpret them. Reuses this file's own
+ * line-ending/control-char helpers so the two normalization pipelines never
+ * drift on those two shared steps.
+ */
+export function normalizeForAozora(text: string): AozoraNormalizeResult {
+  const lfOnly = normalizeLineEndings(text);
+  const { text: stripped, removed } = stripControlChars(lfOnly);
+  const nfc = stripped.normalize("NFC");
+  return { text: nfc, controlCharsRemoved: removed };
+}
+
 export interface NormalizeOptions {
   maxConsecutiveBlankLines: number;
   preserveSpaces: boolean;

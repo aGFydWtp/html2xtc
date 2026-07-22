@@ -167,6 +167,27 @@ describe("validateTextConvertOptions", () => {
     ).toEqual({ ok: false, error: "invalid author" });
   });
 
+  it("defaults a missing inputFormat to plain (backward compatibility)", () => {
+    const { inputFormat: _omitted, ...withoutField } = DEFAULT_TEXT_OPTIONS;
+    const result = validateTextConvertOptions(withoutField);
+    expect(result).toEqual({ ok: true, options: DEFAULT_TEXT_OPTIONS });
+  });
+
+  it("accepts an explicit inputFormat of plain or aozora", () => {
+    expect(
+      validateTextConvertOptions({ ...DEFAULT_TEXT_OPTIONS, inputFormat: "plain" }),
+    ).toEqual({ ok: true, options: { ...DEFAULT_TEXT_OPTIONS, inputFormat: "plain" } });
+    expect(
+      validateTextConvertOptions({ ...DEFAULT_TEXT_OPTIONS, inputFormat: "aozora" }),
+    ).toEqual({ ok: true, options: { ...DEFAULT_TEXT_OPTIONS, inputFormat: "aozora" } });
+  });
+
+  it("rejects an invalid inputFormat", () => {
+    expect(
+      validateTextConvertOptions({ ...DEFAULT_TEXT_OPTIONS, inputFormat: "markdown" }),
+    ).toEqual({ ok: false, error: "invalid inputFormat" });
+  });
+
   it("ignores unknown extra properties", () => {
     expect(
       validateTextConvertOptions({ ...DEFAULT_TEXT_OPTIONS, extra: "ignored" }).ok,

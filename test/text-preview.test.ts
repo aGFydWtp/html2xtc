@@ -20,6 +20,18 @@ vi.mock("../src/container", () => ({
 vi.mock("../src/ratelimiter", () => ({
   enforcePurposeRateLimit: vi.fn(async () => null),
 }));
+// prepareTextDocument stays real by default (the whole point of this
+// integration test file is exercising the actual shared preparation code —
+// see the "returns 200" / aozora tests below) — only mocked for the single
+// AozoraAstLimitExceededError test, where constructing a real 1,000,000+
+// node document within the 4,000-code-point preview cap isn't practically
+// possible (spec §17's node limit is unreachable through this endpoint's own
+// size cap in ordinary operation), so that one failure path is exercised via
+// a mockImplementationOnce instead.
+vi.mock("../src/text-prepare", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/text-prepare")>();
+  return { ...actual, prepareTextDocument: vi.fn(actual.prepareTextDocument) };
+});
 
 import { convertInContainer } from "../src/container";
 import {
@@ -37,10 +49,13 @@ import {
 } from "../src/preview/text-preview";
 import { enforcePurposeRateLimit } from "../src/ratelimiter";
 import { DEFAULT_TEXT_OPTIONS } from "../src/text-options";
+import { prepareTextDocument } from "../src/text-prepare";
 import type { Env } from "../src/types";
+import { AozoraAstLimitExceededError } from "../packages/aozora-text/src/index";
 
 const mockedConvertInContainer = vi.mocked(convertInContainer);
 const mockedEnforcePurposeRateLimit = vi.mocked(enforcePurposeRateLimit);
+const mockedPrepareTextDocument = vi.mocked(prepareTextDocument);
 
 // --- test helpers ------------------------------------------------------------
 
@@ -101,6 +116,7 @@ afterEach(() => {
   mockedConvertInContainer.mockImplementation(async () => new Response(fakeXtcBytes(1), { status: 200 }));
   mockedEnforcePurposeRateLimit.mockReset();
   mockedEnforcePurposeRateLimit.mockImplementation(async () => null);
+  mockedPrepareTextDocument.mockClear();
 });
 
 // --- isJsonContentType --------------------------------------------------------
@@ -542,5 +558,43 @@ describe("handleTextPreview", () => {
       error: "XTC conversion failed",
       code: "XTC_CONVERSION_FAILED",
     });
+  });
+
+  // --- inputFormat: "aozora" (spec §14.1: same prepareTextDocument as production) ---
+
+  it("routes an aozora-format preview through the shared AST parser/renderer, not paragraph-HTML escaping", async () => {
+    stubFontFetchFailure();
+    let capturedHtml = "";
+    const env = fakeEnv({
+      quickAction: async (_action, options) => {
+        capturedHtml = (options as { html: string }).html;
+        return new Response("%PDF", { status: 200 });
+      },
+    });
+    const request = previewRequest({
+      text: "彼は倫敦《ロンドン》に住んでいた。",
+      options: validOptions({ inputFormat: "aozora" }),
+    });
+    const response = await handleTextPreview(request, env);
+    expect(response.status).toBe(200);
+    expect(capturedHtml).toContain("<ruby>");
+    expect(capturedHtml).toContain("<rt>ロンドン</rt>");
+  });
+
+  it("maps an AozoraAstLimitExceededError from prepareTextDocument to a content-free 413 TEXT_TOO_LONG", async () => {
+    mockedPrepareTextDocument.mockImplementationOnce(() => {
+      throw new AozoraAstLimitExceededError();
+    });
+    const request = previewRequest({
+      text: "本文",
+      options: validOptions({ inputFormat: "aozora" }),
+    });
+    const response = await handleTextPreview(request, fakeEnv());
+    expect(response.status).toBe(413);
+    const body = (await response.json()) as { error: string; code: string };
+    expect(body.code).toBe("TEXT_TOO_LONG");
+    expect(body.error).not.toContain("本文");
+    // Never reaches font/render/convert once prepareTextDocument has failed.
+    expect(mockedConvertInContainer).not.toHaveBeenCalled();
   });
 });

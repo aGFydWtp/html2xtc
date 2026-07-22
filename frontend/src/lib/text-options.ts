@@ -6,6 +6,10 @@ import { encodeBase64UrlUtf8 } from "./pdf-options";
 export type TextEncoding = "auto" | "utf-8" | "shift_jis";
 export type TextLayout = "horizontal" | "vertical";
 export type TextAlign = "start" | "justify";
+/** 入力形式（実装仕様書 §5.1）。"plain" が既定・省略時の値で、既存の挙動を
+ * バイト同一で維持する。"aozora" は共有パッケージ @html2xtc/aozora-text の
+ * AST パーサー/レンダラーを経由する。 */
+export type TextInputFormat = "plain" | "aozora";
 
 export interface TextMargins {
   top: number;
@@ -15,6 +19,8 @@ export interface TextMargins {
 }
 
 export interface TextConvertOptions {
+  inputFormat: TextInputFormat;
+
   encoding: TextEncoding;
   layout: TextLayout;
 
@@ -48,8 +54,9 @@ export interface TextConvertOptions {
   author: string;
 }
 
-// §6.2 既定値
+// §6.2 既定値（inputFormat は実装仕様書 §5.2）
 export const DEFAULT_TEXT_OPTIONS: TextConvertOptions = {
+  inputFormat: "plain",
   encoding: "auto",
   layout: "horizontal",
   font: "BIZ UDPGothic",
@@ -106,6 +113,49 @@ export function setTextLayout(options: TextConvertOptions, layout: TextLayout): 
     return { ...options, layout: "vertical", ...VERTICAL_DEFAULT_OVERRIDES };
   }
   return { ...options, layout };
+}
+
+// 青空文庫形式選択時の初期設定（aozora-text-conversion 仕様書 §15.3）。layout/font/
+// fontSizePx/lineHeight/joinHardWrappedLines のすべてが初期値のままの場合のみ適用する
+// （isUntouchedForAozoraPreset）。VERTICAL_DEFAULT_OVERRIDES と値は同じだが、
+// joinHardWrappedLines を明示的に false へ寄せる点が異なるため独立した定数にする。
+export const AOZORA_PRESET_OVERRIDES: Pick<
+  TextConvertOptions,
+  "layout" | "font" | "fontSizePx" | "lineHeight" | "joinHardWrappedLines"
+> = {
+  layout: "vertical",
+  font: "BIZ UDMincho",
+  fontSizePx: 18,
+  lineHeight: 1.9,
+  joinHardWrappedLines: false,
+};
+
+// isUntouchedFromDefault は layout を見ない（横書き→縦書き切替専用の判定のため）。
+// aozora プリセットは layout も含めた5項目すべてが初期値のままかどうかで判定する
+// （仕様 §15.3）。
+export function isUntouchedForAozoraPreset(options: TextConvertOptions): boolean {
+  return (
+    options.layout === DEFAULT_TEXT_OPTIONS.layout &&
+    options.font === DEFAULT_TEXT_OPTIONS.font &&
+    options.fontSizePx === DEFAULT_TEXT_OPTIONS.fontSizePx &&
+    options.lineHeight === DEFAULT_TEXT_OPTIONS.lineHeight &&
+    options.joinHardWrappedLines === DEFAULT_TEXT_OPTIONS.joinHardWrappedLines
+  );
+}
+
+// ユーザーが個別設定済み（isUntouchedForAozoraPreset が false）なら何もしない —
+// 呼び出し側は inputFormat を "aozora" にした直後、常にこれを通してよい。
+export function applyAozoraPresetIfUntouched(options: TextConvertOptions): TextConvertOptions {
+  if (!isUntouchedForAozoraPreset(options)) {
+    return options;
+  }
+  return { ...options, ...AOZORA_PRESET_OVERRIDES };
+}
+
+// aozora では joinHardWrappedLines は常に無視される（§10.3）。UIの活性・非活性判定に
+// 使う純粋関数（TextOptions.svelte から呼ぶ）。
+export function isJoinHardWrappedLinesEditable(inputFormat: TextInputFormat): boolean {
+  return inputFormat !== "aozora";
 }
 
 // §6.5 プリセット
@@ -170,6 +220,9 @@ function codePointLength(value: string): number {
 export function validateTextOptions(options: TextConvertOptions): TextOptionsValidationError[] {
   const errors: TextOptionsValidationError[] = [];
 
+  if (options.inputFormat !== "plain" && options.inputFormat !== "aozora") {
+    errors.push({ field: "inputFormat", message: 'inputFormat must be "plain" or "aozora"' });
+  }
   if (options.encoding !== "auto" && options.encoding !== "utf-8" && options.encoding !== "shift_jis") {
     errors.push({ field: "encoding", message: 'encoding must be "auto", "utf-8" or "shift_jis"' });
   }

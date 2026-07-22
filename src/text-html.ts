@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 aGFydWtp
 
+import type { AozoraDocument } from "../packages/aozora-text/src/types";
+import { renderBibliographyToHtml, renderDocumentToHtml } from "../packages/aozora-text/src/render-html";
+import { AOZORA_DOCUMENT_CSS } from "../packages/aozora-text/src/styles";
 import type { TextConvertOptions } from "./text-options";
 
 /**
@@ -159,36 +162,98 @@ ${contentRules}${justify}${preserveSpaces}`;
 const TEXT_ARTICLE_CSP =
   "default-src 'none'; style-src 'unsafe-inline'; font-src data:;";
 
-export interface BuildTextArticleHtmlInput {
-  /** Already decoded + normalized (src/text-normalize.ts) TXT body. */
-  normalizedText: string;
-  options: TextConvertOptions;
-  /** Resolved via resolveDocumentTitle — never options.title raw. */
-  documentTitle: string;
+// --- SafeGeneratedHtml -------------------------------------------------
+//
+// A branded marker (aozora-text-conversion spec §11.1) for "content HTML
+// that came out of one of THIS file's/this package's own generator
+// functions" — never a cast applied to arbitrary input. Only
+// buildPlainTextContentHtml and buildAozoraContentHtml may produce one;
+// brandSafeHtml stays unexported so no other code in this file (or anyone
+// importing it) can manufacture a SafeGeneratedHtml from an unvetted
+// string.
+
+declare const safeGeneratedHtmlBrand: unique symbol;
+
+export type SafeGeneratedHtml = string & {
+  readonly [safeGeneratedHtmlBrand]: true;
+};
+
+function brandSafeHtml(value: string): SafeGeneratedHtml {
+  return value as SafeGeneratedHtml;
 }
 
 /**
- * Builds the self-contained reading HTML document (spec §9.1) rendered by
+ * Wraps already-normalized plain TXT body text into content HTML (spec
+ * §11.1). Thin wrapper around textToParagraphHtml — kept separate so both
+ * the `plain` and `aozora` inputFormat branches (src/text-prepare.ts) share
+ * the same buildTextDocumentShell() call, differing only in how
+ * contentHtml is produced.
+ */
+export function buildPlainTextContentHtml(normalizedText: string): SafeGeneratedHtml {
+  return brandSafeHtml(textToParagraphHtml(normalizedText));
+}
+
+/**
+ * Renders an AozoraDocument (already parsed by
+ * @html2xtc/aozora-text's parseAozoraDocument) into content HTML via the
+ * package's allowlist renderer, including its 底本 bibliography (rendered
+ * on its own `.bibliographical_information` block, spec §8.4/§12.2) when
+ * present.
+ */
+export function buildAozoraContentHtml(document: AozoraDocument): SafeGeneratedHtml {
+  const body = renderDocumentToHtml(document);
+  const bibliography = renderBibliographyToHtml(document.bibliography);
+  return brandSafeHtml(bibliography.length > 0 ? `${body}\n${bibliography}` : body);
+}
+
+export interface BuildTextDocumentShellInput {
+  /** Only ever a SafeGeneratedHtml value from buildPlainTextContentHtml or
+   * buildAozoraContentHtml — never a raw/unescaped string. */
+  contentHtml: SafeGeneratedHtml;
+  options: TextConvertOptions;
+  /** Used for the <title> tag — always non-empty (resolveDocumentTitle's
+   * fallback chain guarantees this). */
+  documentTitle: string;
+  /** Used for the optional in-body <header class="book-header"> — shown
+   * only when non-empty (spec: distinct from documentTitle, which always
+   * falls back to the filename/"Untitled" and should never appear as a
+   * fabricated in-body heading). */
+  displayTitle: string;
+  author: string;
+}
+
+/**
+ * Builds the self-contained reading HTML document shell (spec §11.1)
+ * around already-generated content HTML, rendered by
  * renderSelfStyledHtmlPdf (src/pdf.ts). No external resource is ever
  * referenced — fonts ride in separately as inlined @font-face CSS
  * (src/fonts.ts's buildInlineFontCss, injected at render time), never a
  * <link>.
  */
-export function buildTextArticleHtml({
-  normalizedText,
+export function buildTextDocumentShell({
+  contentHtml,
   options,
   documentTitle,
-}: BuildTextArticleHtmlInput): string {
-  const title = options.title.trim();
-  const author = options.author.trim();
-  const showHeader = title.length > 0 || author.length > 0;
+  displayTitle,
+  author,
+}: BuildTextDocumentShellInput): string {
+  const title = displayTitle.trim();
+  const authorTrimmed = author.trim();
+  const showHeader = title.length > 0 || authorTrimmed.length > 0;
   const header = showHeader
     ? `    <header class="book-header">
-${title.length > 0 ? `      <h1>${escapeHtml(title)}</h1>\n` : ""}${author.length > 0 ? `      <p class="author">${escapeHtml(author)}</p>\n` : ""}    </header>
+${title.length > 0 ? `      <h1>${escapeHtml(title)}</h1>\n` : ""}${authorTrimmed.length > 0 ? `      <p class="author">${escapeHtml(authorTrimmed)}</p>\n` : ""}    </header>
 `
     : "";
-  const bodyHtml = textToParagraphHtml(normalizedText);
-  const css = buildTextPrintCss(options);
+  // AOZORA_DOCUMENT_CSS supplies the class rules buildAozoraContentHtml's
+  // markup depends on (ruby/emphasis/indent/page-break/etc., spec §12) — the
+  // `plain` branch's markup never uses any of these classes, so injecting it
+  // there would be dead weight, not a correctness risk, but is skipped
+  // anyway to keep `plain` output byte-identical to its pre-existing form
+  // (test/text-prepare.test.ts's parity pin).
+  const css =
+    buildTextPrintCss(options) +
+    (options.inputFormat === "aozora" ? `\n${AOZORA_DOCUMENT_CSS}` : "");
 
   return `<!doctype html>
 <html lang="ja">
@@ -203,10 +268,41 @@ ${css}
 <body>
   <main class="book">
 ${header}    <article class="content">
-${bodyHtml}
+${contentHtml}
     </article>
   </main>
 </body>
 </html>
 `;
+}
+
+export interface BuildTextArticleHtmlInput {
+  /** Already decoded + normalized (src/text-normalize.ts) TXT body. */
+  normalizedText: string;
+  options: TextConvertOptions;
+  /** Resolved via resolveDocumentTitle — never options.title raw. */
+  documentTitle: string;
+}
+
+/**
+ * Builds the self-contained reading HTML document for `plain` inputFormat
+ * (spec §9.1/§11.1). Kept as its own function — rather than inlining
+ * buildPlainTextContentHtml + buildTextDocumentShell at every call site —
+ * purely for backward compatibility with existing callers
+ * (src/workflow.ts, src/preview/text-preview.ts); its output is
+ * byte-identical to what those two calls produce together (see
+ * test/text-prepare.test.ts's parity assertion).
+ */
+export function buildTextArticleHtml({
+  normalizedText,
+  options,
+  documentTitle,
+}: BuildTextArticleHtmlInput): string {
+  return buildTextDocumentShell({
+    contentHtml: buildPlainTextContentHtml(normalizedText),
+    options,
+    documentTitle,
+    displayTitle: options.title,
+    author: options.author,
+  });
 }

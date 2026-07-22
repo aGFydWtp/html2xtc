@@ -135,7 +135,7 @@ X-Pdf-Options: <PdfConvertOptions の JSON を base64url エンコード>
 
 ### POST /jobs/text
 
-手元のプレーンテキスト（.txt）ファイルをアップロードし、読書向けに再組版してから非同期変換ジョブを作成する（`frontend/` の TXT アップロード UI から使用）。本文は常にプレーンテキストとして扱い、HTML/Markdown としては一切解釈しない（`<script>`・`#見出し`・`**強調**` 等はすべてそのまま文字として表示する）。
+手元のプレーンテキスト（.txt）ファイルをアップロードし、読書向けに再組版してから非同期変換ジョブを作成する（`frontend/` の TXT アップロード UI から使用）。`X-Text-Options` の `inputFormat`（後述）で「プレーンテキスト」「青空文庫形式」を選べる。`inputFormat: "plain"`（既定・省略時）では本文を常にプレーンテキストとして扱い、HTML/Markdown としては一切解釈しない（`<script>`・`#見出し`・`**強調**` 等はすべてそのまま文字として表示する）。`inputFormat: "aozora"` では共有パッケージ `packages/aozora-text/`（純粋 TypeScript・DOM 非依存。バックエンドは相対 import、フロントエンドは tsconfig paths + vite alias `@html2xtc/aozora-text` で同一ソースを参照し、パーサーを複製しない）の AST パーサー/レンダラーを経由して青空文庫の記法を解釈する。
 
 ```http
 POST /jobs/text
@@ -150,7 +150,7 @@ X-Text-Options: <TextConvertOptions の JSON を base64url エンコード>
 - `Content-Type`: `text/plain` または `application/octet-stream`（メディアタイプパラメータは無視）のみ許可。それ以外は 415。バイナリ判定・文字コード検証自体は Workflow 側（下記 `prepare-text` ステップ）で行う — Worker 受付時は本文を一切バッファしない（後述）ため、ここでは実施できない。
 - `Content-Length`: 必須（未指定は 411）。0 以下・非数値は 400。上限（5 MiB = 5,242,880 バイト固定）超過は 413。
 - `X-File-Name`（任意）: `POST /jobs/pdf` と同じ規則（制御文字・パス区切り除去、NFC 正規化、255 文字まで切り詰め、空なら `document.txt`、拡張子が無ければ `.txt` を付与）。デコード失敗時も 400 にはせず既定ファイル名へフォールバックする。表示・XTC タイトル候補にのみ使う。
-- `X-Text-Options`（任意）: `TextConvertOptions`（文字コード指定・横書き/縦書き・フォント・文字サイズ・行間・段落間隔・余白・文字揃え・空行上限・空白保持・ページ番号・表題・著者。既定値・各項目の制約は `src/text-options.ts` の `DEFAULT_TEXT_OPTIONS`/`validateTextConvertOptions` を参照）を JSON 化して base64url エンコードした値。省略時は既定値を使う。デコード失敗・JSON 不正・スキーマ違反（値の暗黙補正はしない）はいずれも 400。
+- `X-Text-Options`（任意）: `TextConvertOptions`（**入力形式**（`inputFormat`: `"plain"`（既定）または `"aozora"`。未指定は `"plain"` へフェイルソフト、それ以外の値は 400）・文字コード指定・横書き/縦書き・フォント・文字サイズ・行間・段落間隔・余白・文字揃え・空行上限・空白保持・`joinHardWrappedLines`（`inputFormat: "aozora"` では常に無視される — 注記や組版上の改行を保護するため。値自体は 400 にはならない）・ページ番号・表題・著者。既定値・各項目の制約は `src/text-options.ts` の `DEFAULT_TEXT_OPTIONS`/`validateTextConvertOptions` を参照）を JSON 化して base64url エンコードした値。省略時は既定値を使う。デコード失敗・JSON 不正・スキーマ違反（値の暗黙補正はしない）はいずれも 400。
 - リクエストボディは Worker 側で `ArrayBuffer` へ全量展開せず、ストリームのまま R2（`input/{jobId}/source.txt`）へ保存する。保存後に R2 オブジェクトサイズと申告 `Content-Length` を比較し、不一致なら入力を削除して 400（Workflow は開始しない）。
 
 成功時 202:
@@ -168,13 +168,17 @@ X-Text-Options: <TextConvertOptions の JSON を base64url エンコード>
 | 429 | IP ごとのレート制限超過（`POST /convert`・`POST /jobs`・`POST /jobs/pdf` と共通の窓。`Retry-After` ヘッダ付き） |
 | 500 | R2 保存失敗、または Workflow インスタンス作成失敗（いずれの場合も保存済み入力 TXT は best-effort で削除する） |
 
-裏側は `POST /jobs` と同じ Cloudflare Workflow（`ConvertWorkflow`）の TXT 用分岐（`source.kind === "text"`）。`prepare-text`（文字コード判定・デコード・バイナリ判定・文字数/行数/行長検証・正規化・読書用 HTML 生成・フォント CSS 生成）→ `render-text-pdf`（528×792 固定ページで PDF 生成。既存の URL/PDF 経路が使う `buildPrintRules` は注入しない — TXT の可変フォントサイズ・余白と衝突するため、HTML 自身の `<style>` とフォント CSS のみを使う専用レンダラーを使用）→ `convert-xtc`（既存の trusted `/convert` 経路をそのまま利用。表題は生成 HTML の `<title>` から Chromium の print-to-PDF メタデータ経由で既存どおり伝わるが、著者名だけは PDF メタデータに乗らないため `X-Xtc-Author` ヘッダで別途 Container へ伝える）の順に実行する。入力 TXT・中間 HTML・フォント CSS・中間 PDF はいずれも成功・失敗を問わず最後に best-effort で削除する（削除に失敗しても `input/`・`intermediate/` の R2 lifecycle により約 1 日で自動削除される）。
+裏側は `POST /jobs` と同じ Cloudflare Workflow（`ConvertWorkflow`）の TXT 用分岐（`source.kind === "text"`）。`prepare-text`（文字コード判定・デコード・バイナリ判定・文字数/行数/行長検証・`prepareTextDocument()`（`src/text-prepare.ts`）による正規化・読書用 HTML 生成・フォント CSS 生成）→ `render-text-pdf`（528×792 固定ページで PDF 生成。既存の URL/PDF 経路が使う `buildPrintRules` は注入しない — TXT の可変フォントサイズ・余白と衝突するため、HTML 自身の `<style>` とフォント CSS のみを使う専用レンダラーを使用）→ `convert-xtc`（既存の trusted `/convert` 経路をそのまま利用。表題は生成 HTML の `<title>` から Chromium の print-to-PDF メタデータ経由で既存どおり伝わるが、著者名だけは PDF メタデータに乗らないため `X-Xtc-Author` ヘッダで別途 Container へ伝える。`inputFormat: "aozora"` で標準ヘッダーから著者を抽出できた場合はそれが優先される）の順に実行する。入力 TXT・中間 HTML・フォント CSS・中間 PDF はいずれも成功・失敗を問わず最後に best-effort で削除する（削除に失敗しても `input/`・`intermediate/` の R2 lifecycle により約 1 日で自動削除される）。`/preview/text`（後述）も `prepareTextDocument()` を同じ設定で通すため、本番変換と実機プレビューの組版結果は常に一致する。
 
 **対応文字コード**: UTF-8・UTF-8 BOM・Shift_JIS/Windows-31J（内部的には CP932 としてデコード）。UTF-16・EUC-JP・ISO-2022-JP は非対応（UTF-16 BOM 検出時は明示的に拒否）。`encoding: "auto"` は UTF-8 の厳密デコードを先に試し、失敗した場合のみ CP932 へフォールバックする（`encoding-japanese` を固定バージョンで同梱。workerd の `TextDecoder("shift_jis")` には依存しない）。
 
-**上限**: ファイルサイズ 5 MiB・文字数 2,000,000・行数 200,000・1 行あたり 100,000 文字・生成 HTML 12 MiB。いずれかを超えると Workflow が `failed` になり、エラーメッセージから条件（文字コード不明・UTF-16・バイナリ・文字数超過・行数超過・空ファイル・変換後 PDF サイズ超過・変換失敗）を区別できる（`src/text-upload.ts` の `textPrepareErrorMessage`）。
+**上限**: ファイルサイズ 5 MiB・文字数 2,000,000・行数 200,000・1 行あたり 100,000 文字・生成 HTML 12 MiB。いずれかを超えると Workflow が `failed` になり、エラーメッセージから条件（文字コード不明・UTF-16・バイナリ・文字数超過・行数超過・空ファイル・変換後 PDF サイズ超過・変換失敗）を区別できる（`src/text-upload.ts` の `textPrepareErrorMessage`）。`inputFormat: "aozora"` はさらにパーサー内部の上限を持つ（注記1件 4,096 コードポイント・ルビ読み 256 コードポイント・範囲注記の入れ子 32・保持する診断 200 件・AST ノード数 1,000,000）。単体の上限超過は原文をそのまま表示するフェイルソフトになり、AST 全体の上限超過（`AozoraAstLimitExceededError`）のみ本文を含まない決定的なエラーで Workflow を失敗させる。
 
-**対応しないもの（MVP）**: Markdown/HTML の解釈・青空文庫注記・ルビ/傍点/脚注/目次・OCR・画像埋め込み・外部画像/外部 CSS/外部 JavaScript の参照・複数 TXT の結合・ページ単位の個別書式・変換開始後のジョブキャンセル。
+**`inputFormat: "aozora"` で対応する構文（MVP、`packages/aozora-text/`）**: 表題・著者の標準ヘッダー抽出／ルビ（`<ruby>` 生成、明示的・暗黙的な親文字指定）／改ページ・改丁・見開き・段組み変更／大・中・小見出し（ノーマル・インライン・窓）／傍点（ゴマ・白ゴマ・黒丸・白丸・黒三角・白三角・二重丸・蛇の目・×、計9種）／傍線・太字・斜体／字下げ・地付き・地からの字上げ／中央寄せ／縦中横／`U+...` 形式の Unicode 外字（実文字へ変換）／未対応の注記（本文を欠落させず注記文字のまま表示するフェイルソフト、警告件数のみ WebUI に表示）。
+
+**`inputFormat: "aozora"` で対応しないもの（MVP、仕様書 §16）**: 青空文庫注記仕様の完全準拠・旧形式や暫定形式との完全互換・挿絵/外字画像の取得・ZIP 内 TXT と画像の同時アップロード・外部画像 URL 参照・左ルビ・ルビの複雑な重なり・複雑な注記範囲の交差・割り注・罫囲みや複雑な表・訓点/返り点の厳密組版・改丁/改見開きの左右ページ厳密制御・目次ページの自動生成・注記からの任意 CSS/HTML 生成・青空文庫以外の独自拡張記法・Markdown との混在解釈・入力内容のサーバー保存期間の延長・パーサー診断内容の永続保存。`inputFormat: "plain"`（既定）は引き続き Markdown/HTML の解釈・青空文庫注記・ルビ/傍点/脚注/目次を一切行わない。
+
+**対応しないもの（MVP、共通）**: OCR・外部 CSS/外部 JavaScript の参照・複数 TXT の結合・ページ単位の個別書式・変換開始後のジョブキャンセル。
 
 ### POST /preview/text
 
@@ -190,7 +194,7 @@ Content-Type: application/json
 }
 ```
 
-- `text`: Unicodeコードポイント数で最大 4,000。フロントエンドは全文から先頭 2,500〜4,000 文字相当（段落末まで延長、最大 4,000 文字で打ち切り）をあらかじめ切り出して送るが（`frontend/src/lib/text-preview.ts` の `selectTextPreview`）、サーバー側でも同じ上限（コードポイント数 4,000、UTF-8バイト数 32 KiB）を再検証する。どちらか超過は 413。
+- `text`: Unicodeコードポイント数で最大 4,000。フロントエンドは全文から先頭 2,500〜4,000 文字相当（段落末まで延長、最大 4,000 文字で打ち切り）をあらかじめ切り出して送るが（`frontend/src/lib/text-preview.ts` の `selectTextPreview`。`options.inputFormat === "aozora"` のときは共有パッケージの `separateDocumentStructure`/`tokenizeAozoraChunk` を使い、標準ヘッダー分離と《…》／［＃…］の途中で切らない安全境界・未閉鎖の開始注記の手前への巻き戻しを行ってから切り出す）、サーバー側でも同じ上限（コードポイント数 4,000、UTF-8バイト数 32 KiB）を再検証する。どちらか超過は 413。
 - `options`: `POST /jobs/text` と同じ `TextConvertOptions`（`src/text-options.ts` の `validateTextConvertOptions` で検証）。`showPageNumbers` はプレビューでは常に `false` へ強制される（送信値に関わらず）。
 - リクエスト全体のサイズ上限は 64 KiB（超過は413。`Content-Length` 指定時はボディ読み込み前に、未指定時は読み込み中に判定）。
 - レート制限は `POST /convert`・`POST /jobs` 系とは別枠（IPごと 1 時間あたり 20 件、Worker の var `TEXT_PREVIEW_RATE_LIMIT_PER_HOUR` で変更可）。超過時は 429 + `Retry-After`。

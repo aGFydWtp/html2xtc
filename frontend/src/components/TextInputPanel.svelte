@@ -1,15 +1,30 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import { onDestroy, untrack } from "svelte";
+  import {
+    AOZORA_DOCUMENT_CSS,
+    AozoraAstLimitExceededError,
+    parseAozoraDocument,
+    renderDocumentToHtml,
+    separateDocumentStructure,
+  } from "@html2xtc/aozora-text";
   import { submitText, type TextUploadHandle } from "../lib/convert.svelte";
   import { t } from "../lib/i18n.svelte";
+  import {
+    computeInitialTextOptions,
+    resolveAutoFillAuthor,
+    resolveAutoFillTitle,
+    summarizeAozoraDiagnostics,
+  } from "../lib/text-aozora";
   import { decodeTextBytes, TextDecodeError, type EncodingDetectionResult } from "../lib/text-decode";
   import { countCharacters, countLines, normalizeText, textToParagraphHtml } from "../lib/text-normalize";
   import {
+    applyAozoraPresetIfUntouched,
     applyTextPreset,
     DEFAULT_TEXT_OPTIONS,
     isValidTextOptions,
     type TextConvertOptions,
+    type TextInputFormat,
     type TextPresetId,
   } from "../lib/text-options";
   import { selectTextPreview } from "../lib/text-preview";
@@ -54,6 +69,45 @@
         options.title = derived;
       }
       autoTitle = derived;
+    });
+  });
+
+  // 入力形式（実装仕様書 §15.1/§15.2）。ユーザーがセグメントボタンを一度でも
+  // 操作したら true にし、以後は自動判定で上書きしない。ファイルごとに新しい
+  // コンポーネントインスタンスが作られる（ConvertForm.svelte の {:else if
+  // txtFile} — 削除してから選び直す以外に差し替え導線がない）ため、単純な
+  // $state 初期値（false）だけで「ファイルごとにリセットされる」要件を満たす。
+  let inputFormatManuallySet = $state(false);
+
+  function onInputFormatChange(next: TextInputFormat): void {
+    inputFormatManuallySet = true;
+    if (options.inputFormat === next) return;
+    const switched: TextConvertOptions = { ...options, inputFormat: next };
+    // §15.3: aozora へ切り替えた瞬間だけ、個別設定が初期値のままの場合に限り
+    // 縦書き・BIZ UDMincho 等のプリセットを適用する（plain へ戻す側には
+    // 対応する既定復帰の指定が無いため何もしない）。
+    options = next === "aozora" ? applyAozoraPresetIfUntouched(switched) : switched;
+  }
+
+  // 青空文庫ヘッダ（表題・著者）の自動入力（仕様 §15.4）。normalizedText
+  // （150msデバウンス済み）から共有パッケージの separateDocumentStructure で
+  // 標準ヘッダを分離し、抽出できた値を「未編集の欄」にだけ反映する
+  // （resolveAutoFillTitle/resolveAutoFillAuthor が判定。どちらも一度適用済みの
+  // 値は素通しするため、normalizedText の変化のたびに再評価しても無限ループや
+  // ユーザー入力の上書きは起きない）。
+  const aozoraHeaderStructure = $derived(
+    options.inputFormat === "aozora" && normalizedText !== ""
+      ? separateDocumentStructure(normalizedText.split("\n"))
+      : null,
+  );
+  $effect(() => {
+    const structure = aozoraHeaderStructure;
+    if (!structure) return;
+    const extractedTitle = structure.title;
+    const extractedAuthor = structure.author;
+    untrack(() => {
+      options.title = resolveAutoFillTitle(options.title, autoTitle, extractedTitle);
+      options.author = resolveAutoFillAuthor(options.author, extractedAuthor);
     });
   });
 
@@ -135,7 +189,7 @@
   // ようにする（normalizedText 自体は150msデバウンス済み）。currentPreviewKey は
   // この切り出し済み本文 + options のJSON化のみで組み、options変更時のコストを
   // 小さく保つ。buildTextXtcPreviewCacheKey と生成される文字列は完全に一致する。
-  const x3PreviewText = $derived(selectTextPreview(normalizedText));
+  const x3PreviewText = $derived(selectTextPreview(normalizedText, options.inputFormat));
   // 「今の入力（本文+options）に対応するキャッシュキー」と「表示中プレビューのキー」を
   // 比較し、詳細設定の変更等でプレビューが古くなっている(stale)かどうかを判定する。
   const currentPreviewKey = $derived(textXtcPreviewCacheKeyFromSelected(x3PreviewText, options));
@@ -143,6 +197,32 @@
   // まだ何も表示していない/直前が失敗している(x3DisplayedKey === null)場合はリトライ
   // できるよう活性にする。表示中プレビューと現在の入力が一致していれば非活性。
   const canRegenerate = $derived(optionsValid && !x3PreviewGenerating && currentPreviewKey !== x3DisplayedKey);
+
+  // aozora本文プレビュー（仕様 §15.5）: X3実機プレビューと同じ安全な切り出し
+  // （x3PreviewText — selectTextPreview経由で《…》/［＃…］の途中で切らない・
+  // 未閉鎖の開始注記の手前へ巻き戻す境界処理済み）を共有パッケージの
+  // parseAozoraDocumentへ渡し、renderDocumentToHtmlが返す固定タグ・固定属性
+  // のみのHTMLを{@html}で表示する。生入力や途中文字列を渡すことは一切ない。
+  // AST上限超過（x3PreviewTextは既に安全側に切り詰め済みのため通常到達しない
+  // 保険）はfail-softで本文なし表示にする — 例外を投げてプレビュー全体を
+  // 壊さない。
+  const aozoraPreviewDoc = $derived.by(() => {
+    if (options.inputFormat !== "aozora") return null;
+    try {
+      return parseAozoraDocument(x3PreviewText);
+    } catch (e) {
+      if (e instanceof AozoraAstLimitExceededError) return null;
+      throw e;
+    }
+  });
+  const aozoraBodyHtml = $derived(aozoraPreviewDoc ? renderDocumentToHtml(aozoraPreviewDoc) : "");
+  // 未対応/壊れた注記の件数（仕様 §15.5）。注記本文そのものは一切保持しない。
+  const aozoraDiagnosticsSummary = $derived(summarizeAozoraDiagnostics(aozoraPreviewDoc?.diagnostics ?? []));
+  // aozora本文プレビュー用のCSS（傍点/ルビ/字下げ等のクラスを見た目に反映する）。
+  // AOZORA_DOCUMENT_CSS は共有パッケージのビルド時に確定した固定文字列（styles.ts）
+  // であり、ユーザー入力から生成される値ではない — {@html}へ渡すのはこの固定CSS
+  // 文字列のみで、本文由来の文字列は一切含まない。
+  const aozoraPreviewStyleHtml = `<style>${AOZORA_DOCUMENT_CSS}</style>`;
 
   // options はプリセットや setTextLayout でオブジェクトごと差し替わる。$effect 内で
   // options.* を直接読むと参照の変更だけで再実行され、レイアウト切替のたびに再デコード
@@ -308,6 +388,12 @@
   // x3Staleでユーザーに再生成を促す（要件3）。file が変われば改めて1回自動実行する。
   // 副作用本体はuntrack()で包み、options/previewModeへの書き込みが依存として
   // 拾われて無限ループしないようにする（上の表題自動導出$effectと同じ思想）。
+  //
+  // computeInitialTextOptions（仕様 §15.2/§15.3）: ユーザーがまだ入力形式を手動
+  // 変更していなければ decodedText を高信頼判定し、判定結果（またはユーザーが
+  // 既に選んでいた形式）に応じて「青空文庫プリセット」or「標準プリセット」を、
+  // 個別設定が初期値のままの場合だけ適用する。手動変更後（inputFormatManuallySet）
+  // は自動判定をスキップし、ユーザーが選んだ形式のプリセットのみ適用する。
   let autoPreviewFile: File | null = null;
   $effect(() => {
     const current = file;
@@ -316,7 +402,7 @@
     if (!ready || !hasText || autoPreviewFile === current) return;
     untrack(() => {
       autoPreviewFile = current;
-      options = applyTextPreset(options, "standard");
+      options = computeInitialTextOptions(options, decodedText, inputFormatManuallySet);
       previewMode = "x3";
       void generateX3Preview();
     });
@@ -349,8 +435,15 @@
       <div class="pv-frame">
         {#if previewMode === "source"}
           <div class="pv-page pv-page-scroll">
-            <!-- eslint-disable-next-line svelte/no-at-html-tags -- bodyPreviewHtml は textToParagraphHtml が escapeHtml 済みの本文から生成する固定タグ(<p>/<br>)のみを含む -->
-            <div class="body-text">{@html bodyPreviewHtml}</div>
+            {#if options.inputFormat === "aozora"}
+              <!-- eslint-disable-next-line svelte/no-at-html-tags -- 固定文字列（packages/aozora-text/src/styles.ts の AOZORA_DOCUMENT_CSS）で、本文由来の入力は一切含まない -->
+              {@html aozoraPreviewStyleHtml}
+              <!-- eslint-disable-next-line svelte/no-at-html-tags -- aozoraBodyHtml は共有パッケージ renderDocumentToHtml の許可リスト方式の固定タグ・固定属性出力のみ（render-html.ts参照）。生入力や途中文字列は渡さない -->
+              <div class="body-text aozora-body">{@html aozoraBodyHtml}</div>
+            {:else}
+              <!-- eslint-disable-next-line svelte/no-at-html-tags -- bodyPreviewHtml は textToParagraphHtml が escapeHtml 済みの本文から生成する固定タグ(<p>/<br>)のみを含む -->
+              <div class="body-text">{@html bodyPreviewHtml}</div>
+            {/if}
           </div>
         {:else}
           <div class="pv-page">
@@ -362,6 +455,19 @@
           </div>
         {/if}
       </div>
+      {#if previewMode === "source" && options.inputFormat === "aozora"}
+        <div class="x3-preview-actions">
+          <p class="preview-note">{t("text_aozora_parsed_note")}</p>
+          {#if aozoraDiagnosticsSummary.unsupportedAnnotations + aozoraDiagnosticsSummary.malformedAnnotations > 0}
+            <p class="preview-note">
+              {t("text_aozora_unsupported_note")(aozoraDiagnosticsSummary.unsupportedAnnotations + aozoraDiagnosticsSummary.malformedAnnotations)}
+            </p>
+          {/if}
+          {#if aozoraDiagnosticsSummary.truncated}
+            <p class="preview-note">{t("text_aozora_diagnostics_truncated_note")}</p>
+          {/if}
+        </div>
+      {/if}
       {#if previewMode === "x3" && x3Parsed}
         <div class="pv-pager">
           <button type="button" onclick={prevX3Page} disabled={x3CurrentPage <= 0} aria-label={t("preview_prev")}>‹</button>
@@ -407,7 +513,7 @@
   {/if}
 
   {#if status !== "loading"}
-    <TextOptions bind:options {detectionResult} {hasEncodingError} />
+    <TextOptions bind:options {detectionResult} {hasEncodingError} {onInputFormatChange} />
   {/if}
 
   {#if uploading}

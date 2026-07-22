@@ -4,7 +4,6 @@
     "module": "ES2022",
     "moduleResolution": "Bundler",
     "lib": ["ES2022"],
-    "types": ["@cloudflare/workers-types/experimental"],
     "strict": true,
     "noEmit": true,
     "isolatedModules": true,
@@ -12,11 +11,5 @@
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true
   },
-  "include": [
-    "src/**/*.ts",
-    "test/**/*.ts",
-    "vitest.config.ts",
-    "packages/aozora-text/src/**/*.ts",
-    "packages/aozora-text/test/**/*.ts"
-  ]
+  "include": ["src/**/*.ts", "test/**/*.ts"]
 }

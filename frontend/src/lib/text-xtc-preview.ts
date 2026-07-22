@@ -115,7 +115,7 @@ export function textXtcPreviewCacheKeyFromSelected(selectedText: string, options
  * 追加しないため）。
  */
 export function buildTextXtcPreviewCacheKey(fullText: string, options: TextConvertOptions): string {
-  return textXtcPreviewCacheKeyFromSelected(selectTextPreview(fullText), options);
+  return textXtcPreviewCacheKeyFromSelected(selectTextPreview(fullText, options.inputFormat), options);
 }
 
 async function parsePreviewError(response: Response): Promise<TextPreviewRequestError> {
@@ -146,7 +146,7 @@ export async function requestTextXtcPreview(
   options: TextConvertOptions,
   signal?: AbortSignal,
 ): Promise<ArrayBuffer> {
-  const text = selectTextPreview(fullText);
+  const text = selectTextPreview(fullText, options.inputFormat);
   const response = await fetch("/preview/text", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

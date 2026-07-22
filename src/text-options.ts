@@ -13,8 +13,17 @@ import { sanitizeFontFamily } from "./fonts";
 export type TextEncoding = "auto" | "utf-8" | "shift_jis";
 export type TextLayout = "horizontal" | "vertical";
 export type TextAlign = "start" | "justify";
+/**
+ * Selects the TXT body parser (aozora-text-conversion spec §5.1). `"plain"`
+ * (the default, including when the field is entirely absent — spec §5.3)
+ * keeps every existing byte-identical behavior. `"aozora"` routes the body
+ * through the shared @html2xtc/aozora-text AST parser/renderer instead
+ * (src/text-prepare.ts's prepareTextDocument).
+ */
+export type TextInputFormat = "plain" | "aozora";
 
 export interface TextConvertOptions {
+  inputFormat: TextInputFormat;
   encoding: TextEncoding;
   layout: TextLayout;
   /** Google Fonts family name; validated by sanitizeFontFamily (src/fonts.ts). */
@@ -48,8 +57,9 @@ export interface TextConvertOptions {
   author: string;
 }
 
-/** Spec §6.2. */
+/** Spec §6.2 (aozora-text-conversion spec §5.2 for inputFormat). */
 export const DEFAULT_TEXT_OPTIONS: TextConvertOptions = {
+  inputFormat: "plain",
   encoding: "auto",
   layout: "horizontal",
   font: "BIZ UDPGothic",
@@ -99,6 +109,16 @@ export function validateTextConvertOptions(value: unknown): TextOptionsResult {
     return { ok: false, error: "text options must be a JSON object" };
   }
   const v = value as Record<string, unknown>;
+
+  // Backward compatibility (aozora-text-conversion spec §5.3): an absent
+  // inputFormat — every payload/header/preview request predating this
+  // field — is treated as "plain", not rejected. A present-but-unknown
+  // value is still a hard 400, like every other field here.
+  const inputFormatRaw = v.inputFormat === undefined ? "plain" : v.inputFormat;
+  if (inputFormatRaw !== "plain" && inputFormatRaw !== "aozora") {
+    return { ok: false, error: "invalid inputFormat" };
+  }
+  const inputFormat = inputFormatRaw;
 
   if (v.encoding !== "auto" && v.encoding !== "utf-8" && v.encoding !== "shift_jis") {
     return { ok: false, error: "invalid encoding" };
@@ -193,6 +213,7 @@ export function validateTextConvertOptions(value: unknown): TextOptionsResult {
   return {
     ok: true,
     options: {
+      inputFormat,
       encoding,
       layout,
       font,

@@ -108,6 +108,14 @@ export interface Messages {
   text_preset_large_font: string;
   text_options_heading: string;
   text_options_summary: (layoutLabel: string, fontSizePx: number) => string;
+
+  // --- 入力形式（青空文庫TXT変換 実装仕様書 §15.1） -----------------------------
+  text_input_format_label: string;
+  text_input_format_plain: string;
+  text_input_format_aozora: string;
+  text_input_format_plain_hint: string;
+  text_input_format_aozora_hint: string;
+
   text_layout_label: string;
   text_layout_horizontal: string;
   text_layout_vertical: string;
@@ -131,6 +139,7 @@ export interface Messages {
   text_join_lines_on: string;
   text_join_lines_off: string;
   text_join_lines_note: string;
+  text_join_lines_aozora_note: string;
   text_bibliographic_heading: string;
   text_title_label: string;
   text_author_label: string;
@@ -161,6 +170,11 @@ export interface Messages {
   text_x3_preview_too_long: string;
   text_x3_preview_empty: string;
   text_x3_preview_failed: string;
+
+  // --- 青空文庫本文プレビュー・診断件数（実装仕様書 §15.5） ---------------------------
+  text_aozora_parsed_note: string;
+  text_aozora_unsupported_note: (n: number) => string;
+  text_aozora_diagnostics_truncated_note: string;
 
   aozora_open: string;
   aozora_title: string;
@@ -421,6 +435,11 @@ export const I18N: Record<Lang, Messages> = {
     text_preset_large_font: "大きな文字",
     text_options_heading: "詳細設定",
     text_options_summary: (layoutLabel, fontSizePx) => `${layoutLabel} ・ ${fontSizePx}px`,
+    text_input_format_label: "入力形式",
+    text_input_format_plain: "プレーンテキスト",
+    text_input_format_aozora: "青空文庫形式",
+    text_input_format_plain_hint: "注記や記法を解釈せず、そのまま表示します",
+    text_input_format_aozora_hint: "ルビ、傍点、見出し、改ページなどを解釈します",
     text_layout_label: "書字方向",
     text_layout_horizontal: "横書き",
     text_layout_vertical: "縦書き",
@@ -444,6 +463,7 @@ export const I18N: Record<Lang, Messages> = {
     text_join_lines_on: "つなげる",
     text_join_lines_off: "つなげない",
     text_join_lines_note: "固定幅で改行されたテキストの行を段落内で連結します。",
+    text_join_lines_aozora_note: "青空文庫形式では、注記や組版上の改行を保護するため使用できません。",
     text_bibliographic_heading: "書誌情報",
     text_title_label: "表題",
     text_author_label: "著者",
@@ -473,6 +493,10 @@ export const I18N: Record<Lang, Messages> = {
     text_x3_preview_too_long: "プレビュー対象の本文が長すぎます。",
     text_x3_preview_empty: "本文が空のためプレビューを生成できません。",
     text_x3_preview_failed: "実機プレビューの生成に失敗しました。",
+
+    text_aozora_parsed_note: "青空文庫形式として解析しました。",
+    text_aozora_unsupported_note: (n) => `未対応の注記 ${n}件は、注記文字として残ります。`,
+    text_aozora_diagnostics_truncated_note: "診断の件数が上限に達したため、これ以降の警告は集計されていません。",
 
     aozora_open: "青空文庫から選択",
     aozora_title: "青空文庫から選択",
@@ -727,6 +751,11 @@ export const I18N: Record<Lang, Messages> = {
     text_preset_large_font: "Large text",
     text_options_heading: "Advanced settings",
     text_options_summary: (layoutLabel, fontSizePx) => `${layoutLabel} · ${fontSizePx}px`,
+    text_input_format_label: "Input format",
+    text_input_format_plain: "Plain text",
+    text_input_format_aozora: "Aozora Bunko format",
+    text_input_format_plain_hint: "Displays the text as-is, without interpreting any notation or markup.",
+    text_input_format_aozora_hint: "Interprets ruby, emphasis dots, headings, page breaks, and more.",
     text_layout_label: "Writing direction",
     text_layout_horizontal: "Horizontal",
     text_layout_vertical: "Vertical",
@@ -750,6 +779,7 @@ export const I18N: Record<Lang, Messages> = {
     text_join_lines_on: "On",
     text_join_lines_off: "Off",
     text_join_lines_note: "Joins lines within a paragraph that were hard-wrapped to a fixed width.",
+    text_join_lines_aozora_note: "Not available in Aozora Bunko format — line breaks from notation and typesetting must be preserved.",
     text_bibliographic_heading: "Bibliographic info",
     text_title_label: "Title",
     text_author_label: "Author",
@@ -779,6 +809,10 @@ export const I18N: Record<Lang, Messages> = {
     text_x3_preview_too_long: "The preview text is too long.",
     text_x3_preview_empty: "The text is empty, so no preview can be generated.",
     text_x3_preview_failed: "Failed to generate the device preview.",
+
+    text_aozora_parsed_note: "Parsed as Aozora Bunko format.",
+    text_aozora_unsupported_note: (n) => (n === 1 ? "1 unsupported annotation remains as literal annotation text." : `${n} unsupported annotations remain as literal annotation text.`),
+    text_aozora_diagnostics_truncated_note: "The diagnostic count reached its limit, so further warnings were not tallied.",
 
     aozora_open: "Choose from Aozora Bunko",
     aozora_title: "Choose from Aozora Bunko",

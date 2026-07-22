@@ -28,7 +28,7 @@ const AOZORA_URL =
 /** The resolved default options for an Aozora URL. */
 const VERTICAL_MINCHO: RenderOptions = {
   layout: "vertical",
-  font: "BIZ UDPMincho",
+  font: "BIZ UDMincho",
 };
 
 // Shape of a real Aozora XHTML reader file: XML prolog, Shift_JIS metas,
@@ -156,7 +156,7 @@ describe("resolveRenderOptions", () => {
     });
   });
 
-  it("defaults Aozora URLs to vertical + BIZ UDPMincho", () => {
+  it("defaults Aozora URLs to vertical + BIZ UDMincho", () => {
     expect(resolveRenderOptions(aozora)).toEqual(VERTICAL_MINCHO);
   });
 
@@ -187,7 +187,7 @@ describe("resolveRenderOptions", () => {
 
 describe("sanitizeFontFamily", () => {
   it("accepts real Google Fonts family names (trimmed)", () => {
-    expect(sanitizeFontFamily("BIZ UDPMincho")).toBe("BIZ UDPMincho");
+    expect(sanitizeFontFamily("BIZ UDMincho")).toBe("BIZ UDMincho");
     expect(sanitizeFontFamily("  Zen Old Mincho ")).toBe("Zen Old Mincho");
     expect(sanitizeFontFamily("M PLUS 1p")).toBe("M PLUS 1p");
   });
@@ -205,7 +205,7 @@ describe("sanitizeFontFamily", () => {
       42,
       null,
       undefined,
-      ["BIZ UDPMincho"],
+      ["BIZ UDMincho"],
     ]) {
       expect(sanitizeFontFamily(value)).toBeUndefined();
     }
@@ -217,7 +217,7 @@ describe("fontCssEndpoint", () => {
     expect(fontCssEndpoint("BIZ UDPGothic")).toBe(
       "https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&display=swap",
     );
-    expect(fontCssEndpoint("BIZ UDPMincho")).toContain(":wght@400;700");
+    expect(fontCssEndpoint("BIZ UDMincho")).toContain(":wght@400;700");
   });
 
   it("requests regular only for arbitrary families (+-encoded)", () => {
@@ -338,7 +338,7 @@ describe("prepareAozoraRenderInput", () => {
   });
 
   it("subsets the font the options selected", async () => {
-    const { fetchFn, calls } = fontFetchServing(mincho400Face("BIZ UDPMincho"));
+    const { fetchFn, calls } = fontFetchServing(mincho400Face("BIZ UDMincho"));
     const input = await prepareAozoraRenderInput(
       new URL(AOZORA_URL),
       JOB_ID,
@@ -348,9 +348,9 @@ describe("prepareAozoraRenderInput", () => {
     );
     expect(input?.kind).toBe("html");
     if (input?.kind === "html") {
-      expect(input.fontCss).toContain("font-family:'BIZ UDPMincho'");
+      expect(input.fontCss).toContain("font-family:'BIZ UDMincho'");
     }
-    expect(calls[0]).toContain("family=BIZ+UDPMincho");
+    expect(calls[0]).toContain("family=BIZ+UDMincho");
   });
 
   it("returns null when the fetch fails", async () => {
@@ -448,10 +448,10 @@ describe("prepareRenderInput routing", () => {
 
 describe("buildInlineFontCss family selection", () => {
   it("requests and emits the given family", async () => {
-    const { fetchFn, calls } = fontFetchServing(mincho400Face("BIZ UDPMincho"));
-    const css = await buildInlineFontCss("あ", JOB_ID, fetchFn, "BIZ UDPMincho");
-    expect(css).toContain("font-family:'BIZ UDPMincho'");
-    expect(calls[0]).toContain("family=BIZ+UDPMincho");
+    const { fetchFn, calls } = fontFetchServing(mincho400Face("BIZ UDMincho"));
+    const css = await buildInlineFontCss("あ", JOB_ID, fetchFn, "BIZ UDMincho");
+    expect(css).toContain("font-family:'BIZ UDMincho'");
+    expect(calls[0]).toContain("family=BIZ+UDMincho");
   });
 });
 
@@ -471,7 +471,7 @@ describe("buildPrintRules (vertical)", () => {
   });
 
   it("stacks the chosen family over the layout's generic fallback", () => {
-    expect(rules).toContain('font-family: "BIZ UDPMincho", serif !important');
+    expect(rules).toContain('font-family: "BIZ UDMincho", serif !important');
     expect(
       buildPrintRules({ layout: "vertical", font: "Zen Old Mincho" }),
     ).toContain('font-family: "Zen Old Mincho", serif !important');
@@ -590,7 +590,7 @@ describe("renderPdfFromHtml with options", () => {
 
   it("injects the layout rules after the inline font", async () => {
     const { env, quickAction } = captureEnv();
-    const fontCss = "@font-face{font-family:'BIZ UDPMincho';src:url(data:font/woff2;base64,AQIDBA==) format('woff2');}";
+    const fontCss = "@font-face{font-family:'BIZ UDMincho';src:url(data:font/woff2;base64,AQIDBA==) format('woff2');}";
     await renderPdfFromHtml(env, "<html></html>", fontCss, VERTICAL_MINCHO);
     expect(styleContents(quickAction)).toEqual([
       fontCss,

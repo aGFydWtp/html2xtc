@@ -3,6 +3,7 @@
   import { t } from "../lib/i18n.svelte";
   import type { EncodingDetectionResult } from "../lib/text-decode";
   import { FONT_CANDIDATES, setTextLayout, type TextConvertOptions } from "../lib/text-options";
+  import FontSelect from "./FontSelect.svelte";
 
   let {
     options = $bindable(),
@@ -61,11 +62,7 @@
 
           <div class="field">
             <label class="opt-label" for="text-font">{t("text_font_label")}</label>
-            <select id="text-font" bind:value={options.font}>
-              {#each FONT_CANDIDATES as candidate (candidate.family)}
-                <option value={candidate.family}>{candidate.label}</option>
-              {/each}
-            </select>
+            <FontSelect id="text-font" candidates={FONT_CANDIDATES} bind:value={options.font} />
           </div>
         </div>
 

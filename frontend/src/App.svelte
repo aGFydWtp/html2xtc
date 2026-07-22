@@ -13,8 +13,9 @@
   import PasskeyLoginDialog from "./components/PasskeyLoginDialog.svelte";
   import PasskeyRegistrationDialog from "./components/PasskeyRegistrationDialog.svelte";
   import PreviewDialog from "./components/PreviewDialog.svelte";
+  import RegistrationClosedDialog from "./components/RegistrationClosedDialog.svelte";
   import { authStore } from "./lib/auth.svelte";
-  import { openPairingDialog, openRegistrationDialog } from "./lib/authDialogs.svelte";
+  import { openPairingDialog, openRegistrationClosedNotice, openRegistrationDialog } from "./lib/authDialogs.svelte";
   import { refreshStale } from "./lib/convert.svelte";
   import { t } from "./lib/i18n.svelte";
   import { publicConfigStore } from "./lib/publicConfig.svelte";
@@ -54,14 +55,22 @@
   // URL から取り除き、再読み込みでの再表示・ブックマークでの露出を避ける。
   onMount(() => {
     void refreshStale();
-    // publicConfig は認証状態と無関係に取得できるので authStore.init() と
-    // 並列で走らせる（Header の「新規登録」ボタン表示判定に使う）。
-    void publicConfigStore.init();
-    void authStore.init().then(() => {
+    // publicConfig と authStore の両方が確定してから ?register= を判定する
+    // （登録モード仕様 Phase3 §5: publicConfigStore.registrationMode が
+    // "closed" かどうかで開くダイアログを分けるため、片方だけの完了を待つ
+    // と registrationMode がまだ既定値 "invite" のままの可能性がある —
+    // PHASE3_GAP_ANALYSIS.md §5.1 (11) のレース条件指摘への対応）。
+    void Promise.all([authStore.init(), publicConfigStore.init()]).then(() => {
       const params = new URLSearchParams(location.search);
       const registerToken = params.get("register");
       const pairCode = params.get("pair");
-      if (registerToken) openRegistrationDialog({ mode: "invite", inviteToken: registerToken });
+      if (registerToken) {
+        if (publicConfigStore.registrationMode === "closed") {
+          openRegistrationClosedNotice();
+        } else {
+          openRegistrationDialog({ mode: "invite", inviteToken: registerToken });
+        }
+      }
       if (pairCode) {
         openPairingDialog(pairCode);
         tab = "devices";
@@ -108,6 +117,7 @@
 <PreviewDialog />
 <PasskeyLoginDialog />
 <PasskeyRegistrationDialog />
+<RegistrationClosedDialog />
 <PairingApprovalDialog />
 <Account />
 

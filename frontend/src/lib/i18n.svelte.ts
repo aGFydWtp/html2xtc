@@ -244,6 +244,12 @@ export interface Messages {
   register_failed: string;
   register_logged_in_conflict: (displayName: string) => string;
 
+  // --- 登録停止案内（登録モード仕様 Phase3 §5） -------------------------------
+  register_closed_title: string;
+  register_closed_body: string;
+  register_closed_login: string;
+  register_closed_close: string;
+
   // --- 公開登録（登録モード仕様 Phase2 §5.2 (4)(5)(6)） -----------------------
   register_open_dialog_title: string;
   register_open_warning: string;
@@ -548,6 +554,11 @@ export const I18N: Record<Lang, Messages> = {
     register_failed: "登録に失敗しました。招待リンクの有効期限が切れている可能性があります。",
     register_logged_in_conflict: (displayName) => `現在 ${displayName} でログイン中です。新しいアカウントを作成するには先にログアウトしてください。`,
 
+    register_closed_title: "新規登録は停止中です",
+    register_closed_body: "新規登録は現在停止しています。すでにアカウントをお持ちの場合はログインできます。",
+    register_closed_login: "ログイン",
+    register_closed_close: "閉じる",
+
     register_open_dialog_title: "新規登録",
     register_open_warning: "このサービスはパスキーのみでログインします。すべてのパスキーを失うとアカウントを復旧できません。登録後、別の端末にもパスキーを追加してください。",
     register_terms_agree_before: "",
@@ -848,6 +859,11 @@ export const I18N: Record<Lang, Messages> = {
     register_submit: "Register passkey",
     register_failed: "Registration failed. The invite link may have expired.",
     register_logged_in_conflict: (displayName) => `You're currently logged in as ${displayName}. To create a new account, please log out first.`,
+
+    register_closed_title: "New registration is paused",
+    register_closed_body: "New registration is currently paused. If you already have an account, you can still log in.",
+    register_closed_login: "Log in",
+    register_closed_close: "Close",
 
     register_open_dialog_title: "Sign up",
     register_open_warning: "This service signs you in with passkeys only. If you lose every passkey, your account cannot be recovered. After signing up, please add a passkey on another device too.",

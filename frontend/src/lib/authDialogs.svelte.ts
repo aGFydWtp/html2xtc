@@ -61,6 +61,18 @@ export function closePairingDialog(): void {
   pairingDialog.open = false;
 }
 
+// 登録停止案内（登録モード仕様 Phase3 §5）。?register=<token> でアクセスした
+// が REGISTRATION_MODE==="closed" だったときに、登録ダイアログの代わりに開く
+// 軽量な案内。
+export const registrationClosedNotice = $state({ open: false });
+
+export function openRegistrationClosedNotice(): void {
+  registrationClosedNotice.open = true;
+}
+export function closeRegistrationClosedNotice(): void {
+  registrationClosedNotice.open = false;
+}
+
 // アカウント画面（登録モード仕様 Phase1 §5.9）。Header のメニューから開く。
 export const accountDialog = $state({ open: false });
 

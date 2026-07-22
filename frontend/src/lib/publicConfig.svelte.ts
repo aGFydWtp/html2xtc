@@ -23,6 +23,8 @@ export interface PublicConfigLimits {
 interface PublicConfigResponse {
   registrationMode?: unknown;
   registrationAvailable?: unknown;
+  registrationReason?: unknown;
+  registrationMessage?: unknown;
   termsVersion?: unknown;
   limits?: unknown;
   turnstileSiteKey?: unknown;
@@ -54,6 +56,12 @@ class PublicConfigStore {
   // 誤って出てこないための fail-safe（本番の invite/closed 環境と同じ見た目）。
   registrationMode = $state<RegistrationMode>("invite");
   registrationAvailable = $state(false);
+  // 登録モード仕様 Phase3 §4: mode==="closed" のときだけ意味を持つ。公開可
+  // 理由(maintenance/capacity/manual)ではコード値が入り、非公開理由/未設定
+  // では null（サーバー側が既に security/abuse という値自体を返さない —
+  // src/public-config.ts 参照）。
+  registrationReason = $state<string | null>(null);
+  registrationMessage = $state<string | null>(null);
   termsVersion = $state<string | null>(null);
   turnstileSiteKey = $state<string | null>(null);
   limits = $state<PublicConfigLimits | null>(null);
@@ -68,6 +76,8 @@ class PublicConfigStore {
       if (typeof body.registrationAvailable === "boolean") {
         this.registrationAvailable = body.registrationAvailable;
       }
+      this.registrationReason = typeof body.registrationReason === "string" ? body.registrationReason : null;
+      this.registrationMessage = typeof body.registrationMessage === "string" ? body.registrationMessage : null;
       if (typeof body.termsVersion === "string" && body.termsVersion.length > 0) {
         this.termsVersion = body.termsVersion;
       }

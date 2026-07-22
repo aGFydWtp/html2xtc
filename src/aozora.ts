@@ -26,7 +26,7 @@ import type { RenderOptions } from "./types";
  *
  * This preprocessing is keyed on the URL (isAozoraBunkoUrl) only; layout
  * and font come from the request's resolved RenderOptions — an Aozora page
- * merely DEFAULTS to vertical + BIZ UDPMincho via resolveRenderOptions
+ * merely DEFAULTS to vertical + BIZ UDMincho via resolveRenderOptions
  * (src/sitepresets.ts) and renders with any explicit combination.
  *
  * Everything here is fail-soft: any fetch/parse problem returns null and the
@@ -73,7 +73,7 @@ function aozoraIndentRules(): string {
  *   images, unusable in vertical writing. text-underline-position: left
  *   puts the 傍線 on the reader-expected side vertically and behaves as
  *   auto horizontally.
- * - 斜体 (shatai): most mincho families ship no italic (BIZ UDPMincho
+ * - 斜体 (shatai): most mincho families ship no italic (BIZ UDMincho
  *   included), degrading to synthetic oblique — accepted.
  */
 export const AOZORA_DOCUMENT_CSS = `

@@ -118,7 +118,7 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
     let fontsKey: string | null = null;
     // Render options resolved deterministically from the params (explicit
     // layout/font win; blanks fall back to per-site defaults — Aozora
-    // Bunko: vertical + BIZ UDPMincho). Pure derivation, so it needs no step
+    // Bunko: vertical + BIZ UDMincho). Pure derivation, so it needs no step
     // and every step attempt computes the same value.
     const target = new URL(url);
     const options = resolveRenderOptions(target, event.payload.layout, event.payload.font);

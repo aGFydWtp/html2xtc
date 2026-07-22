@@ -71,7 +71,7 @@ export interface PdfConvertOptions {
 /**
  * Resolved rendering options, produced by resolveRenderOptions()
  * (src/sitepresets.ts) from the request's optional layout/font fields plus
- * the per-site defaults (Aozora Bunko → vertical + BIZ UDPMincho).
+ * the per-site defaults (Aozora Bunko → vertical + BIZ UDMincho).
  *
  * INVARIANT: `font` is a sanitized Google Fonts family name — safe to embed
  * in a quoted CSS font-family declaration and in the css2 URL. ALWAYS build

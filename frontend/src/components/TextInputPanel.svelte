@@ -1,11 +1,10 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
-  import { onDestroy } from "svelte";
+  import { onDestroy, untrack } from "svelte";
   import { submitText, type TextUploadHandle } from "../lib/convert.svelte";
   import { t } from "../lib/i18n.svelte";
-  import { openPreviewFromBytes } from "../lib/preview.svelte";
   import { decodeTextBytes, TextDecodeError, type EncodingDetectionResult } from "../lib/text-decode";
-  import { countCharacters, countLines, normalizeText } from "../lib/text-normalize";
+  import { countCharacters, countLines, normalizeText, textToParagraphHtml } from "../lib/text-normalize";
   import {
     applyTextPreset,
     DEFAULT_TEXT_OPTIONS,
@@ -18,9 +17,8 @@
     resolveTextPreviewErrorMessageKey,
     TextPreviewRequestError,
   } from "../lib/text-xtc-preview";
+  import { decodeFrame, parseXtc, type ParsedXtc } from "../lib/xtc";
   import TextOptions from "./TextOptions.svelte";
-  import TextPagePreview from "./TextPagePreview.svelte";
-  import TextPreview from "./TextPreview.svelte";
 
   let { file, onRemove }: { file: File; onRemove: () => void } = $props();
 
@@ -35,7 +33,33 @@
     margins: { ...DEFAULT_TEXT_OPTIONS.margins },
   });
 
-  let activeTab = $state<"body" | "x3">("body");
+  // 表題(options.title)の初期値をファイル名（拡張子除く）から自動導出する。
+  // ユーザーが手入力した表題は上書きしない — 「表題が空、または直前ファイルから
+  // 自動導出した値のまま」の場合のみ、新しいファイル名から再導出する。
+  let autoTitle = $state("");
+
+  function deriveTitleFromFileName(name: string): string {
+    return name.replace(/\.txt$/i, "").slice(0, 100);
+  }
+
+  $effect(() => {
+    const derived = deriveTitleFromFileName(file.name);
+    untrack(() => {
+      if (options.title.trim() === "" || options.title === autoTitle) {
+        options.title = derived;
+      }
+      autoTitle = derived;
+    });
+  });
+
+  // プレビューのモード切替（PdfPreview.svelte 風の .seg セグメント）。"source" は
+  // デコード・正規化済みの全文をスクロール表示、"x3" は実機XTCのインライン表示。
+  // PDF側にある compare 相当のモードはTXTには存在しない。
+  let previewMode = $state<"source" | "x3">("source");
+
+  // 本文全文プレビュー（段落分割・エスケープ済みHTML）。組版精度は求めない
+  // プレーンな段落表示。
+  const bodyPreviewHtml = $derived(textToParagraphHtml(normalizedText));
 
   let uploading = $state(false);
   let uploadPercent = $state<number | null>(null);
@@ -49,6 +73,40 @@
   let x3PreviewController: AbortController | null = null;
   let x3PreviewGenerating = $state(false);
   let x3PreviewErrorText = $state<string | null>(null);
+  let x3Parsed = $state<ParsedXtc | null>(null);
+  let x3CurrentPage = $state(0);
+  let x3CanvasEl = $state<HTMLCanvasElement | null>(null);
+
+  // XTCの現在ページを canvas へデコード描画する（PreviewDialog.svelte の
+  // decodeFrame → putImageData パターンを流用）。.pv-page の CSS が
+  // width:100%/height:100% で528:792枠に収めるため、canvas自体の実寸は
+  // デコードした画像の実寸のままでよい。
+  $effect(() => {
+    if (previewMode !== "x3" || !x3Parsed || !x3CanvasEl) return;
+    const parsed = x3Parsed;
+    const page = x3CurrentPage;
+    const canvas = x3CanvasEl;
+    try {
+      const image = decodeFrame(parsed.dv, parsed.pages[page]);
+      canvas.width = image.width;
+      canvas.height = image.height;
+      canvas.getContext("2d")?.putImageData(image, 0, 0);
+    } catch {
+      x3Parsed = null;
+      x3PreviewErrorText = t("text_x3_preview_failed");
+    }
+  });
+
+  function prevX3Page(): void {
+    if (x3CurrentPage > 0) x3CurrentPage -= 1;
+  }
+  function nextX3Page(): void {
+    if (x3Parsed && x3CurrentPage < x3Parsed.pages.length - 1) x3CurrentPage += 1;
+  }
+
+  // 文字コード選択(TextOptions内)の復旧導線: デコード失敗時は詳細設定アコーディオンを
+  // 自動展開させる必要があるため、error状態かどうかをそのまま渡す。
+  const hasEncodingError = $derived(status === "error");
 
   const charCount = $derived(countCharacters(normalizedText));
   const lineCount = $derived(countLines(normalizedText));
@@ -130,10 +188,6 @@
     return t("text_err_encoding_unknown");
   }
 
-  function detectedEncodingLabel(result: EncodingDetectionResult): string {
-    return result.encoding === "utf-8" ? t("text_encoding_option_utf8") : t("text_encoding_option_shift_jis");
-  }
-
   function applyPreset(preset: TextPresetId): void {
     options = applyTextPreset(options, preset);
   }
@@ -177,7 +231,8 @@
     try {
       const bytes = await requestTextXtcPreview(normalizedText, options, controller.signal);
       if (generation !== x3PreviewGeneration) return; // 古い世代の結果は破棄
-      openPreviewFromBytes(bytes);
+      x3Parsed = parseXtc(bytes);
+      x3CurrentPage = 0;
     } catch (e) {
       if (generation !== x3PreviewGeneration) return;
       if (e instanceof DOMException && e.name === "AbortError") return; // 中断は無視
@@ -193,9 +248,8 @@
 
   // コンポーネント破棄時（TXTファイル削除等でこのパネルが消える場合）、in-flight の
   // プレビューリクエストを中止する。中止し忘れると、最大 TEXT_PREVIEW_TIMEOUT_MS
-  // (120秒) 後にレスポンスが届いた時点でモジュールグローバルの preview ストアへ
-  // openPreviewFromBytes が呼ばれ、既にこのパネルとは無関係になった画面へ勝手に
-  // プレビューダイアログが開いてしまう。世代カウンタも同時に進めておくことで、
+  // (120秒) 後にレスポンスが届いた時点で、既にこのパネルとは無関係になった画面へ
+  // 勝手に x3Parsed がセットされてしまう。世代カウンタも同時に進めておくことで、
   // 万一 abort() が AbortError 以外の形で解決した場合でも既存の世代ガード
   // （generation !== x3PreviewGeneration）が二重に守る。
   onDestroy(() => {
@@ -214,38 +268,50 @@
     <button type="button" class="att-x" onclick={onRemove} aria-label={t("text_remove_file")}>×</button>
   </div>
 
-  <div class="field">
-    <label class="opt-label" for="text-encoding">{t("text_encoding_label")}</label>
-    <select id="text-encoding" bind:value={options.encoding}>
-      <option value="auto">{options.encoding === "auto" && detectionResult ? t("text_encoding_detected")(detectedEncodingLabel(detectionResult)) : t("text_encoding_option_auto")}</option>
-      <option value="utf-8">{t("text_encoding_option_utf8")}</option>
-      <option value="shift_jis">{t("text_encoding_option_shift_jis")}</option>
-    </select>
-  </div>
-
   {#if status === "ready"}
-    <div class="tabs">
-      <button type="button" class="tab" aria-pressed={activeTab === "body"} onclick={() => (activeTab = "body")}>{t("text_tab_body")}</button>
-      <button type="button" class="tab" aria-pressed={activeTab === "x3"} onclick={() => (activeTab = "x3")}>{t("text_tab_x3")}</button>
-    </div>
-    {#if activeTab === "body"}
-      <TextPreview {normalizedText} />
-      <p class="preview-note">{t("text_preview_note")}</p>
-    {:else}
-      <TextPagePreview {normalizedText} {options} />
-      <div class="x3-preview-actions">
-        <button
-          type="button"
-          class="secondary"
-          disabled={!optionsValid}
-          onclick={() => void generateX3Preview()}
-        >
-          {x3PreviewGenerating ? t("text_x3_preview_generating") : t("text_x3_preview_button")}
-        </button>
-        {#if x3PreviewErrorText}<div class="error-text">{x3PreviewErrorText}</div>{/if}
-        <p class="preview-note">{t("text_x3_preview_note")}</p>
+    <div class="pv-wrap">
+      <div class="pv-frame">
+        {#if previewMode === "source"}
+          <div class="pv-page pv-page-scroll">
+            <!-- eslint-disable-next-line svelte/no-at-html-tags -- bodyPreviewHtml は textToParagraphHtml が escapeHtml 済みの本文から生成する固定タグ(<p>/<br>)のみを含む -->
+            <div class="body-text">{@html bodyPreviewHtml}</div>
+          </div>
+        {:else}
+          <div class="pv-page">
+            {#if x3PreviewGenerating}
+              <span class="spinner"></span>
+            {:else if x3Parsed}
+              <canvas bind:this={x3CanvasEl}></canvas>
+            {/if}
+          </div>
+        {/if}
       </div>
-    {/if}
+      {#if previewMode === "x3" && x3Parsed}
+        <div class="pv-pager">
+          <button type="button" onclick={prevX3Page} disabled={x3CurrentPage <= 0} aria-label={t("preview_prev")}>‹</button>
+          <span class="pv-count">{t("text_x3_page_indicator")(x3CurrentPage + 1, x3Parsed.pages.length)}</span>
+          <button type="button" onclick={nextX3Page} disabled={x3CurrentPage >= x3Parsed.pages.length - 1} aria-label={t("preview_next")}>›</button>
+        </div>
+      {/if}
+      <div class="seg">
+        <button type="button" aria-pressed={previewMode === "source"} onclick={() => (previewMode = "source")}>{t("text_tab_body")}</button>
+        <button type="button" aria-pressed={previewMode === "x3"} onclick={() => (previewMode = "x3")}>{t("text_tab_x3")}</button>
+      </div>
+      {#if previewMode === "x3"}
+        <div class="x3-preview-actions">
+          <button
+            type="button"
+            class="secondary"
+            disabled={!optionsValid}
+            onclick={() => void generateX3Preview()}
+          >
+            {x3PreviewGenerating ? t("text_x3_preview_generating") : t("text_x3_preview_button")}
+          </button>
+          {#if x3PreviewErrorText}<div class="error-text">{x3PreviewErrorText}</div>{/if}
+          <p class="preview-note">{t("text_x3_preview_note")}</p>
+        </div>
+      {/if}
+    </div>
   {:else if status === "loading"}
     <div class="preview-placeholder"><span class="spinner"></span></div>
   {:else if status === "error" && errorKind}
@@ -261,20 +327,10 @@
         <button type="button" onclick={() => applyPreset("large_font")}>{t("text_preset_large_font")}</button>
       </div>
     </div>
+  {/if}
 
-    <TextOptions bind:options />
-
-    <div class="field bibliographic">
-      <div class="opt-label">{t("text_bibliographic_heading")}</div>
-      <label class="bib-field">
-        <span>{t("text_title_label")}</span>
-        <input type="text" maxlength="100" bind:value={options.title} />
-      </label>
-      <label class="bib-field">
-        <span>{t("text_author_label")}</span>
-        <input type="text" maxlength="100" bind:value={options.author} />
-      </label>
-    </div>
+  {#if status !== "loading"}
+    <TextOptions bind:options {detectionResult} {hasEncodingError} />
   {/if}
 
   {#if uploading}
@@ -317,18 +373,30 @@
 
   .field { display: flex; flex-direction: column; gap: 6px; }
   .opt-label { font-size: 13px; font-weight: 600; color: var(--muted2); letter-spacing: .02em; }
-  select {
-    padding: 8px 10px; font: inherit; font-size: 14px; border: 1px solid var(--line); border-radius: 4px;
-    background: var(--card); color: var(--text); align-self: flex-start; min-width: 220px;
-  }
 
-  .tabs { display: inline-flex; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; align-self: flex-start; }
-  .tab {
-    padding: 8px 16px; font: inherit; font-size: 13px; border: 0; background: var(--card);
-    color: var(--muted2); cursor: pointer; border-right: 1px solid var(--line);
+  .pv-wrap { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .pv-frame { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; width: 100%; }
+  .pv-page {
+    position: relative; width: 100%; max-width: 220px; aspect-ratio: 528 / 792; background: #fff;
+    border: 1.5px solid var(--ink); border-radius: 4px; box-shadow: 3px 3px 0 var(--line);
+    overflow: hidden; margin: 0 auto; display: flex; align-items: center; justify-content: center;
   }
-  .tab:last-child { border-right: 0; }
-  .tab[aria-pressed="true"] { background: var(--ink); color: var(--ink-text); font-weight: 700; }
+  .pv-page canvas { display: block; width: 100%; height: 100%; }
+  .pv-page.pv-page-scroll {
+    display: block; overflow-y: auto; overflow-x: hidden; align-items: unset; justify-content: unset;
+    padding: 14px; box-sizing: border-box; text-align: left;
+  }
+  .body-text { font-size: 12px; line-height: 1.8; color: #1c1a17; overflow-wrap: anywhere; }
+  .body-text :global(p) { margin: 0 0 1em; }
+  .body-text :global(p:last-child) { margin-bottom: 0; }
+  .pv-pager { display: flex; align-items: center; gap: 14px; }
+  .pv-pager button {
+    width: 30px; height: 30px; border-radius: 4px; border: 1px solid var(--line);
+    background: var(--card); color: var(--text); cursor: pointer; font-size: 16px; line-height: 1;
+  }
+  .pv-pager button:disabled { color: var(--disabled); cursor: default; }
+  .pv-count { font-family: var(--mono); font-size: 13px; color: var(--muted2); }
+  .pv-wrap .seg { align-self: center; }
 
   .preview-note { margin: 0; font-size: 12px; color: var(--muted); line-height: 1.7; }
   .x3-preview-actions { display: flex; flex-direction: column; gap: 8px; align-items: center; margin-top: 4px; }
@@ -341,13 +409,7 @@
   }
   .seg button:last-child { border-right: 0; }
   .seg button:hover { background: var(--panel); }
-
-  .bibliographic { gap: 10px; }
-  .bib-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
-  .bib-field input[type="text"] {
-    padding: 8px 10px; font: inherit; font-size: 14px; border: 1px solid var(--line); border-radius: 4px;
-    background: var(--card); color: var(--text);
-  }
+  .seg button[aria-pressed="true"] { background: var(--ink); color: var(--ink-text); font-weight: 700; }
 
   button.primary {
     padding: 12px 26px; font: inherit; font-size: 15px; font-weight: 700; letter-spacing: .08em;

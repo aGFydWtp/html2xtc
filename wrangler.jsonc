@@ -184,7 +184,12 @@
 			// Device-facing OPDS feeds (src/opds/routes.ts, plan §9.5/§12):
 			// without this, the edge could serve a static asset at the same
 			// path instead of ever reaching the Worker.
-			"/opds/*"
+			"/opds/*",
+			// 管理用 registration status (src/internal/routes.ts, 登録モード
+			// Phase 2)。これが無いと /internal/* が SPA フォールバックに吸われ、
+			// Worker の共有シークレット認証（未設定なら 401 fail-closed）に到達
+			// せず index.html が 200 で返ってしまう。
+			"/internal/*"
 		]
 	},
 	"routes": [

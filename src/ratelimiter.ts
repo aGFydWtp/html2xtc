@@ -3,6 +3,7 @@
 
 import { DurableObject } from "cloudflare:workers";
 import {
+  RATE_LIMIT_WINDOW_MS,
   decideFixedWindow,
   purposeRateLimitKey,
   rateLimitKey,
@@ -30,8 +31,25 @@ export class RateLimiter extends DurableObject<Env> {
   async take(
     limit: number,
   ): Promise<{ allowed: boolean; retryAfterSeconds: number }> {
+    return this.takeWithWindow(limit, RATE_LIMIT_WINDOW_MS);
+  }
+
+  /**
+   * Same as take(), but with a caller-chosen window length instead of the
+   * fixed 1-hour window — added for the account-deletion "5/日" limit (登録
+   * モード仕様 Phase1 §5.7/§8d) without changing take()'s signature or
+   * behavior for its many existing 1-hour callers (plan gap analysis §6:
+   * "既存の1時間窓呼び出し元には影響を出さない"). Each purpose+key already
+   * gets its own RateLimiter DO instance (idFromName on the purpose-prefixed
+   * key), so reusing the same WINDOW_KEY storage slot here is safe — a given
+   * instance only ever serves one purpose, hence one window length.
+   */
+  async takeWithWindow(
+    limit: number,
+    windowMs: number,
+  ): Promise<{ allowed: boolean; retryAfterSeconds: number }> {
     const prev = await this.ctx.storage.get<RateLimitWindow>(WINDOW_KEY);
-    const decision = decideFixedWindow(prev, Date.now(), limit);
+    const decision = decideFixedWindow(prev, Date.now(), limit, windowMs);
     // decideFixedWindow returns `prev` itself for a denied request within a
     // live window; skipping the write keeps a flood of denied requests from
     // hammering storage.
@@ -98,6 +116,13 @@ export interface PurposeRateLimitOptions {
   /** Extra key dimension, e.g. a deviceId, for limits scoped tighter than "per IP" alone. */
   extraKey?: string;
   /**
+   * Window length in ms; defaults to RATE_LIMIT_WINDOW_MS (1 hour) when
+   * omitted, matching every existing purpose's behavior unchanged. Set this
+   * for a purpose that needs a different window, e.g. the account-deletion
+   * "5/日" limit (24h).
+   */
+  windowMs?: number;
+  /**
    * Whether a RateLimiter DO outage should block the request (auth,
    * pairing, device-auth-failure — plan §13 "原則fail-closed") or let it
    * through unlimited (matching enforceRateLimit's existing fail-open
@@ -134,7 +159,7 @@ export async function enforcePurposeRateLimit(
   let result: { allowed: boolean; retryAfterSeconds: number };
   try {
     const stub = env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(key));
-    result = await stub.take(options.limit);
+    result = await stub.takeWithWindow(options.limit, options.windowMs ?? RATE_LIMIT_WINDOW_MS);
   } catch (error) {
     console.error(`rate limiter unavailable (${options.purpose})`, error);
     if (options.failClosed) {

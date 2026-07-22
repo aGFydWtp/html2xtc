@@ -121,16 +121,21 @@ export interface RateLimitDecision {
 
 /**
  * Fixed-window decision: the first request opens a window, requests beyond
- * the limit within RATE_LIMIT_WINDOW_MS of the window start are denied, and
- * the first request after that span opens a fresh window.
+ * the limit within `windowMs` of the window start are denied, and the first
+ * request after that span opens a fresh window. `windowMs` defaults to
+ * RATE_LIMIT_WINDOW_MS (1 hour) — every existing call site keeps its
+ * original 3-arg call and behavior unchanged; a 4th arg lets a purpose opt
+ * into a different window (e.g. the account-deletion "5/日" limit, 登録モード
+ * 仕様 Phase1 §5.7/§8d).
  */
 export function decideFixedWindow(
   prev: RateLimitWindow | undefined,
   nowMs: number,
   limit: number,
+  windowMs: number = RATE_LIMIT_WINDOW_MS,
 ): RateLimitDecision {
   const window =
-    prev !== undefined && nowMs - prev.windowStartMs < RATE_LIMIT_WINDOW_MS
+    prev !== undefined && nowMs - prev.windowStartMs < windowMs
       ? prev
       : { windowStartMs: nowMs, count: 0 };
 
@@ -140,7 +145,7 @@ export function decideFixedWindow(
       next: window,
       retryAfterSeconds: Math.max(
         1,
-        Math.ceil((window.windowStartMs + RATE_LIMIT_WINDOW_MS - nowMs) / 1000),
+        Math.ceil((window.windowStartMs + windowMs - nowMs) / 1000),
       ),
     };
   }

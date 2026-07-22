@@ -160,6 +160,15 @@ export async function listCredentialsForAccount(
   return result.results.map(fromCredentialRow);
 }
 
+/** Deletes one webauthn_credentials row, scoped to accountId (plan §16 — an account can only ever delete its own credential). Returns false if not found/not owned. Caller (routes.ts) must independently enforce the "never delete the last passkey" rule before calling this. */
+export async function deleteCredentialById(db: D1Database, accountId: string, id: string): Promise<boolean> {
+  const result = await db
+    .prepare(`DELETE FROM webauthn_credentials WHERE id = ? AND account_id = ?`)
+    .bind(id, accountId)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
 /** Updates a credential's signCount and last_used_at after a successful login verification (replay-attack detection relies on the stored counter only ever increasing). */
 export async function updateCredentialAfterLogin(
   db: D1Database,

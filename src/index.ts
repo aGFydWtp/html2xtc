@@ -11,6 +11,7 @@ import { convertInContainer } from "./container";
 import { cleanupAppDb } from "./db/cleanup";
 import { registerDeviceRoutes } from "./devices/routes";
 import { prepareRenderInput } from "./extract";
+import { resolveConversionMode } from "./feature-flags";
 import { registerInternalRoutes } from "./internal/routes";
 import {
   articleHtmlKey,
@@ -145,6 +146,10 @@ async function route(request: Request, env: Env): Promise<Response> {
     if (request.method !== "POST") {
       return methodNotAllowed("POST");
     }
+    const disabled = conversionModeGate(env);
+    if (disabled) {
+      return disabled;
+    }
     // Per-IP limit on the endpoints that start a conversion (this one and
     // POST /jobs below); the cheap GET endpoints stay unlimited.
     const limited = await enforceRateLimit(request, env);
@@ -157,6 +162,10 @@ async function route(request: Request, env: Env): Promise<Response> {
   if (pathname === "/jobs") {
     if (request.method !== "POST") {
       return methodNotAllowed("POST");
+    }
+    const disabled = conversionModeGate(env);
+    if (disabled) {
+      return disabled;
     }
     const limited = await enforceRateLimit(request, env);
     if (limited) {
@@ -174,6 +183,10 @@ async function route(request: Request, env: Env): Promise<Response> {
     if (request.method !== "POST") {
       return methodNotAllowed("POST");
     }
+    const disabled = conversionModeGate(env);
+    if (disabled) {
+      return disabled;
+    }
     return handleCreatePdfJob(request, env);
   }
 
@@ -184,6 +197,10 @@ async function route(request: Request, env: Env): Promise<Response> {
   if (pathname === "/jobs/text") {
     if (request.method !== "POST") {
       return methodNotAllowed("POST");
+    }
+    const disabled = conversionModeGate(env);
+    if (disabled) {
+      return disabled;
     }
     return handleCreateTextJob(request, env);
   }
@@ -236,6 +253,23 @@ async function route(request: Request, env: Env): Promise<Response> {
   }
 
   return Response.json({ error: "not found" }, { status: 404 });
+}
+
+/**
+ * 登録モード仕様 Phase3 §7: CONVERSION_MODE==="disabled" のときだけ新規
+ * 変換の開始(/convert, /jobs, /jobs/pdf, /jobs/text)を止める。
+ * enforceRateLimit と同じ「Response | null を返す」形にして、各分岐の
+ * メソッドチェック直後・レート制限のカウント消費前に呼べるようにする
+ * (無効化されている間はレート制限バジェットを消費させない)。ジョブ状態
+ * 参照・ダウンロードは対象外(呼び出し箇所なし)。この legacy route() は
+ * 新Router(src/router.ts)の {"error":{code,message}} 形ではなく既存の
+ * {"error": "<string>"} 形を使う — 同ファイルの他のエラー応答と同じ規約。
+ */
+function conversionModeGate(env: Env): Response | null {
+  if (resolveConversionMode(env) === "disabled") {
+    return Response.json({ error: "conversion is currently disabled" }, { status: 503 });
+  }
+  return null;
 }
 
 function methodNotAllowed(allow: string): Response {

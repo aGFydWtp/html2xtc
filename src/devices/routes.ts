@@ -4,6 +4,7 @@
 import { verifyCsrf } from "../auth/csrf";
 import type { Account } from "../auth/sessions";
 import { requireSession } from "../auth/sessions";
+import { resolvePairingMode } from "../feature-flags";
 import { enforcePurposeRateLimit } from "../ratelimiter";
 import type { Router } from "../router";
 import { logAuditEvent } from "../security/audit";
@@ -97,6 +98,14 @@ export function registerDeviceRoutes(router: Router): void {
   // --- device-pairings: unauthenticated, called by the Xteink device itself ---
 
   router.post("/api/device-pairings", async (request, env) => {
+    // 登録モード仕様 Phase3 §7: PAIRING_MODE==="disabled" のときだけ新規
+    // ペアリング開始を止める。checked before the rate limiter — a disabled
+    // deployment shouldn't burn the pairing-start rate-limit budget on
+    // requests that are rejected outright anyway. 既存端末の利用・OPDS・
+    // 解除・進行中ペアリングの完了/承認/拒否は対象外(このハンドラのみ)。
+    if (resolvePairingMode(env) === "disabled") {
+      throw Errors.forbidden("PAIRING_DISABLED", "device pairing is currently disabled");
+    }
     // Pairing start: 20/h/IP, fail-closed (plan §13) — this route is
     // unauthenticated (called by the Xteink device itself), so the limiter
     // is the only defense against a flood of pairing rows.

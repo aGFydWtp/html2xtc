@@ -53,6 +53,20 @@
 		"TOTAL_STORAGE_WARNING_PERCENT": "80",
 		"TOTAL_STORAGE_STOP_PERCENT": "95",
 		"TERMS_VERSION": "2026-07-01"
+		// 登録モード仕様 Phase 3 (src/auth/registration-mode.ts の
+		// resolveRegistrationClosedReason, src/feature-flags.ts): 以下は
+		// 意図的にキー自体を追加しない — 未設定は常に許可側(現行動作)へ
+		// フォールバックするので、本番動作を変えないことが最も明確に伝わる。
+		// 緊急停止したい場合のみ、必要なキーだけデプロイ設定に追加する:
+		//   "REGISTRATION_CLOSED_REASON": "maintenance"|"capacity"|"manual"
+		//     |"security"|"abuse" — REGISTRATION_MODE==="closed" のときだけ
+		//     意味を持つ。未設定なら理由なし(公開側は汎用文言のみ)。
+		//   "LIBRARY_WRITE_MODE": "read-write"(既定, 省略可)|"read-only"
+		//     — read-only で新規ライブラリ保存のみ停止。
+		//   "PAIRING_MODE": "enabled"(既定, 省略可)|"disabled" — disabled
+		//     で新規端末ペアリング開始のみ停止。
+		//   "CONVERSION_MODE": "enabled"(既定, 省略可)|"disabled" — disabled
+		//     で新規変換の開始のみ停止。
 	},
 	"browser": {
 		"binding": "BROWSER",

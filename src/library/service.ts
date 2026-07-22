@@ -3,6 +3,7 @@
 
 import type { Account } from "../auth/sessions";
 import { bumpLibraryVersionForDevices } from "../devices/repository";
+import { resolveLibraryWriteMode } from "../feature-flags";
 import { outputXtcKey } from "../jobs";
 import { resolveMaxLibraryBytesPerAccount, resolveMaxLibraryItemsPerAccount } from "../quotas";
 import { logAuditEvent } from "../security/audit";
@@ -102,10 +103,20 @@ function toDto(item: LibraryItem): LibraryItemDto {
  * path below.
  */
 export async function saveJobToLibrary(
-  env: Pick<Env, "APP_DB" | "XTC_BUCKET" | "MAX_LIBRARY_ITEMS_PER_ACCOUNT" | "MAX_LIBRARY_BYTES_PER_ACCOUNT">,
+  env: Pick<
+    Env,
+    "APP_DB" | "XTC_BUCKET" | "MAX_LIBRARY_ITEMS_PER_ACCOUNT" | "MAX_LIBRARY_BYTES_PER_ACCOUNT" | "LIBRARY_WRITE_MODE"
+  >,
   account: Account,
   request: FromJobRequest,
 ): Promise<LibraryItemDto> {
+  // 登録モード仕様 Phase3 §7: LIBRARY_WRITE_MODE==="read-only" のときだけ
+  // 新規保存を止める。閲覧(listLibrary)・更新(updateLibrary)・削除
+  // (deleteLibrary)・ダウンロード(getLibraryDownload)は対象外 — このガード
+  // はこの関数にしか無い。
+  if (resolveLibraryWriteMode(env) === "read-only") {
+    throw Errors.forbidden("LIBRARY_READ_ONLY", "saving new library items is currently disabled");
+  }
   if (!isValidJobId(request.jobId)) {
     throw Errors.badRequest("INVALID_JOB_ID", "jobId must be a UUID");
   }

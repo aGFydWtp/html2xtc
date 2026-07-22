@@ -21,7 +21,7 @@ import { ApiError, Errors } from "../security/errors";
 import type { Env } from "../types";
 import { deleteAccountCompletely } from "./account-deletion";
 import { verifyCsrf } from "./csrf";
-import { deleteCredentialById, listCredentialsForAccount } from "./repository";
+import { credentialExistsForAccount, deleteCredentialById, listCredentialsForAccount } from "./repository";
 import {
   buildExpiredSessionCookie,
   buildSessionCookie,
@@ -101,7 +101,13 @@ const LOGIN_VERIFY_FAILED_LIMIT = 30;
 const REGISTRATION_VERIFY_FAILED_LIMIT = 10;
 /** 招待照合失敗: 20/h/IP, fail-closed (登録モード仕様 Phase1 §5.7/§8c). */
 const INVITE_CHECK_FAILED_LIMIT = 20;
-/** アカウント削除: 5/日/account, fail-closed (登録モード仕様 Phase1 §5.7/§8d). */
+/**
+ * アカウント削除: 5/日/account, fail-closed (登録モード仕様 Phase1
+ * §5.7/§8d). Scoped by accountId alone (enforcePurposeRateLimit's
+ * `scope: "account"`, below) — not account+IP like every other purpose in
+ * this file — so switching IPs (mobile network, VPN) cannot reset the
+ * budget (PHASE1_REVIEW.md §Medium).
+ */
 const ACCOUNT_DELETION_LIMIT = 5;
 const ACCOUNT_DELETION_WINDOW_MS = 24 * 60 * 60 * 1000;
 
@@ -328,14 +334,24 @@ export function registerAuthRoutes(router: Router): void {
   router.delete("/api/me/passkeys/:passkeyId", async (request, env, params) => {
     const account = await requireAccount(request, env);
     requireCsrf(request, env);
-    const credentials = await listCredentialsForAccount(env.APP_DB, account.id);
-    if (credentials.length <= 1) {
-      // Never leave an account with zero ways to sign in (登録モード仕様
-      // Phase1 §5.6 "最後の1本は削除不可").
-      throw Errors.conflict("LAST_PASSKEY", "cannot delete your only passkey");
-    }
+    // The "never leave an account with zero ways to sign in" check
+    // (登録モード仕様 Phase1 §5.6 "最後の1本は削除不可") is folded into
+    // deleteCredentialById's own atomic conditional DELETE instead of being
+    // a separate count-then-delete here — see its doc comment
+    // (src/auth/repository.ts) and PHASE1_REVIEW.md §High: a prior
+    // read-then-decide-then-write version of this handler was a TOCTOU race
+    // that let two concurrent deletes both pass a stale "count > 1" check
+    // and empty an account's passkeys.
     const deleted = await deleteCredentialById(env.APP_DB, account.id, params.passkeyId);
     if (!deleted) {
+      // deleteCredentialById returning false is ambiguous between "not
+      // found/not owned" and "exists but is the last passkey" — this
+      // follow-up read (not itself race-prone) tells them apart for the
+      // response.
+      const exists = await credentialExistsForAccount(env.APP_DB, account.id, params.passkeyId);
+      if (exists) {
+        throw Errors.conflict("LAST_PASSKEY", "cannot delete your only passkey");
+      }
       throw Errors.notFound("PASSKEY_NOT_FOUND", "passkey not found");
     }
     logAuditEvent("passkey.deleted", { accountId: account.id, passkeyId: params.passkeyId });
@@ -356,6 +372,7 @@ export function registerAuthRoutes(router: Router): void {
       failClosed: true,
       extraKey: account.id,
       windowMs: ACCOUNT_DELETION_WINDOW_MS,
+      scope: "account",
     });
     if (limited !== null) {
       return limited;

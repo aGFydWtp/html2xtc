@@ -160,13 +160,54 @@ export async function listCredentialsForAccount(
   return result.results.map(fromCredentialRow);
 }
 
-/** Deletes one webauthn_credentials row, scoped to accountId (plan §16 — an account can only ever delete its own credential). Returns false if not found/not owned. Caller (routes.ts) must independently enforce the "never delete the last passkey" rule before calling this. */
+/**
+ * Atomically deletes one webauthn_credentials row, scoped to accountId
+ * (plan §16 — an account can only ever delete its own credential), while
+ * refusing to ever leave the account with zero passkeys (登録モード仕様
+ * Phase1 §5.6 "最後の1本は削除不可"). The "at least one other credential
+ * remains" check is folded into the DELETE's WHERE clause as a correlated
+ * subquery so the whole read-decide-write is one atomic SQL statement
+ * instead of a separate count-then-delete — see PHASE1_REVIEW.md §High:
+ * a caller-side `listCredentialsForAccount` count check before calling
+ * this was a TOCTOU race where two concurrent deletes could each read the
+ * same pre-delete count, both pass, and empty the account's passkeys,
+ * locking it out of this WebAuthn-only (no password/email fallback)
+ * service. Because D1/SQLite serializes statement execution, whichever of
+ * two concurrent callers' DELETEs actually runs second always evaluates
+ * the subquery against the first one's already-applied result.
+ *
+ * Returns false both when the credential doesn't exist for this account
+ * and when it does but is the account's last one — callers that need to
+ * tell those two apart for their HTTP response (routes.ts: 404 vs 409)
+ * should follow up with the read-only credentialExistsForAccount() below;
+ * a plain read can't itself race, only the read-decide-write combination
+ * this function replaces could.
+ */
 export async function deleteCredentialById(db: D1Database, accountId: string, id: string): Promise<boolean> {
   const result = await db
-    .prepare(`DELETE FROM webauthn_credentials WHERE id = ? AND account_id = ?`)
-    .bind(id, accountId)
+    .prepare(
+      `DELETE FROM webauthn_credentials
+       WHERE id = ? AND account_id = ?
+         AND (SELECT COUNT(*) FROM webauthn_credentials WHERE account_id = ?) > 1`,
+    )
+    .bind(id, accountId, accountId)
     .run();
   return (result.meta.changes ?? 0) > 0;
+}
+
+/**
+ * Read-only existence check used by routes.ts after a failed
+ * deleteCredentialById() to distinguish "credential not found/not owned"
+ * (404) from "credential exists but is the account's last passkey" (409).
+ * Safe to call after the fact — a plain SELECT cannot race with anything,
+ * unlike the count-then-delete pattern deleteCredentialById replaced.
+ */
+export async function credentialExistsForAccount(db: D1Database, accountId: string, id: string): Promise<boolean> {
+  const row = await db
+    .prepare(`SELECT 1 FROM webauthn_credentials WHERE id = ? AND account_id = ? LIMIT 1`)
+    .bind(id, accountId)
+    .first();
+  return row !== null;
 }
 
 /** Updates a credential's signCount and last_used_at after a successful login verification (replay-attack detection relies on the stored counter only ever increasing). */

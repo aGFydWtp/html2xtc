@@ -130,3 +130,21 @@ describe("startRegistration — REGISTRATION_MODE=closed gates new-account regis
     expect(options.user.name).toBe("Haruki");
   });
 });
+
+describe("startRegistration — REGISTRATION_MODE=open (Phase 1: not yet implemented, behaves like 'invite')", () => {
+  // PHASE1_REVIEW.md §Nit: resolveRegistrationMode can return "open", but
+  // Phase 1 has no open-registration code path — src/auth/webauthn.ts and
+  // src/auth/registration-mode.ts only special-case "closed"; anything else
+  // (including "open") falls through to the same invite-required behavior
+  // as the default "invite" mode. This test pins that fallback down as a
+  // regression guard: when Phase 2 actually implements "open", this test is
+  // expected to start failing and should be updated deliberately rather
+  // than the fallback silently changing shape first.
+  it("still requires an invite for a new-account attempt with no invite at all (INVITE_REQUIRED, not allowed through)", async () => {
+    const db = new FakeD1();
+    await expect(startRegistration(env(db, { REGISTRATION_MODE: "open" }), {})).rejects.toMatchObject({
+      status: 400,
+      code: "INVITE_REQUIRED",
+    });
+  });
+});

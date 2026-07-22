@@ -102,6 +102,21 @@ export function purposeRateLimitKey(purpose: string, ipKey: string | null, extra
   return extra !== undefined ? `${purpose}:${ipKey}:${extra}` : `${purpose}:${ipKey}`;
 }
 
+/**
+ * IP-independent counterpart to purposeRateLimitKey, for purposes that must
+ * stay scoped to a stable identifier (an accountId) rather than the
+ * client's IP (PHASE1_REVIEW.md §Medium: account.deletion's "5/日/account"
+ * limit, 登録モード仕様 Phase1 §5.7/§8d, was accidentally also scoped by IP
+ * because every existing purpose goes through purposeRateLimitKey, so
+ * switching IPs reset the budget). Every purpose but account.deletion keeps
+ * calling purposeRateLimitKey above unchanged — this is opted into per call
+ * site via enforcePurposeRateLimit's `scope: "account"` option
+ * (src/ratelimiter.ts), not a default.
+ */
+export function accountRateLimitKey(purpose: string, accountId: string): string {
+  return `${purpose}:account:${accountId}`;
+}
+
 /** Window state as persisted in the Durable Object's storage. */
 export interface RateLimitWindow {
   windowStartMs: number;

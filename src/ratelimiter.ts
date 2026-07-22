@@ -4,6 +4,7 @@
 import { DurableObject } from "cloudflare:workers";
 import {
   RATE_LIMIT_WINDOW_MS,
+  accountRateLimitKey,
   decideFixedWindow,
   purposeRateLimitKey,
   rateLimitKey,
@@ -129,6 +130,17 @@ export interface PurposeRateLimitOptions {
    * stance for the public conversion API).
    */
   failClosed: boolean;
+  /**
+   * Key scope (PHASE1_REVIEW.md §Medium):
+   * - "ip" (default): every purpose so far — the counter is per (purpose,
+   *   client IP[, extraKey]), via purposeRateLimitKey. Omitting this field
+   *   keeps existing call sites byte-for-byte unchanged.
+   * - "account": the counter is per (purpose, extraKey) only, via
+   *   accountRateLimitKey — the client's IP plays no part, so switching IPs
+   *   cannot reset the budget. Requires `extraKey` (treated as the
+   *   accountId). Only account.deletion (src/auth/routes.ts) uses this.
+   */
+  scope?: "ip" | "account";
 }
 
 /**
@@ -147,12 +159,25 @@ export async function enforcePurposeRateLimit(
   env: Env,
   options: PurposeRateLimitOptions,
 ): Promise<Response | null> {
-  const ipKey = rateLimitKey(request.headers.get("CF-Connecting-IP"));
-  const key = purposeRateLimitKey(options.purpose, ipKey, options.extraKey);
+  let key: string | null;
+  if (options.scope === "account") {
+    if (options.extraKey === undefined) {
+      // Programmer error, not a runtime/user condition: every scope:
+      // "account" call site must supply the accountId as extraKey.
+      throw new Error(
+        `enforcePurposeRateLimit: scope "account" requires extraKey (accountId) for purpose "${options.purpose}"`,
+      );
+    }
+    key = accountRateLimitKey(options.purpose, options.extraKey);
+  } else {
+    const ipKey = rateLimitKey(request.headers.get("CF-Connecting-IP"));
+    key = purposeRateLimitKey(options.purpose, ipKey, options.extraKey);
+  }
   if (key === null) {
     // No client IP to scope by (local dev, or an edge that stripped the
     // header) — see rateLimitKey's own doc; this cannot happen from the
-    // real Cloudflare edge in production.
+    // real Cloudflare edge in production. Only reachable for scope: "ip"
+    // (the default) — scope: "account" always produces a key.
     return null;
   }
 

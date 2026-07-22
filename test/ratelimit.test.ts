@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   RATE_LIMIT_WINDOW_MS,
+  accountRateLimitKey,
   decideFixedWindow,
   purposeRateLimitKey,
   rateLimitKey,
@@ -69,6 +70,39 @@ describe("purposeRateLimitKey", () => {
     const bare = rateLimitKey("203.0.113.7")!;
     const namespaced = purposeRateLimitKey("auth.login.start", bare);
     expect(namespaced).not.toBe(bare);
+  });
+});
+
+describe("accountRateLimitKey (PHASE1_REVIEW.md §Medium: account.deletion must be IP-independent)", () => {
+  it("produces the same key for the same purpose+account regardless of IP", () => {
+    // accountRateLimitKey takes no IP argument at all — this is the whole
+    // point of the fix. Two calls with the same (purpose, accountId) always
+    // collide, which is exactly what "5/日/account" (not "5/日/(account,IP)")
+    // requires: switching IPs must not reset the budget.
+    const a = accountRateLimitKey("account.deletion", "acct-1");
+    const b = accountRateLimitKey("account.deletion", "acct-1");
+    expect(a).toBe(b);
+  });
+
+  it("gives different accounts distinct keys", () => {
+    const a = accountRateLimitKey("account.deletion", "acct-1");
+    const b = accountRateLimitKey("account.deletion", "acct-2");
+    expect(a).not.toBe(b);
+  });
+
+  it("gives different purposes distinct keys for the same account", () => {
+    const a = accountRateLimitKey("account.deletion", "acct-1");
+    const b = accountRateLimitKey("some.other.purpose", "acct-1");
+    expect(a).not.toBe(b);
+  });
+
+  it("never collides with the IP-scoped purposeRateLimitKey for the same purpose+ip-shaped string", () => {
+    // Belt-and-suspenders: even if an accountId happened to look like an IP
+    // key (e.g. "v4:203.0.113.7"), the "account" literal segment keeps the
+    // two namespaces apart.
+    const ipScoped = purposeRateLimitKey("account.deletion", "v4:203.0.113.7");
+    const accountScoped = accountRateLimitKey("account.deletion", "v4:203.0.113.7");
+    expect(accountScoped).not.toBe(ipScoped);
   });
 });
 

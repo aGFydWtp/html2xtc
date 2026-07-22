@@ -74,7 +74,7 @@ export const DEFAULT_TEXT_OPTIONS: TextConvertOptions = {
 // §6.3 縦書き既定値: ユーザーが個別設定を変更していない状態で縦書きへ
 // 切り替えた場合のみ適用する。
 export const VERTICAL_DEFAULT_OVERRIDES: Pick<TextConvertOptions, "font" | "fontSizePx" | "lineHeight"> = {
-  font: "BIZ UDMincho",
+  font: "BIZ UDPMincho",
   fontSizePx: 18,
   lineHeight: 1.9,
 };
@@ -115,7 +115,7 @@ type TextPresetPatch = Partial<Pick<TextConvertOptions, "layout" | "font" | "fon
 
 export const TEXT_PRESETS: Record<TextPresetId, TextPresetPatch> = {
   standard: { layout: "horizontal", font: "BIZ UDPGothic", fontSizePx: 18, lineHeight: 1.8 },
-  vertical_novel: { layout: "vertical", font: "BIZ UDMincho", fontSizePx: 18, lineHeight: 1.9 },
+  vertical_novel: { layout: "vertical", font: "BIZ UDPMincho", fontSizePx: 18, lineHeight: 1.9 },
   large_font: { fontSizePx: 23, lineHeight: 1.8 },
 };
 
@@ -125,7 +125,7 @@ export function applyTextPreset(options: TextConvertOptions, preset: TextPresetI
 
 // --- フォント候補（ユーザー指示: 自由入力ではなく候補選択式） -----------------------
 // バックエンド（src/fonts.ts）で既に 400/700 デュアルウェイト対応済みの
-// BIZ UDPGothic / BIZ UDMincho を含む、日本語書籍向けの定番 Google Fonts のみを
+// BIZ UDPGothic / BIZ UDPMincho を含む、日本語書籍向けの定番 Google Fonts のみを
 // 候補にする。
 export interface FontCandidate {
   family: string;
@@ -134,7 +134,7 @@ export interface FontCandidate {
 
 export const FONT_CANDIDATES: readonly FontCandidate[] = [
   { family: "BIZ UDPGothic", label: "BIZ UDPGothic" },
-  { family: "BIZ UDMincho", label: "BIZ UDMincho" },
+  { family: "BIZ UDPMincho", label: "BIZ UDPMincho" },
   { family: "Noto Sans JP", label: "Noto Sans JP" },
   { family: "Noto Serif JP", label: "Noto Serif JP" },
   { family: "Zen Maru Gothic", label: "Zen Maru Gothic" },

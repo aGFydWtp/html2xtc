@@ -30,12 +30,12 @@ export function isAozoraBunkoUrl(url: URL): boolean {
 }
 
 /** Default body family for Aozora Bunko documents (literary serif, UD). */
-const AOZORA_DEFAULT_FONT_FAMILY = "BIZ UDMincho";
+const AOZORA_DEFAULT_FONT_FAMILY = "BIZ UDPMincho";
 
 /**
  * Resolves the request's optional layout/font fields into concrete render
  * options. Explicit values win; anything absent OR invalid falls back
- * fail-soft (never a 4xx) to the per-site default — vertical + BIZ UDMincho
+ * fail-soft (never a 4xx) to the per-site default — vertical + BIZ UDPMincho
  * for Aozora Bunko XHTML, horizontal + BIZ UDPGothic everywhere else. So an
  * Aozora page CAN be forced horizontal and any site CAN be rendered
  * vertical/mincho; the URL check only fills the blanks.

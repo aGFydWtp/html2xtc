@@ -657,7 +657,7 @@ async function handleConvert(request: Request, env: Env): Promise<Response> {
   }
   const { target, mode, layout, font } = parsed;
   // Explicit layout/font win; blanks (and invalid values, fail-soft) resolve
-  // to per-site defaults — Aozora Bunko: vertical + BIZ UDMincho.
+  // to per-site defaults — Aozora Bunko: vertical + BIZ UDPMincho.
   const options = resolveRenderOptions(target, layout, font);
 
   const jobId = crypto.randomUUID();

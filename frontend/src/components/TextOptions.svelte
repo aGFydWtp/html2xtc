@@ -196,6 +196,10 @@
   .field { display: flex; flex-direction: column; gap: 6px; }
   .field-row { display: flex; flex-wrap: wrap; gap: 20px; }
   .field-row .field { flex: 1; min-width: 160px; }
+  /* スマホ幅では2列だと各列が窮屈になるため、詳細設定の各行を縦積みの1列にする。 */
+  @media (max-width: 600px) {
+    .field-row { flex-direction: column; gap: 16px; }
+  }
   .opt-label { font-size: 13px; font-weight: 600; color: var(--muted2); letter-spacing: .02em; }
   .field-note { margin: 2px 0 0; font-size: 12px; color: var(--muted); }
 

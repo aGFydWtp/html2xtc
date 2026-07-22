@@ -14,10 +14,13 @@ import type {
   PublicKeyCredentialRequestOptionsJSON,
   RegistrationResponseJSON,
 } from "@simplewebauthn/server";
+import { resolveMaxPasskeysPerAccount } from "../quotas";
+import { logAuditEvent } from "../security/audit";
 import { base64UrlDecode, sha256Hex } from "../security/crypto";
 import { Errors } from "../security/errors";
 import type { Env } from "../types";
 import { consumeChallenge, issueChallenge } from "./challenges";
+import { resolveRegistrationMode } from "./registration-mode";
 import {
   deleteAccountById,
   findCredentialByCredentialId,
@@ -130,9 +133,17 @@ function toExcludeCredentials(
  * params.existingAccount / params.invite must be usable; anything else is a
  * 400. residentKey "required" + userVerification "required" (plan §5.1 —
  * discoverable credentials, UV required rather than merely preferred).
+ *
+ * Registration mode (登録モード仕様 Phase1 §5.1): only gates *new*-account
+ * registration (params.invite / no params at all) — adding a passkey to an
+ * already-authenticated existingAccount is never blocked by REGISTRATION_MODE.
+ * "closed" rejects immediately, before even checking for an invite token.
+ * "open" is not yet implemented in Phase 1 (still requires a valid invite,
+ * the same as the default "invite" mode) — see the TODO below;
+ * invite-less registration is Phase 2's responsibility.
  */
 export async function startRegistration(
-  env: Pick<Env, "APP_DB" | "WEBAUTHN_RP_ID">,
+  env: Pick<Env, "APP_DB" | "WEBAUTHN_RP_ID" | "REGISTRATION_MODE" | "MAX_PASSKEYS_PER_ACCOUNT">,
   params: StartRegistrationParams,
 ): Promise<PublicKeyCredentialCreationOptionsJSON> {
   const rpId = resolveWebauthnRpId(env);
@@ -147,8 +158,26 @@ export async function startRegistration(
     userId = account.id;
     userDisplayName = account.displayName;
     metadata = { kind: "add-credential", accountId: account.id };
-    excludeCredentials = toExcludeCredentials(await listCredentialsForAccount(env.APP_DB, account.id));
-  } else if (params.invite !== undefined) {
+    const existingCredentials = await listCredentialsForAccount(env.APP_DB, account.id);
+    // Passkey-count quota (登録モード仕様 Phase1 §5.3), checked here — before
+    // the invite-consumption batch doesn't apply to this branch (there's no
+    // invite to consume when adding a passkey to an existing account), so
+    // there's no ordering hazard like the new-account branch below.
+    if (existingCredentials.length >= resolveMaxPasskeysPerAccount(env)) {
+      logAuditEvent("account.quota.exceeded", { accountId: account.id, quota: "passkeys" });
+      throw Errors.conflict("PASSKEY_LIMIT_EXCEEDED", "passkey limit reached");
+    }
+    excludeCredentials = toExcludeCredentials(existingCredentials);
+  } else {
+    const mode = resolveRegistrationMode(env);
+    if (mode === "closed") {
+      throw Errors.forbidden("REGISTRATION_CLOSED", "new account registration is closed");
+    }
+    // Phase 2: open モードで招待なし登録を許可する（mode === "open" は Phase 1
+    // では未実装 — 安全側として従来どおり招待必須のまま扱う）。
+    if (params.invite === undefined) {
+      throw Errors.badRequest("INVITE_REQUIRED", "inviteToken is required to create an account");
+    }
     const tokenHash = await sha256Hex(params.invite.inviteToken);
     const invite = await findInviteByTokenHash(env.APP_DB, tokenHash);
     if (invite === null || !isInviteUsable(invite, Date.now())) {
@@ -162,8 +191,6 @@ export async function startRegistration(
     userId = pendingAccountId;
     userDisplayName = displayName;
     metadata = { kind: "new-account", inviteId: invite.id, pendingAccountId, displayName };
-  } else {
-    throw Errors.badRequest("INVITE_REQUIRED", "inviteToken is required to create an account");
   }
 
   const issued = await issueChallenge(env, "registration", null, metadata);

@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 aGFydWtp
 
+import { resolveMaxActiveSessionsPerAccount } from "../quotas";
+import { logAuditEvent } from "../security/audit";
 import { randomToken, sha256Hex } from "../security/crypto";
+import { Errors } from "../security/errors";
 import type { Env } from "../types";
 
 /**
@@ -123,17 +126,63 @@ export function isSessionValid(record: SessionRecord, nowMs: number): boolean {
   return new Date(record.expiresAt).getTime() > nowMs;
 }
 
+/** Counts an account's active (not revoked, not expired) sessions — the "sessions" quota (登録モード仕様 Phase1 §5.3). */
+export async function countActiveSessions(env: Pick<Env, "APP_DB">, accountId: string): Promise<number> {
+  const row = await env.APP_DB.prepare(
+    `SELECT COUNT(*) AS count FROM sessions WHERE account_id = ? AND revoked_at IS NULL AND expires_at > ?`,
+  )
+    .bind(accountId, new Date().toISOString())
+    .first<{ count: number }>();
+  return row?.count ?? 0;
+}
+
+/** Revokes the account's oldest active session (by created_at) — used by createSession when the session quota is already met. Returns false if there was no active session to revoke (can only happen if the quota is 0 or a concurrent revoke won first). */
+async function revokeOldestActiveSession(env: Pick<Env, "APP_DB">, accountId: string): Promise<boolean> {
+  const oldest = await env.APP_DB.prepare(
+    `SELECT id FROM sessions WHERE account_id = ? AND revoked_at IS NULL AND expires_at > ?
+     ORDER BY created_at ASC LIMIT 1`,
+  )
+    .bind(accountId, new Date().toISOString())
+    .first<{ id: string }>();
+  if (oldest === null) {
+    return false;
+  }
+  const result = await env.APP_DB.prepare(
+    `UPDATE sessions SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL`,
+  )
+    .bind(new Date().toISOString(), oldest.id)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
 /**
  * Persists a new session for accountId and returns the raw token (set as
  * the session Cookie) plus its ISO-8601 UTC expiry. Only the token's
- * peppered SHA-256 hash is written to D1. Intended to be called by the
- * login/registration-verify routes added in a later phase.
+ * peppered SHA-256 hash is written to D1. Called by the login/registration-
+ * verify routes (src/auth/webauthn.ts).
+ *
+ * Session quota (登録モード仕様 Phase1 §5.3): when the account is already at
+ * MAX_ACTIVE_SESSIONS_PER_ACCOUNT, the oldest active session is revoked to
+ * make room before the new one is issued — a session limit reads as "your
+ * least-recently-created session was signed out", not a hard failure, unless
+ * revocation itself somehow finds nothing to revoke (a concurrent revoke won
+ * first), in which case this throws 409 SESSION_LIMIT_EXCEEDED rather than
+ * silently exceeding the quota.
  */
 export async function createSession(
-  env: Pick<Env, "APP_DB" | "SESSION_PEPPER" | "SESSION_TTL_DAYS">,
+  env: Pick<Env, "APP_DB" | "SESSION_PEPPER" | "SESSION_TTL_DAYS" | "MAX_ACTIVE_SESSIONS_PER_ACCOUNT">,
   accountId: string,
   userAgent: string | null,
 ): Promise<{ token: string; expiresAt: string; maxAgeSeconds: number }> {
+  const activeSessionCount = await countActiveSessions(env, accountId);
+  if (activeSessionCount >= resolveMaxActiveSessionsPerAccount(env)) {
+    const revoked = await revokeOldestActiveSession(env, accountId);
+    if (!revoked) {
+      logAuditEvent("account.quota.exceeded", { accountId, quota: "sessions" });
+      throw Errors.conflict("SESSION_LIMIT_EXCEEDED", "session limit reached");
+    }
+  }
+
   const token = generateSessionToken();
   const pepper = resolveSessionPepper(env);
   const tokenHash = await hashSessionToken(token, pepper);

@@ -76,6 +76,9 @@ export const Errors = {
   conflict(code: string, message: string): ApiError {
     return new ApiError(409, code, message);
   },
+  payloadTooLarge(code: string, message: string): ApiError {
+    return new ApiError(413, code, message);
+  },
   internal(message = "internal error"): ApiError {
     return new ApiError(500, "INTERNAL_ERROR", message);
   },

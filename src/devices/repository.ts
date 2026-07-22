@@ -114,6 +114,15 @@ export async function listDevicesForAccount(db: D1Database, accountId: string): 
   return results.map(fromDeviceRow);
 }
 
+/** Counts an account's active (status='active') devices — the "devices" quota (登録モード仕様 Phase1 §5.3). */
+export async function countActiveDevices(db: D1Database, accountId: string): Promise<number> {
+  const row = await db
+    .prepare(`SELECT COUNT(*) AS count FROM devices WHERE account_id = ? AND status = 'active'`)
+    .bind(accountId)
+    .first<{ count: number }>();
+  return row?.count ?? 0;
+}
+
 /** Renames a device; returns false if not found/owned. */
 export async function updateDeviceName(
   db: D1Database,

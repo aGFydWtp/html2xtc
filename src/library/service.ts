@@ -4,9 +4,12 @@
 import type { Account } from "../auth/sessions";
 import { bumpLibraryVersionForDevices } from "../devices/repository";
 import { outputXtcKey } from "../jobs";
+import { resolveMaxLibraryBytesPerAccount, resolveMaxLibraryItemsPerAccount } from "../quotas";
+import { logAuditEvent } from "../security/audit";
 import { Errors } from "../security/errors";
 import type { Env } from "../types";
 import {
+  countActiveLibraryItems,
   findLibraryItemByJobId,
   getLibraryItem,
   hardDeleteLibraryItem,
@@ -14,6 +17,7 @@ import {
   listLibraryItems,
   removeItemFromAllDeviceLibraries,
   softDeleteLibraryItem,
+  sumLibraryBytes,
   updateLibraryItem,
 } from "./repository";
 import type { LibraryItem } from "./repository";
@@ -89,9 +93,16 @@ function toDto(item: LibraryItem): LibraryItemDto {
  * Rolls the R2 copy back best-effort if the D1 insert fails, and if that
  * failure was actually a concurrent duplicate save, returns the other
  * request's result instead of an error.
+ *
+ * Quota checks (登録モード仕様 Phase1 §5.3): the item-count quota is checked
+ * before the R2 copy (cheap to reject early); the byte quota can only be
+ * checked *after* the copy (the real size is only known once copied), so a
+ * quota-exceeding copy is rolled back via deleteLibraryStorageBestEffort
+ * before returning 413 — mirroring the existing D1-insert-failure rollback
+ * path below.
  */
 export async function saveJobToLibrary(
-  env: Pick<Env, "APP_DB" | "XTC_BUCKET">,
+  env: Pick<Env, "APP_DB" | "XTC_BUCKET" | "MAX_LIBRARY_ITEMS_PER_ACCOUNT" | "MAX_LIBRARY_BYTES_PER_ACCOUNT">,
   account: Account,
   request: FromJobRequest,
 ): Promise<LibraryItemDto> {
@@ -104,11 +115,24 @@ export async function saveJobToLibrary(
     return toDto(existing);
   }
 
+  const itemCount = await countActiveLibraryItems(env.APP_DB, account.id);
+  if (itemCount >= resolveMaxLibraryItemsPerAccount(env)) {
+    logAuditEvent("account.quota.exceeded", { accountId: account.id, quota: "library_items" });
+    throw Errors.conflict("LIBRARY_ITEM_LIMIT_EXCEEDED", "library item limit reached");
+  }
+
   const sourceKey = outputXtcKey(request.jobId);
   const itemId = crypto.randomUUID();
   const copied = await copyToLibraryStorage(env, sourceKey, account.id, itemId);
   if (copied === null) {
     throw Errors.notFound("JOB_OUTPUT_NOT_FOUND", "job output not found");
+  }
+
+  const existingBytes = await sumLibraryBytes(env.APP_DB, account.id);
+  if (existingBytes + copied.sizeBytes > resolveMaxLibraryBytesPerAccount(env)) {
+    await deleteLibraryStorageBestEffort(env, copied.key);
+    logAuditEvent("account.quota.exceeded", { accountId: account.id, quota: "library_bytes" });
+    throw Errors.payloadTooLarge("LIBRARY_STORAGE_LIMIT_EXCEEDED", "library storage limit reached");
   }
 
   const requestedTitle = request.title !== undefined ? sanitizeText(request.title, MAX_TITLE_LENGTH) : "";

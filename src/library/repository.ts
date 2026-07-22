@@ -220,3 +220,21 @@ export async function removeItemFromAllDeviceLibraries(db: D1Database, itemId: s
 export async function hardDeleteLibraryItem(db: D1Database, itemId: string): Promise<void> {
   await db.prepare(`DELETE FROM library_items WHERE id = ?`).bind(itemId).run();
 }
+
+/** Counts an account's non-deleted library_items — the "library items" quota (登録モード仕様 Phase1 §5.3). */
+export async function countActiveLibraryItems(db: D1Database, accountId: string): Promise<number> {
+  const row = await db
+    .prepare(`SELECT COUNT(*) AS count FROM library_items WHERE account_id = ? AND deleted_at IS NULL`)
+    .bind(accountId)
+    .first<{ count: number }>();
+  return row?.count ?? 0;
+}
+
+/** Sums size_bytes across an account's non-deleted library_items — the "library bytes" quota (登録モード仕様 Phase1 §5.3). */
+export async function sumLibraryBytes(db: D1Database, accountId: string): Promise<number> {
+  const row = await db
+    .prepare(`SELECT COALESCE(SUM(size_bytes), 0) AS total FROM library_items WHERE account_id = ? AND deleted_at IS NULL`)
+    .bind(accountId)
+    .first<{ total: number }>();
+  return row?.total ?? 0;
+}

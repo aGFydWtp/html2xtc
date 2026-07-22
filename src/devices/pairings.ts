@@ -3,13 +3,16 @@
 
 import { resolveWebauthnOrigin } from "../auth/webauthn";
 import type { Account } from "../auth/sessions";
+import { resolveMaxDevicesPerAccount } from "../quotas";
 import { decryptWithPairingKey, encryptWithPairingKey } from "../security/aes-gcm";
+import { logAuditEvent } from "../security/audit";
 import { randomToken, sha256Hex, timingSafeEqual } from "../security/crypto";
 import { Errors } from "../security/errors";
 import type { Env } from "../types";
 import {
   approvePairingRow,
   completePairingRow,
+  countActiveDevices,
   getPairingById,
   getPairingByUserCode,
   hardDeleteDevice,
@@ -335,7 +338,7 @@ export interface ApprovedDeviceDto {
  * just-created device row is rolled back rather than left orphaned.
  */
 export async function approvePairingForAccount(
-  env: Pick<Env, "APP_DB" | "PAIRING_ENCRYPTION_KEY">,
+  env: Pick<Env, "APP_DB" | "PAIRING_ENCRYPTION_KEY" | "MAX_DEVICES_PER_ACCOUNT">,
   account: Account,
   pairingId: string,
   rawName: string,
@@ -348,6 +351,14 @@ export async function approvePairingForAccount(
   const pairing = await getPairingById(env.APP_DB, pairingId);
   if (pairing === null || !isPairingApprovable(pairing, Date.now())) {
     throw Errors.conflict("PAIRING_NOT_PENDING", "pairing is not pending");
+  }
+
+  // Device-count quota (登録モード仕様 Phase1 §5.3): checked before creating
+  // the device row so a rejection never leaves a pairing half-approved.
+  const activeDeviceCount = await countActiveDevices(env.APP_DB, account.id);
+  if (activeDeviceCount >= resolveMaxDevicesPerAccount(env)) {
+    logAuditEvent("account.quota.exceeded", { accountId: account.id, quota: "devices" });
+    throw Errors.conflict("DEVICE_LIMIT_EXCEEDED", "device limit reached");
   }
 
   const deviceId = crypto.randomUUID();

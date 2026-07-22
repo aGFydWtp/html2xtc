@@ -196,4 +196,21 @@ export interface Env {
    * the passkey registration routes added in a later phase.
    */
   REGISTRATION_INVITE_SECRET?: string;
+  /**
+   * Registration mode: "invite" (default) | "open" | "closed" — resolved by
+   * resolveRegistrationMode (src/auth/registration-mode.ts). Phase 1 only
+   * fully implements "invite" (and "closed" as a minimal 403); "open"
+   * (invite-less registration) is Phase 2's responsibility.
+   */
+  REGISTRATION_MODE?: string;
+  /** Max non-deleted library_items rows per account (登録モード仕様 Phase1 §5.3). Default 100 — see src/quotas.ts. */
+  MAX_LIBRARY_ITEMS_PER_ACCOUNT?: string;
+  /** Max total library_items.size_bytes per account. Default 1 GiB (1073741824) — see src/quotas.ts. */
+  MAX_LIBRARY_BYTES_PER_ACCOUNT?: string;
+  /** Max active (status='active') devices per account. Default 5 — see src/quotas.ts. */
+  MAX_DEVICES_PER_ACCOUNT?: string;
+  /** Max non-revoked, unexpired sessions per account (oldest is auto-revoked past this). Default 10 — see src/quotas.ts. */
+  MAX_ACTIVE_SESSIONS_PER_ACCOUNT?: string;
+  /** Max webauthn_credentials rows per account. Default 5 — see src/quotas.ts. */
+  MAX_PASSKEYS_PER_ACCOUNT?: string;
 }

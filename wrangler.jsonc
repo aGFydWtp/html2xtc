@@ -26,7 +26,18 @@
 		// domain route below. SESSION_PEPPER / PAIRING_ENCRYPTION_KEY /
 		// REGISTRATION_INVITE_SECRET stay Wrangler secrets, never vars.
 		"WEBAUTHN_RP_ID": "xtc.hr20k.com",
-		"WEBAUTHN_ORIGIN": "https://xtc.hr20k.com"
+		"WEBAUTHN_ORIGIN": "https://xtc.hr20k.com",
+		// 登録モード仕様 Phase 1 (src/auth/registration-mode.ts): "invite" |
+		// "open" | "closed". 不正値/未設定は "invite" にフォールバックするので
+		// このキー自体が省略されても動作は変わらない。
+		"REGISTRATION_MODE": "invite",
+		// アカウント単位クォータ既定値（src/quotas.ts）。文字列で入る点に注意
+		// — resolver側でparseInt+NaNフォールバックする。
+		"MAX_LIBRARY_ITEMS_PER_ACCOUNT": "100",
+		"MAX_LIBRARY_BYTES_PER_ACCOUNT": "1073741824",
+		"MAX_DEVICES_PER_ACCOUNT": "5",
+		"MAX_ACTIVE_SESSIONS_PER_ACCOUNT": "10",
+		"MAX_PASSKEYS_PER_ACCOUNT": "5"
 	},
 	"browser": {
 		"binding": "BROWSER",

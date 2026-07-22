@@ -151,10 +151,11 @@ export interface Messages {
   text_err_upload_failed: string;
 
   // --- X3実機(XTC)プレビュー（POST /preview/text、実装仕様書 §18） -----------------
-  text_x3_preview_button: string;
+  text_x3_preview_regenerate_button: string;
   text_x3_preview_generating: string;
   text_x3_page_indicator: (n: number, total: number) => string;
   text_x3_preview_note: string;
+  text_x3_preview_stale_note: string;
   text_x3_preview_rate_limited: string;
   text_x3_preview_timeout: string;
   text_x3_preview_too_long: string;
@@ -392,10 +393,11 @@ export const I18N: Record<Lang, Messages> = {
     text_err_pdf_too_large: "組版後のPDFが大きすぎます。文字サイズや余白を調整してください。",
     text_err_upload_failed: "テキストファイルのアップロードに失敗しました。",
 
-    text_x3_preview_button: "X3実機プレビューを生成",
+    text_x3_preview_regenerate_button: "X3実機プレビューを再生成",
     text_x3_preview_generating: "実機プレビューを生成しています…",
     text_x3_page_indicator: (n, total) => `${n} / ${total}`,
     text_x3_preview_note: "本文先頭部分のみを変換しています。",
+    text_x3_preview_stale_note: "設定が変わっています。「再生成」で最新の実機プレビューに更新できます。",
     text_x3_preview_rate_limited: "リクエストが多すぎます。しばらくしてから再試行してください。",
     text_x3_preview_timeout: "実機プレビューの生成がタイムアウトしました。",
     text_x3_preview_too_long: "プレビュー対象の本文が長すぎます。",
@@ -630,10 +632,11 @@ export const I18N: Record<Lang, Messages> = {
     text_err_pdf_too_large: "The typeset PDF is too large. Try adjusting the font size or margins.",
     text_err_upload_failed: "Failed to upload the text file.",
 
-    text_x3_preview_button: "Generate X3 device preview",
+    text_x3_preview_regenerate_button: "Regenerate X3 device preview",
     text_x3_preview_generating: "Generating the device preview…",
     text_x3_page_indicator: (n, total) => `${n} / ${total}`,
     text_x3_preview_note: "Only the beginning of the text is converted for this preview.",
+    text_x3_preview_stale_note: "Settings have changed. Use \"Regenerate\" to update the device preview.",
     text_x3_preview_rate_limited: "Too many requests. Please try again later.",
     text_x3_preview_timeout: "Generating the device preview timed out.",
     text_x3_preview_too_long: "The preview text is too long.",

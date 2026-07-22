@@ -12,12 +12,14 @@
     type TextConvertOptions,
     type TextPresetId,
   } from "../lib/text-options";
+  import { selectTextPreview } from "../lib/text-preview";
   import {
     buildTextXtcPreviewCacheKey,
     LimitedCache,
     requestTextXtcPreview,
     resolveTextPreviewErrorMessageKey,
     TEXT_X3_PREVIEW_CACHE_LIMIT,
+    textXtcPreviewCacheKeyFromSelected,
     TextPreviewRequestError,
   } from "../lib/text-xtc-preview";
   import { decodeFrame, parseXtc, type ParsedXtc } from "../lib/xtc";
@@ -80,6 +82,12 @@
   let x3CurrentPage = $state(0);
   let x3CanvasEl = $state<HTMLCanvasElement | null>(null);
 
+  // 現在表示中のX3プレビュー画像が、どの入力（本文+options）から生成されたかを
+  // 記録する。generateX3Preview() が実際に x3Parsed を表示にセットする箇所
+  // （キャッシュヒット/fetch成功の両方）で更新する。currentPreviewKey との
+  // 比較で「表示中のプレビューは古い設定のままか（stale）」を判定する。
+  let x3DisplayedKey = $state<string | null>(null);
+
   // 同一入力（送信本文+options）でのX3プレビュー再生成をAPI再取得なしで即座に
   // 表示するためのメモリキャッシュ。素の Map（$state不要）— UI描画には関与せず、
   // generateX3Preview() 内でのみ読み書きする内部最適化。1ファイル=1インスタンス
@@ -121,6 +129,20 @@
   const lineCount = $derived(countLines(normalizedText));
   const optionsValid = $derived(isValidTextOptions(options));
   const canSubmit = $derived(status === "ready" && optionsValid && !uploading);
+
+  // selectTextPreview は本文全文（最大5MiB）を走査するため normalizedText だけに
+  // 依存させ、options 編集（スライダー/表題入力等）の毎tickで再スキャンが走らない
+  // ようにする（normalizedText 自体は150msデバウンス済み）。currentPreviewKey は
+  // この切り出し済み本文 + options のJSON化のみで組み、options変更時のコストを
+  // 小さく保つ。buildTextXtcPreviewCacheKey と生成される文字列は完全に一致する。
+  const x3PreviewText = $derived(selectTextPreview(normalizedText));
+  // 「今の入力（本文+options）に対応するキャッシュキー」と「表示中プレビューのキー」を
+  // 比較し、詳細設定の変更等でプレビューが古くなっている(stale)かどうかを判定する。
+  const currentPreviewKey = $derived(textXtcPreviewCacheKeyFromSelected(x3PreviewText, options));
+  const x3Stale = $derived(x3Parsed !== null && x3DisplayedKey !== null && currentPreviewKey !== x3DisplayedKey);
+  // まだ何も表示していない/直前が失敗している(x3DisplayedKey === null)場合はリトライ
+  // できるよう活性にする。表示中プレビューと現在の入力が一致していれば非活性。
+  const canRegenerate = $derived(optionsValid && !x3PreviewGenerating && currentPreviewKey !== x3DisplayedKey);
 
   // options はプリセットや setTextLayout でオブジェクトごと差し替わる。$effect 内で
   // options.* を直接読むと参照の変更だけで再実行され、レイアウト切替のたびに再デコード
@@ -199,6 +221,11 @@
 
   function applyPreset(preset: TextPresetId): void {
     options = applyTextPreset(options, preset);
+    // プリセットが変えるのはlayout/font/fontSizePx/lineHeightのみでnormalizedTextには
+    // 影響しないため、上のoptions代入は同期的に反映済み。直後に呼ぶ
+    // generateX3Preview() は新しいoptionsを読める。
+    previewMode = "x3";
+    void generateX3Preview();
   }
 
   async function onConvert(): Promise<void> {
@@ -244,6 +271,7 @@
       x3PreviewErrorText = null;
       x3Parsed = cached;
       x3CurrentPage = 0;
+      x3DisplayedKey = cacheKey;
       return;
     }
     const generation = ++x3PreviewGeneration;
@@ -258,6 +286,9 @@
       x3PreviewCache.set(cacheKey, parsed);
       x3Parsed = parsed;
       x3CurrentPage = 0;
+      // fetch解決時点ではnormalizedText/optionsが既に変わっている可能性があるが、
+      // 今表示した画像が反映しているのはリクエスト開始時点のcacheKeyのため、それを使う。
+      x3DisplayedKey = cacheKey;
     } catch (e) {
       if (generation !== x3PreviewGeneration) return;
       if (e instanceof DOMException && e.name === "AbortError") return; // 中断は無視
@@ -270,6 +301,26 @@
       }
     }
   }
+
+  // ファイル読込完了時に「標準プリセット」でX3実機プレビューを自動生成する
+  // （1ファイルにつき1回のみ）。詳細設定の変更でnormalizedTextが変わっても
+  // autoPreviewFileガードにより再自動生成はしない — その場合はcanRegenerate/
+  // x3Staleでユーザーに再生成を促す（要件3）。file が変われば改めて1回自動実行する。
+  // 副作用本体はuntrack()で包み、options/previewModeへの書き込みが依存として
+  // 拾われて無限ループしないようにする（上の表題自動導出$effectと同じ思想）。
+  let autoPreviewFile: File | null = null;
+  $effect(() => {
+    const current = file;
+    const ready = status === "ready";
+    const hasText = normalizedText !== "";
+    if (!ready || !hasText || autoPreviewFile === current) return;
+    untrack(() => {
+      autoPreviewFile = current;
+      options = applyTextPreset(options, "standard");
+      previewMode = "x3";
+      void generateX3Preview();
+    });
+  });
 
   // コンポーネント破棄時（TXTファイル削除等でこのパネルが消える場合）、in-flight の
   // プレビューリクエストを中止する。中止し忘れると、最大 TEXT_PREVIEW_TIMEOUT_MS
@@ -306,7 +357,7 @@
             {#if x3PreviewGenerating}
               <span class="spinner"></span>
             {:else if x3Parsed}
-              <canvas bind:this={x3CanvasEl}></canvas>
+              <canvas bind:this={x3CanvasEl} class:stale={x3Stale}></canvas>
             {/if}
           </div>
         {/if}
@@ -327,12 +378,13 @@
           <button
             type="button"
             class="secondary"
-            disabled={!optionsValid}
+            disabled={!canRegenerate}
             onclick={() => void generateX3Preview()}
           >
-            {x3PreviewGenerating ? t("text_x3_preview_generating") : t("text_x3_preview_button")}
+            {x3PreviewGenerating ? t("text_x3_preview_generating") : t("text_x3_preview_regenerate_button")}
           </button>
           {#if x3PreviewErrorText}<div class="error-text">{x3PreviewErrorText}</div>{/if}
+          {#if x3Stale && !x3PreviewGenerating}<p class="preview-note stale-note">{t("text_x3_preview_stale_note")}</p>{/if}
           <p class="preview-note">{t("text_x3_preview_note")}</p>
         </div>
       {/if}
@@ -407,6 +459,7 @@
     overflow: hidden; margin: 0 auto; display: flex; align-items: center; justify-content: center;
   }
   .pv-page canvas { display: block; width: 100%; height: 100%; }
+  .pv-page canvas.stale { opacity: .45; transition: opacity .15s; }
   .pv-page.pv-page-scroll {
     display: block; overflow-y: auto; overflow-x: hidden; align-items: unset; justify-content: unset;
     padding: 14px; box-sizing: border-box; text-align: left;

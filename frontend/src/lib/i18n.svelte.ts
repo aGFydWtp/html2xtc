@@ -1210,7 +1210,7 @@ export const I18N: Record<Lang, Messages> = {
 
     devices_load_failed: "Failed to load your devices.",
     devices_empty: "No paired devices yet.",
-    devices_empty_hint: "Pairing a device requires installing the dedicated firmware, a fork of CrossPoint JP, first.",
+    devices_empty_hint: "Pairing a device requires installing the dedicated firmware first — a fork of CrossPoint JP.",
     devices_empty_flash: "Install firmware",
     devices_rename: "Rename",
     devices_edit_library: "Edit reading list",

@@ -102,6 +102,10 @@ export interface SanitizedChapter {
   stylesheetHrefs: string[];
   /** Raw text content of every `<style>` element found anywhere in the document (spec §10.1) — html.ts sanitizes each via css.ts. */
   inlineStyleTexts: string[];
+  /** `body.textContent` after stripping/sanitizing (not yet whitespace-collapsed — callers that only care about "any real text at all" should collapse/trim it themselves). Lets html.ts detect a spine item that is nothing but an image (spec: the cover-duplicate skip needs to tell "a cover-only page" apart from "a real chapter that happens to open with an image" without re-parsing bodyHtml). */
+  textContent: string;
+  /** Every already-resolved (data: URL or left as-is if unresolved) image reference found in the body — `<img src>` and SVG `<image href>`/`xlink:href` — in document order. Same "detect a cover-only page" purpose as textContent. */
+  imageDataUrls: string[];
 }
 
 function isFragmentOnly(href: string): boolean {
@@ -322,5 +326,29 @@ export function sanitizeSpineChapter(
     }
   }
 
-  return { bodyHtml: body.innerHTML, stylesheetHrefs, inlineStyleTexts };
+  const imageDataUrls: string[] = [];
+  for (const img of [...body.querySelectorAll("img")]) {
+    const src = img.getAttribute("src");
+    if (src !== null) {
+      imageDataUrls.push(src);
+    }
+  }
+  for (const image of [...body.querySelectorAll("image")]) {
+    for (const name of image.getAttributeNames()) {
+      if (/(?:^|:)href$/i.test(name)) {
+        const href = image.getAttribute(name);
+        if (href !== null) {
+          imageDataUrls.push(href);
+        }
+      }
+    }
+  }
+
+  return {
+    bodyHtml: body.innerHTML,
+    stylesheetHrefs,
+    inlineStyleTexts,
+    textContent: body.textContent ?? "",
+    imageDataUrls,
+  };
 }

@@ -16,7 +16,7 @@ import {
   sanitizeSvgMarkup,
   svgMarkupToDataUrl,
 } from "./assets";
-import { sanitizeCss } from "./css";
+import { sanitizeCss, stripComments } from "./css";
 import type { CssUrlResolver } from "./css";
 import { locatePackageDocument } from "./container";
 import { EpubError } from "./errors";
@@ -27,7 +27,7 @@ import {
   namespacedId,
   sanitizeSpineChapter,
 } from "./sanitize";
-import type { ChapterLinkContext, ImageResolver } from "./sanitize";
+import type { ChapterLinkContext, ImageResolver, SanitizedChapter } from "./sanitize";
 import type { EpubManifestItem, EpubNavigation, EpubPackageDocument } from "./types";
 import { firstByLocalName, parseXmlDocument } from "./xml";
 
@@ -35,9 +35,15 @@ import { firstByLocalName, parseXmlDocument } from "./xml";
  * Self-contained X3 HTML generation (EPUB spec §11-§13): orchestrates
  * archive extraction, package/nav parsing (Phase 2), per-chapter XHTML
  * sanitization (sanitize.ts), CSS collection + sanitization (css.ts), image
- * Data-URL resolution (assets.ts), cover/TOC/colophon assembly, layout
- * detection, and the final X3 correction stylesheet — into the single
- * entrypoint Phase 4's Workflow calls: prepareEpubDocument.
+ * Data-URL resolution (assets.ts), cover/TOC assembly, layout detection, and
+ * the final X3 correction stylesheet — into the single entrypoint Phase 4's
+ * Workflow calls: prepareEpubDocument.
+ *
+ * No colophon (奥付): unlike the URL-render path (src/printhtml.ts, which
+ * does append one), EPUB uploads never do. The EPUB itself already IS the
+ * source document the user chose to convert — there is no scraped-URL
+ * provenance to record — so an appended "converted from my-book.epub at
+ * <timestamp>" block would be redundant, not informative.
  */
 
 /** One non-fatal degradation encountered while preparing the document (spec's general "危険な要素を除去したうえで本文変換を継続できる場合は、変換全体を失敗させず縮退動作する" stance) — logged by Phase 4, never shown verbatim to the client. */
@@ -57,14 +63,12 @@ export interface PreparedEpubDocument {
 }
 
 export interface PrepareEpubDocumentContext {
-  /** The uploaded EPUB's original filename — spec §8.4.1's title fallback and the colophon's "元ファイル名" line. */
+  /** The uploaded EPUB's original filename — spec §8.4.1's title fallback. */
   filename: string;
   limits: EpubArchiveLimits & {
     /** D11: the generated HTML's own size cap (MAX_EPUB_HTML_BYTES). */
     maxHtmlBytes: number;
   };
-  /** Injection point for deterministic tests; defaults to `new Date()`. */
-  now?: Date;
 }
 
 /**
@@ -217,11 +221,27 @@ function readPageProgressionDirection(
   }
 }
 
-/** Spec §12: layout="auto" resolution order — explicit page-progression-direction+Japanese language, then a vertical-rl writing-mode already present in the EPUB's own (sanitized) CSS, else horizontal. "日本語だから自動的に縦書きにはしない" — dc:language alone is never sufficient. */
+/**
+ * Spec §12: layout="auto" resolution order — explicit
+ * page-progression-direction+Japanese language, then a vertical-rl
+ * writing-mode already present in the EPUB's own CSS, else horizontal.
+ * "日本語だから自動的に縦書きにはしない" — dc:language alone is never
+ * sufficient.
+ *
+ * `cssTexts` is comment-stripped (css.ts's stripComments) but NOT run
+ * through sanitizeCss's property allowlist — not the sanitized copy that
+ * ends up in the generated document. sanitizeCss now drops `writing-mode`
+ * outright (css.ts's ALLOWED_PROPERTIES doc comment), so scanning the
+ * sanitized text would blind this exact signal; comments are still
+ * stripped so a commented-out `writing-mode: vertical-rl` can't produce a
+ * false-positive "vertical" detection (see stripComments's own doc comment
+ * for what this does and doesn't cover — `@supports` conditions are an
+ * accepted gap).
+ */
 function detectLayout(
   pkg: EpubPackageDocument,
   entries: Map<string, Uint8Array>,
-  sanitizedCssTexts: string[],
+  cssTexts: string[],
   userLayout: EpubConvertOptions["layout"],
 ): "horizontal" | "vertical" {
   if (userLayout !== "auto") {
@@ -232,13 +252,13 @@ function detectLayout(
   if (ppd === "rtl" && isJapanese) {
     return "vertical";
   }
-  if (sanitizedCssTexts.some((css) => /writing-mode\s*:\s*vertical-rl/i.test(css))) {
+  if (cssTexts.some((css) => /writing-mode\s*:\s*vertical-rl/i.test(css))) {
     return "vertical";
   }
   return "horizontal";
 }
 
-// --- nav / TOC / cover / colophon -----------------------------------------
+// --- nav / TOC / cover -------------------------------------------------------
 
 function findChapterTitle(nav: EpubNavigation, path: string): string | undefined {
   for (const entry of nav.entries) {
@@ -273,68 +293,120 @@ function buildTocSection(nav: EpubNavigation, spineIndexByPath: ReadonlyMap<stri
   return `<nav class="epub-generated-toc" aria-label="Table of Contents">\n<h2>目次</h2>\n<ol>\n${items.join("\n")}\n</ol>\n</nav>`;
 }
 
-function buildCoverSection(pkg: EpubPackageDocument, resolveAbsolute: (absPath: string) => string | undefined): string | undefined {
-  if (pkg.coverImagePath === undefined) {
-    return undefined;
-  }
-  const dataUrl = resolveAbsolute(pkg.coverImagePath);
-  if (dataUrl === undefined) {
-    return undefined;
-  }
-  return `<section class="epub-cover"><img src="${dataUrl}" alt=""></section>`;
+function buildCoverSection(coverDataUrl: string): string {
+  return `<section class="epub-cover"><img src="${coverDataUrl}" alt=""></section>`;
 }
 
-function formatJstTimestamp(date: Date): string {
-  const jst = new Date(date.getTime() + 9 * 60 * 60 * 1000);
-  const pad = (n: number): string => String(n).padStart(2, "0");
-  return `${jst.getUTCFullYear()}-${pad(jst.getUTCMonth() + 1)}-${pad(jst.getUTCDate())} ${pad(jst.getUTCHours())}:${pad(jst.getUTCMinutes())} JST`;
-}
-
-/** Spec §13.3: EPUB has no source URL, so the colophon shows title/author/format/original filename/conversion time plus the fixed personal-use notice (matches src/text-html.ts's wording). Built via escapeHtml'd template strings, not linkedom DOM serialization — see prepareEpubDocument's doc comment for why that sidesteps the <title>/<style> verbatim-serialize hazard src/printhtml.ts has to guard against explicitly. */
-function buildColophon(pkg: EpubPackageDocument, filename: string, convertedAt: string): string {
-  const lines = [
-    `タイトル: ${pkg.metadata.title}`,
-    ...(pkg.metadata.author !== undefined ? [`著者: ${pkg.metadata.author}`] : []),
-    "入力形式: EPUB",
-    `元ファイル名: ${filename}`,
-    `変換日時: ${convertedAt}`,
-    "個人的利用のために作成。再配布禁止。",
-    "Created for personal use. Redistribution prohibited.",
-  ];
-  return `<section class="epub-colophon">\n${lines.map((line) => `<div>${escapeHtml(line)}</div>`).join("\n")}\n</section>`;
+/**
+ * Detects a spine item that is, in effect, a second copy of the cover
+ * already emitted as the standalone `.epub-cover` section — the "cover
+ * page" convention many EPUBs (青空文庫-derived ones especially) use:
+ * spine[0] is a dedicated XHTML file containing nothing but the same image
+ * the OPF's `cover-image` manifest property points at. Deliberately
+ * conservative: only true when the sanitized body has NO non-whitespace
+ * text at all AND every image it contains resolves to the exact same data:
+ * URL as the cover — a spine item with its own text (even a caption) or a
+ * DIFFERENT image is always kept, so a real chapter is never at risk of
+ * being dropped by this check. Not restricted to spine[0]: a book that also
+ * repeats the cover as a colophon-adjacent "back cover" page gets the same
+ * treatment.
+ */
+function isCoverDuplicateSpineItem(sanitized: SanitizedChapter, coverDataUrl: string): boolean {
+  if (sanitized.textContent.replace(/\s+/g, "").length > 0) {
+    return false;
+  }
+  return sanitized.imageDataUrls.length > 0 && sanitized.imageDataUrls.every((src) => src === coverDataUrl);
 }
 
 // --- final X3 correction CSS ------------------------------------------------
 
-/** Spec §13.1/§13.2/§12.1: fixed 528x792 page geometry, the chosen font forced over the EPUB's own (font references were already stripped — D3/D12), the image-sizing rules (§11.2), and the optional chapter-page-break rule (§9.2). Explicit (non-"auto") layout choices win over the EPUB's own CSS via `!important`; "auto" only supplements it. */
+/**
+ * Spec §13.1/§13.2/§12.1: fixed 528x792 page geometry, the chosen font
+ * forced over the EPUB's own (font references were already stripped —
+ * D3/D12), the image-sizing rules (§11.2), and the optional
+ * chapter-page-break rule (§9.2). Explicit (non-"auto") layout choices win
+ * over the EPUB's own CSS via `!important`; "auto" only supplements it.
+ *
+ * Margin: applied via `@page { margin }`, not `.epub-book { padding }`. In
+ * `writing-mode: vertical-rl`, the block direction runs right-to-left, and
+ * block-direction padding on an element that gets fragmented across pages
+ * (spec's whole multi-page book) only lands on the FIRST and LAST page's
+ * fragment, not on every page — so a left/right (== block-direction, in
+ * vertical writing) padding on `.epub-book` left every interior page with
+ * ~0 left/right margin (real-world repro: 熊野奈智山.epub). `@page`'s
+ * margin is a per-page box property instead, so it applies uniformly no
+ * matter how the content fragments — this is exactly what src/text-html.ts
+ * already relies on (buildTextPrintCss) for the same 528x792 page. Matching
+ * that file, `html`/`body` no longer hard-code `width`/`min-height`: the
+ * printable content box is already defined by `@page`'s size minus its
+ * margin, so a second, redundant fixed-size box on the root would only
+ * fight it (and, at non-default marginPx values, contradict it outright).
+ *
+ * writing-mode placement: `html` for vertical, `.epub-book` for horizontal
+ * — and, crucially, this is now the ONLY place `writing-mode` is declared
+ * in the whole generated document, because css.ts's ALLOWED_PROPERTIES
+ * drops `writing-mode` from every bit of EPUB-supplied CSS before it
+ * reaches this document (stylesheets, inline `<style>`, inline
+ * `style=""`). That single-sourcing is what actually fixes the demonstrated
+ * bug: CSS cascades per element, so an EPUB's own `body { writing-mode: ... }`
+ * (common in 青空文庫-derived books) otherwise wins over whatever this
+ * function puts on `html`/`.epub-book` regardless of `!important`, which
+ * silently defeated an explicit (non-"auto") `layout` choice whenever the
+ * source EPUB disagreed with it. With the EPUB's own writing-mode gone,
+ * that can no longer happen.
+ *
+ * Root-vs-descendant placement (`html` only for vertical, not `body` too)
+ * is a separate, PRECAUTIONARY choice, not a fix for an observed bug: it
+ * mirrors src/text-html.ts's own placement, whose doc comment describes a
+ * real, reproduced Chromium print-pagination failure (nested
+ * `writing-mode: vertical-rl` on a descendant blanking every page after the
+ * first) for a *different* configuration — one where the root has NO
+ * writing-mode and only a nested element does. This function's old code
+ * (both `html` AND `body` set to the same value) was never observed to
+ * blank pages in production, so "root + duplicate nested value" is not
+ * confirmed to share that failure mode. It's still avoided here on the
+ * grounds that untested is not the same as safe, but that's the extent of
+ * the claim.
+ */
 function buildFinalCss(options: EpubConvertOptions, layout: "horizontal" | "vertical", layoutIsExplicit: boolean): string {
   const important = layoutIsExplicit ? " !important" : "";
-  const writingMode = layout === "vertical" ? "vertical-rl" : "horizontal-tb";
   const genericFamily = layout === "vertical" ? "serif" : "sans-serif";
   const pageBreakRule = options.chapterPageBreak
     ? `.epub-spine-item + .epub-spine-item {\n  break-before: page;\n  page-break-before: always;\n}\n`
     : "";
+  const writingModeRule =
+    layout === "vertical"
+      ? `html {
+  writing-mode: vertical-rl${important};
+  text-orientation: mixed${important};
+}
+`
+      : `.epub-book {
+  writing-mode: horizontal-tb${important};
+  text-orientation: mixed${important};
+}
+`;
+  // The cover page has no text to fragment across pages, so it can simply
+  // be sized to fill its one page's content box (page width/height minus
+  // the @page margin on every side) and centered — no separate padding
+  // needed, @page's margin already insets it like every other page. Both
+  // dimensions are needed, not just height — see .epub-cover's own doc
+  // comment below for why.
+  const coverContentWidthPx = Math.max(0, 528 - options.marginPx * 2);
+  const coverContentHeightPx = Math.max(0, 792 - options.marginPx * 2);
   return `@page {
   size: 528px 792px;
-  margin: 0;
+  margin: ${options.marginPx}px;
 }
 
 html, body {
-  writing-mode: ${writingMode}${important};
-  text-orientation: mixed${important};
-  width: 528px;
-  min-height: 792px;
   margin: 0;
   padding: 0;
   background: #fff;
   color: #000;
 }
 
-.epub-book {
-  box-sizing: border-box;
-  padding: ${options.marginPx}px;
-}
-
+${writingModeRule}
 html, body, .epub-book {
   font-family: "${options.font}", ${genericFamily}${important};
   font-size: ${options.fontSizePx}px;
@@ -349,10 +421,66 @@ img, svg {
   max-height: 100%;
   object-fit: contain;
   break-inside: avoid;
+  /* Unconditional !important, unlike this function's other rules (which
+     only add !important when layoutIsExplicit): float:left/right on img is
+     never something a "keep the EPUB's own presentation" auto choice
+     should honor — it makes body text wrap into the image's margin instead
+     of flowing normally, which is a text-legibility regression this
+     converter must always prevent (per this repo's text-first CSS
+     stance), not a layout preference to defer to. Deliberately NOT paired
+     with a global zeroed-out margin here (see .epub-cover img below for why a
+     margin reset is still needed, just scoped): a body illustration's own
+     margin is cosmetic, not the text-wrap hazard float is, so leaving it
+     alone avoids gratuitously flattening every in-chapter image against
+     its surrounding paragraph. */
+  float: none !important;
 }
 
 figure {
   break-inside: avoid;
+}
+
+.epub-cover {
+  /* Both width and height must be explicit (not e.g. min-height alone):
+     max-width/max-height:100% on the <img> below only resolves against a
+     containing block whose size in that axis is definite — CSS spec's rule
+     for percentage sizes, not this codebase's assumption. With only
+     min-height set (the prior version of this rule), the box's HEIGHT
+     still counted as indefinite for that purpose, so max-height:100%
+     computed to "none" and the <img> rendered at its raw intrinsic pixel
+     size instead. Empirically reproduced against 熊野奈智山.epub's real
+     600x800 cover in an actual Chromium print render: the oversized image
+     fragment spilled onto page 2, which pushed .epub-cover's content off
+     page 1 entirely and left it fully blank. width has the same
+     requirement even though it was never observed failing on its own here
+     (a definite height alone happened to be enough for this specific
+     nearly-page-sized image) — giving both is the actually-correct fix,
+     not a guess. overflow:hidden is a backstop only, not the fix itself:
+     with both dimensions definite, max-width/max-height:100% plus
+     object-fit:contain (above) already guarantee the whole image fits and
+     is never cropped — overflow:hidden just guarantees a future regression
+     clips invisibly instead of silently pushing content onto the next
+     page's fragment the way this bug did. */
+  width: ${coverContentWidthPx}px;
+  height: ${coverContentHeightPx}px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  break-after: page;
+  page-break-after: always;
+}
+
+.epub-cover img, .epub-cover svg {
+  /* Scoped, not global (unlike float above): re-tested after the
+     width/height fix above — with both dimensions definite the overflow
+     bug is already fully fixed without this, so this rule exists purely
+     for centering polish (熊野奈智山.epub's own img rule sets an
+     asymmetric margin: 15px, 0 on the left, which would otherwise nudge
+     the cover image slightly off-center within the frame). Kept off the
+     global img/svg rule so an EPUB-authored margin around an in-chapter
+     illustration is left alone. */
+  margin: 0 !important;
 }
 
 ${pageBreakRule}`;
@@ -434,8 +562,34 @@ export function prepareEpubDocument(
 
   const { resolveRelative, resolveAbsolute, imageCount } = makeImageResolution(entries, pkg.manifest);
 
+  // Resolved once, up front (not inside buildCoverSection) so the
+  // cover-duplicate skip below and the section builder share the exact same
+  // value — same rationale as makeImageResolution's own cache: this is the
+  // one image every "is this spine item just the cover again" comparison is
+  // pinned against.
+  const coverDataUrl =
+    options.includeCover && pkg.coverImagePath !== undefined ? resolveAbsolute(pkg.coverImagePath) : undefined;
+
   const chapterSections: string[] = [];
   const sanitizedCssTexts: string[] = [];
+  // Comment-stripped, but otherwise NOT run through sanitizeCss's property
+  // allowlist — copies of every stylesheet/inline-<style> text the loop
+  // below reads, collected purely for detectLayout's own-CSS signal.
+  // sanitizeCss now drops `writing-mode` outright (css.ts's
+  // ALLOWED_PROPERTIES doc comment), so sanitizedCssTexts itself can never
+  // contain it; detecting "this EPUB's own CSS declares vertical-rl" has to
+  // read text sanitizeCss never filtered instead. Comments are still
+  // stripped (via css.ts's own stripComments, exported for exactly this)
+  // so a commented-out `/* writing-mode: vertical-rl; */` can't cause a
+  // false-positive detection — see stripComments's own doc comment for the
+  // one remaining gap (`@supports` conditions) this does NOT close. This is
+  // a narrower, less careful read than readPageProgressionDirection's above
+  // (which fully parses the OPF as XML and reads a specific attribute) —
+  // it's a plain regex presence-check over comment-stripped-but-otherwise-
+  // unsanitized text, not the "same technique". Still safe: a boolean
+  // presence-check never risks emitting or executing anything from this
+  // text.
+  const cssTextsForLayoutDetection: string[] = [];
   const seenCssAbsPaths = new Set<string>();
 
   renderedSpine.forEach((item, idx) => {
@@ -450,6 +604,11 @@ export function prepareEpubDocument(
     const sanitized = sanitizeSpineChapter(xhtml, ctx, resolveRelative);
     if (sanitized === undefined) {
       warnings.push({ code: "CHAPTER_UNPARSEABLE" });
+      return;
+    }
+
+    if (coverDataUrl !== undefined && isCoverDuplicateSpineItem(sanitized, coverDataUrl)) {
+      warnings.push({ code: "COVER_DUPLICATE_SKIPPED" });
       return;
     }
 
@@ -473,6 +632,7 @@ export function prepareEpubDocument(
         continue;
       }
       const cssText = new TextDecoder("utf-8", { fatal: false, ignoreBOM: false }).decode(cssBytes);
+      cssTextsForLayoutDetection.push(stripComments(cssText));
       const resolver: CssUrlResolver = (rawUrl) => resolveRelative(rawUrl, absPath);
       const sanitizedCss = sanitizeCss(cssText, resolver);
       if (sanitizedCss.trim().length > 0) {
@@ -480,6 +640,7 @@ export function prepareEpubDocument(
       }
     }
     for (const styleText of sanitized.inlineStyleTexts) {
+      cssTextsForLayoutDetection.push(stripComments(styleText));
       const resolver: CssUrlResolver = (rawUrl) => resolveRelative(rawUrl, path);
       const sanitizedCss = sanitizeCss(styleText, resolver);
       if (sanitizedCss.trim().length > 0) {
@@ -498,11 +659,9 @@ export function prepareEpubDocument(
     throw new EpubError("EMPTY_SPINE", "every spine item failed to sanitize");
   }
 
-  const layout = detectLayout(pkg, entries, sanitizedCssTexts, options.layout);
-  const coverSection = options.includeCover ? buildCoverSection(pkg, resolveAbsolute) : undefined;
+  const layout = detectLayout(pkg, entries, cssTextsForLayoutDetection, options.layout);
+  const coverSection = coverDataUrl !== undefined ? buildCoverSection(coverDataUrl) : undefined;
   const tocSection = options.includeTableOfContents ? buildTocSection(nav, spineIndexByPath) : undefined;
-  const convertedAt = formatJstTimestamp(context.now ?? new Date());
-  const colophon = buildColophon(pkg, context.filename, convertedAt);
   const finalCss = buildFinalCss(options, layout, options.layout !== "auto");
 
   const authorMeta =
@@ -528,7 +687,6 @@ ${tocSection ?? ""}
 <main class="epub-book">
 ${chapterSections.join("\n")}
 </main>
-${colophon}
 </body>
 </html>
 `;

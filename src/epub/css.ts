@@ -54,8 +54,26 @@ type CssNode = RuleNode | AtRuleListNode | AtDeclarationBlockNode;
 /** at-rule names whose `{ }` block is a declaration list (like a plain rule), not a nested rule list. */
 const DECLARATION_BODY_AT_RULES: ReadonlySet<string> = new Set(["page", "font-face"]);
 
-/** Strips `/* ... *‍/` comments outside of string literals. Never throws on an unterminated comment (spec: malformed CSS must not crash). */
-function stripComments(css: string): string {
+/**
+ * Strips `/* ... *‍/` comments outside of string literals. Never throws on
+ * an unterminated comment (spec: malformed CSS must not crash). Exported
+ * (not just an internal step of sanitizeCss) because html.ts's detectLayout
+ * also needs comments stripped before its own raw-text
+ * `/writing-mode:\s*vertical-rl/` regex scan — without it, a commented-out
+ * `/* writing-mode: vertical-rl; *‍/` in the EPUB's own CSS would still
+ * match and mis-detect a horizontal book as vertical under layout="auto".
+ * That regex scan intentionally stops here, at comment-stripping, rather
+ * than running the EPUB's CSS through the full sanitizeCss allowlist
+ * pipeline: it needs the RAW property value (sanitizeCss now drops
+ * `writing-mode` outright — see ALLOWED_PROPERTIES below), just with
+ * comments (the one construct trivially confusable with real, active CSS)
+ * removed. It does NOT understand at-rule conditions, so a
+ * `@supports (writing-mode: vertical-rl) { ... }` block whose condition
+ * never actually applies can still cause a false-positive "vertical"
+ * detection — accepted as out of scope (spec's own "auto" detection was
+ * always a best-effort heuristic, not a full CSS engine).
+ */
+export function stripComments(css: string): string {
   let out = "";
   let i = 0;
   let quote: string | null = null;
@@ -268,10 +286,42 @@ export type CssUrlResolver = (rawUrl: string) => string | undefined;
  * anything meaningless in a static PDF capture (`animation*`,
  * `transition*`), and `content`/`filter`/`transform`, which are not needed
  * for EPUB reading layout and would otherwise widen the url()/expression()
- * surface for no reader-visible benefit. Spec §10.4's "possible to preserve"
- * list (writing-mode, text-orientation, text-combine-upright, text-emphasis,
- * ruby-position, break-*, page-break-*, white-space, text-align,
- * line-height) is a strict subset of this set.
+ * surface for no reader-visible benefit.
+ *
+ * `writing-mode` is the one deliberate exception to "preserve whatever the
+ * EPUB's own CSS says": it is dropped here, everywhere it can appear
+ * (stylesheets, inline `<style>`, inline `style=""` — this allowlist is the
+ * single choke point for all three), so html.ts's own correction CSS is the
+ * ONLY place `writing-mode` is ever declared in the generated document. Two
+ * concrete, demonstrated reasons: (1) an EPUB that ships its own
+ * `body { writing-mode: ... }` otherwise wins over html.ts's root-level
+ * rule for that element (an element's own declaration always beats an
+ * inherited one, `!important` or not — CSS cascades per element, not
+ * across the tree), which silently defeats an explicit (non-"auto")
+ * `layout` choice; single-sourcing writing-mode fixes that unconditionally.
+ * (2) real-world 青空文庫-derived EPUBs routinely declare
+ * `html, body { writing-mode: vertical-rl }` themselves, so leaving it
+ * allowed doesn't just risk an override failure, it's the *common* case.
+ * `text-orientation` (and everything else on spec's original preserve list
+ * — text-combine-upright, text-emphasis*, ruby-position, break-*,
+ * page-break-*, white-space, text-align, line-height) has no such
+ * override/duplication concern (it doesn't establish a
+ * block-progression/fragmentation context the way writing-mode does) and
+ * stays allowed.
+ *
+ * Trade-off: sanitizeDeclaration (below) decides purely by property name,
+ * never by selector — so this drops EVERY `writing-mode` declaration in an
+ * EPUB's CSS, not just the `html`/`body`-level ones the override bug above
+ * is actually about. A book that locally flips a single element's run
+ * direction (e.g. a `.horizontal-note { writing-mode: horizontal-tb }`
+ * aside inside an otherwise-vertical chapter) loses that local override
+ * too — it renders in the document's overall layout direction instead.
+ * Accepted: html.ts's own correction CSS has no way to know which specific
+ * descendants an EPUB intended to flip, so there is no drop-in replacement
+ * for a lost local override; the alternative (a selector-aware allowlist
+ * that only strips root-level writing-mode) would reintroduce the override
+ * bug for any EPUB whose local override happens to sit on `html`/`body`
+ * anyway, which is the common case this exists to fix.
  */
 const ALLOWED_PROPERTIES: ReadonlySet<string> = new Set([
   "color",
@@ -307,7 +357,6 @@ const ALLOWED_PROPERTIES: ReadonlySet<string> = new Set([
   "word-break",
   "overflow-wrap",
   "word-wrap",
-  "writing-mode",
   "text-orientation",
   "text-combine-upright",
   "text-emphasis",

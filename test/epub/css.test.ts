@@ -67,11 +67,16 @@ describe("sanitizeCss: javascript: removal (spec §19.1 javascript:除去)", () 
   });
 });
 
-describe("sanitizeCss: writing-mode preserved (spec §19.1 writing-mode保持)", () => {
-  it("keeps writing-mode: vertical-rl and text-orientation", () => {
+describe("sanitizeCss: writing-mode dropped, text-orientation preserved", () => {
+  it("drops writing-mode but keeps text-orientation", () => {
+    // writing-mode is deliberately excluded from ALLOWED_PROPERTIES (see its
+    // doc comment): html.ts's own correction CSS must be the ONLY source of
+    // writing-mode in the generated document, or an EPUB's own
+    // `body { writing-mode: ... }` silently wins over an explicit `layout`
+    // choice (an element's own declaration always beats an inherited one).
     const css = `body { writing-mode: vertical-rl; text-orientation: mixed; }`;
     const out = sanitizeCss(css, noResolve);
-    expect(out).toContain("writing-mode: vertical-rl");
+    expect(out).not.toContain("writing-mode");
     expect(out).toContain("text-orientation: mixed");
   });
 

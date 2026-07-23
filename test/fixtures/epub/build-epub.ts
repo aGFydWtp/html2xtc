@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 aGFydWtp
 
+import { deflateSync } from "node:zlib";
 import { zipSync } from "fflate";
 import type { Zippable } from "fflate";
 
@@ -11,6 +12,84 @@ import type { Zippable } from "fflate";
  */
 
 export type EpubFixtureFiles = Record<string, string | Uint8Array>;
+
+// --- minimal PNG encoder (test-only) ---------------------------------------
+//
+// html.ts's cover sanitization (src/epub/assets.ts's rasterImageDataUrl)
+// never decodes/validates PNG structure — it base64-encodes whatever bytes
+// the manifest declares image/png, so a cover fixture's actual pixel
+// dimensions can't affect prepareEpubDocument's behavior either way (the
+// .epub-cover fix is a fixed-size CSS box + object-fit:contain, deliberately
+// aspect-ratio-agnostic — see buildFinalCss's .epub-cover doc comment). This
+// encoder exists anyway so a landscape/near-square cover regression test
+// fixture is an honestly-dimensioned PNG, not an arbitrary byte blob
+// pretending to be one.
+
+const CRC_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) {
+      c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    }
+    table[n] = c >>> 0;
+  }
+  return table;
+})();
+
+function crc32(bytes: Uint8Array): number {
+  let c = 0xffffffff;
+  for (const byte of bytes) {
+    c = (CRC_TABLE[(c ^ byte) & 0xff] as number) ^ (c >>> 8);
+  }
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+function pngChunk(type: string, data: Uint8Array): Uint8Array {
+  const typeBytes = new TextEncoder().encode(type);
+  const lenBuf = new Uint8Array(4);
+  new DataView(lenBuf.buffer).setUint32(0, data.length, false);
+  const crcInput = new Uint8Array(typeBytes.length + data.length);
+  crcInput.set(typeBytes, 0);
+  crcInput.set(data, typeBytes.length);
+  const crcBuf = new Uint8Array(4);
+  new DataView(crcBuf.buffer).setUint32(0, crc32(crcInput), false);
+  const chunk = new Uint8Array(4 + typeBytes.length + data.length + 4);
+  chunk.set(lenBuf, 0);
+  chunk.set(typeBytes, 4);
+  chunk.set(data, 4 + typeBytes.length);
+  chunk.set(crcBuf, 4 + typeBytes.length + data.length);
+  return chunk;
+}
+
+/** Builds a minimal, structurally-valid single-color 8-bit grayscale PNG at exactly `width`x`height` — for cover-image aspect-ratio regression fixtures (landscape/near-square/etc.) that need to be honest about their own dimensions. */
+export function makeMinimalPng(width: number, height: number): Uint8Array {
+  const signature = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+  const ihdrData = new Uint8Array(13);
+  const ihdrView = new DataView(ihdrData.buffer);
+  ihdrView.setUint32(0, width, false);
+  ihdrView.setUint32(4, height, false);
+  ihdrData[8] = 8; // bit depth
+  ihdrData[9] = 0; // color type: grayscale
+  ihdrData[10] = 0; // compression
+  ihdrData[11] = 0; // filter
+  ihdrData[12] = 0; // interlace
+  const ihdr = pngChunk("IHDR", ihdrData);
+
+  const raw = new Uint8Array(height * (1 + width)); // filter-byte(0) + width gray bytes, per row
+  const idatData = new Uint8Array(deflateSync(raw));
+  const idat = pngChunk("IDAT", idatData);
+
+  const iend = pngChunk("IEND", new Uint8Array(0));
+
+  const png = new Uint8Array(signature.length + ihdr.length + idat.length + iend.length);
+  let offset = 0;
+  for (const part of [signature, ihdr, idat, iend]) {
+    png.set(part, offset);
+    offset += part.length;
+  }
+  return png;
+}
 
 /** level 0 (store, no compression) keeps fixtures small/fast and exercises archive.ts's compression===0 path; individual tests can override per-entry via zipSync's own [data, opts] tuple form if they need compression===8. */
 export function buildEpubZip(files: EpubFixtureFiles): Uint8Array {

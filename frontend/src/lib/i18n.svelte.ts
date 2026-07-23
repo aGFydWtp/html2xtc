@@ -467,7 +467,7 @@ export const I18N: Record<Lang, Messages> = {
     poll_fail: "状態の取得に失敗しました。ページを再読み込みしてください。",
     no_server: "サーバーに接続できません。",
     http_error: (s) => `エラー (HTTP ${s})`,
-    pdf_too_large: "生成された PDF がサイズ上限を超えました。「レイアウトを保持して変換する」を有効にすると変換できる場合があります。",
+    pdf_too_large: "生成された PDF がサイズ上限を超えました。分割された章のページなど、より短いページで試してください。",
 
     pdf_or_drop: "または PDF / TXT / EPUB をここにドラッグ＆ドロップ ／ ",
     pdf_pick_file: "ファイルを選択",
@@ -878,7 +878,7 @@ export const I18N: Record<Lang, Messages> = {
     poll_fail: "Failed to fetch status. Please reload the page.",
     no_server: "Could not reach the server.",
     http_error: (s) => `Error (HTTP ${s})`,
-    pdf_too_large: "The rendered PDF exceeds the size limit. Enabling “Keep the page layout” may allow the conversion to succeed.",
+    pdf_too_large: "The rendered PDF exceeds the size limit. Try a shorter page, such as a single chapter instead of a whole book.",
 
     pdf_or_drop: "or drag & drop a PDF, TXT, or EPUB file here / ",
     pdf_pick_file: "Choose file",

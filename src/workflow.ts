@@ -898,7 +898,8 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
 
           // Structural warning codes only (never EPUB paths/text — spec
           // §14.1.1/§17): every code prepareEpubDocument currently emits
-          // (SPINE_ITEM_MISSING, CHAPTER_UNPARSEABLE) carries no `detail`.
+          // (SPINE_ITEM_MISSING, CHAPTER_UNPARSEABLE, COVER_DUPLICATE_SKIPPED)
+          // carries no `detail`.
           if (prepared.warnings.length > 0) {
             console.log(
               `[${jobId}] epub: warnings=${prepared.warnings.map((w) => w.code).join(",")}`,

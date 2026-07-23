@@ -77,6 +77,32 @@ describe("sanitizeSpineChapter: image resolution (spec §19.1 相対画像Data U
   });
 });
 
+describe("sanitizeSpineChapter: textContent/imageDataUrls (html.ts's cover-duplicate detection)", () => {
+  it("reports empty textContent and the resolved image src for an image-only body", () => {
+    const result = sanitizeSpineChapter(xhtml('<img src="images/foo.png" alt="">'), ctx(), pngImage);
+    expect(result?.textContent.trim()).toBe("");
+    expect(result?.imageDataUrls).toEqual(["data:image/png;base64,AAAA"]);
+  });
+
+  it("reports non-empty textContent for a body with real text", () => {
+    const result = sanitizeSpineChapter(xhtml("<p>Hello, world.</p>"), ctx(), noImage);
+    expect(result?.textContent).toContain("Hello, world.");
+    expect(result?.imageDataUrls).toEqual([]);
+  });
+
+  it("collects an SVG <image>'s resolved href alongside <img> src values", () => {
+    const result = sanitizeSpineChapter(
+      xhtml('<img src="images/foo.png" alt=""><svg><image href="images/foo.png"/></svg>'),
+      ctx(),
+      pngImage,
+    );
+    expect(result?.imageDataUrls).toEqual([
+      "data:image/png;base64,AAAA",
+      "data:image/png;base64,AAAA",
+    ]);
+  });
+});
+
 describe("sanitizeSpineChapter: ruby preserved (spec §19.1 ruby保持)", () => {
   it("keeps ruby/rt/rp markup intact", () => {
     const result = sanitizeSpineChapter(xhtml("<ruby>漢字<rt>かんじ</rt></ruby>"), ctx(), noImage);

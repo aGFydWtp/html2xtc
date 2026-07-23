@@ -27,7 +27,7 @@ import {
   namespacedId,
   sanitizeSpineChapter,
 } from "./sanitize";
-import type { ChapterLinkContext, ImageResolver } from "./sanitize";
+import type { ChapterLinkContext, ImageResolver, SanitizedChapter } from "./sanitize";
 import type { EpubManifestItem, EpubNavigation, EpubPackageDocument } from "./types";
 import { firstByLocalName, parseXmlDocument } from "./xml";
 
@@ -273,15 +273,29 @@ function buildTocSection(nav: EpubNavigation, spineIndexByPath: ReadonlyMap<stri
   return `<nav class="epub-generated-toc" aria-label="Table of Contents">\n<h2>目次</h2>\n<ol>\n${items.join("\n")}\n</ol>\n</nav>`;
 }
 
-function buildCoverSection(pkg: EpubPackageDocument, resolveAbsolute: (absPath: string) => string | undefined): string | undefined {
-  if (pkg.coverImagePath === undefined) {
-    return undefined;
+function buildCoverSection(coverDataUrl: string): string {
+  return `<section class="epub-cover"><img src="${coverDataUrl}" alt=""></section>`;
+}
+
+/**
+ * Detects a spine item that is, in effect, a second copy of the cover
+ * already emitted as the standalone `.epub-cover` section — the "cover
+ * page" convention many EPUBs (青空文庫-derived ones especially) use:
+ * spine[0] is a dedicated XHTML file containing nothing but the same image
+ * the OPF's `cover-image` manifest property points at. Deliberately
+ * conservative: only true when the sanitized body has NO non-whitespace
+ * text at all AND every image it contains resolves to the exact same data:
+ * URL as the cover — a spine item with its own text (even a caption) or a
+ * DIFFERENT image is always kept, so a real chapter is never at risk of
+ * being dropped by this check. Not restricted to spine[0]: a book that also
+ * repeats the cover as a colophon-adjacent "back cover" page gets the same
+ * treatment.
+ */
+function isCoverDuplicateSpineItem(sanitized: SanitizedChapter, coverDataUrl: string): boolean {
+  if (sanitized.textContent.replace(/\s+/g, "").length > 0) {
+    return false;
   }
-  const dataUrl = resolveAbsolute(pkg.coverImagePath);
-  if (dataUrl === undefined) {
-    return undefined;
-  }
-  return `<section class="epub-cover"><img src="${dataUrl}" alt=""></section>`;
+  return sanitized.imageDataUrls.length > 0 && sanitized.imageDataUrls.every((src) => src === coverDataUrl);
 }
 
 function formatJstTimestamp(date: Date): string {
@@ -306,35 +320,79 @@ function buildColophon(pkg: EpubPackageDocument, filename: string, convertedAt: 
 
 // --- final X3 correction CSS ------------------------------------------------
 
-/** Spec §13.1/§13.2/§12.1: fixed 528x792 page geometry, the chosen font forced over the EPUB's own (font references were already stripped — D3/D12), the image-sizing rules (§11.2), and the optional chapter-page-break rule (§9.2). Explicit (non-"auto") layout choices win over the EPUB's own CSS via `!important`; "auto" only supplements it. */
+/**
+ * Spec §13.1/§13.2/§12.1: fixed 528x792 page geometry, the chosen font
+ * forced over the EPUB's own (font references were already stripped —
+ * D3/D12), the image-sizing rules (§11.2), and the optional
+ * chapter-page-break rule (§9.2). Explicit (non-"auto") layout choices win
+ * over the EPUB's own CSS via `!important`; "auto" only supplements it.
+ *
+ * Margin: applied via `@page { margin }`, not `.epub-book { padding }`. In
+ * `writing-mode: vertical-rl`, the block direction runs right-to-left, and
+ * block-direction padding on an element that gets fragmented across pages
+ * (spec's whole multi-page book) only lands on the FIRST and LAST page's
+ * fragment, not on every page — so a left/right (== block-direction, in
+ * vertical writing) padding on `.epub-book` left every interior page with
+ * ~0 left/right margin (real-world repro: 熊野奈智山.epub). `@page`'s
+ * margin is a per-page box property instead, so it applies uniformly no
+ * matter how the content fragments — this is exactly what src/text-html.ts
+ * already relies on (buildTextPrintCss) for the same 528x792 page. Matching
+ * that file, `html`/`body` no longer hard-code `width`/`min-height`: the
+ * printable content box is already defined by `@page`'s size minus its
+ * margin, so a second, redundant fixed-size box on the root would only
+ * fight it (and, at non-default marginPx values, contradict it outright).
+ *
+ * writing-mode placement: `html` only, never a descendant. Copied from
+ * src/text-html.ts's own doc comment (empirically verified against this
+ * exact 528x792 @page): Chromium's print pagination cannot split a
+ * `vertical-rl` fragmentation context that starts below the document root,
+ * so a *second* nested `writing-mode: vertical-rl` (even one that merely
+ * repeats the same value) can turn every page after the first blank. This
+ * is why the vertical rule below lives solely on `html` (with no override
+ * capability reaching further down) while the horizontal rule targets
+ * `.epub-book`, mirroring text-html.ts's own asymmetry (root only for
+ * vertical-rl, a content wrapper is fine for horizontal-tb — horizontal-tb
+ * never creates a page-splitting formatting context boundary, so it carries
+ * none of that hazard, and it's where an explicit "horizontal" layout
+ * actually needs to reach in order to override an EPUB's own body/content
+ * writing-mode).
+ */
 function buildFinalCss(options: EpubConvertOptions, layout: "horizontal" | "vertical", layoutIsExplicit: boolean): string {
   const important = layoutIsExplicit ? " !important" : "";
-  const writingMode = layout === "vertical" ? "vertical-rl" : "horizontal-tb";
   const genericFamily = layout === "vertical" ? "serif" : "sans-serif";
   const pageBreakRule = options.chapterPageBreak
     ? `.epub-spine-item + .epub-spine-item {\n  break-before: page;\n  page-break-before: always;\n}\n`
     : "";
+  const writingModeRule =
+    layout === "vertical"
+      ? `html {
+  writing-mode: vertical-rl${important};
+  text-orientation: mixed${important};
+}
+`
+      : `.epub-book {
+  writing-mode: horizontal-tb${important};
+  text-orientation: mixed${important};
+}
+`;
+  // The cover page has no text to fragment across pages, so it can simply
+  // be sized to fill its one page's content box (page height minus the
+  // @page margin applied top+bottom) and centered — no separate padding
+  // needed, @page's margin already insets it like every other page.
+  const coverContentHeightPx = Math.max(0, 792 - options.marginPx * 2);
   return `@page {
   size: 528px 792px;
-  margin: 0;
+  margin: ${options.marginPx}px;
 }
 
 html, body {
-  writing-mode: ${writingMode}${important};
-  text-orientation: mixed${important};
-  width: 528px;
-  min-height: 792px;
   margin: 0;
   padding: 0;
   background: #fff;
   color: #000;
 }
 
-.epub-book {
-  box-sizing: border-box;
-  padding: ${options.marginPx}px;
-}
-
+${writingModeRule}
 html, body, .epub-book {
   font-family: "${options.font}", ${genericFamily}${important};
   font-size: ${options.fontSizePx}px;
@@ -349,10 +407,20 @@ img, svg {
   max-height: 100%;
   object-fit: contain;
   break-inside: avoid;
+  float: none !important;
 }
 
 figure {
   break-inside: avoid;
+}
+
+.epub-cover {
+  min-height: ${coverContentHeightPx}px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  break-after: page;
+  page-break-after: always;
 }
 
 ${pageBreakRule}`;
@@ -434,6 +502,14 @@ export function prepareEpubDocument(
 
   const { resolveRelative, resolveAbsolute, imageCount } = makeImageResolution(entries, pkg.manifest);
 
+  // Resolved once, up front (not inside buildCoverSection) so the
+  // cover-duplicate skip below and the section builder share the exact same
+  // value — same rationale as makeImageResolution's own cache: this is the
+  // one image every "is this spine item just the cover again" comparison is
+  // pinned against.
+  const coverDataUrl =
+    options.includeCover && pkg.coverImagePath !== undefined ? resolveAbsolute(pkg.coverImagePath) : undefined;
+
   const chapterSections: string[] = [];
   const sanitizedCssTexts: string[] = [];
   const seenCssAbsPaths = new Set<string>();
@@ -450,6 +526,11 @@ export function prepareEpubDocument(
     const sanitized = sanitizeSpineChapter(xhtml, ctx, resolveRelative);
     if (sanitized === undefined) {
       warnings.push({ code: "CHAPTER_UNPARSEABLE" });
+      return;
+    }
+
+    if (coverDataUrl !== undefined && isCoverDuplicateSpineItem(sanitized, coverDataUrl)) {
+      warnings.push({ code: "COVER_DUPLICATE_SKIPPED" });
       return;
     }
 
@@ -499,7 +580,7 @@ export function prepareEpubDocument(
   }
 
   const layout = detectLayout(pkg, entries, sanitizedCssTexts, options.layout);
-  const coverSection = options.includeCover ? buildCoverSection(pkg, resolveAbsolute) : undefined;
+  const coverSection = coverDataUrl !== undefined ? buildCoverSection(coverDataUrl) : undefined;
   const tocSection = options.includeTableOfContents ? buildTocSection(nav, spineIndexByPath) : undefined;
   const convertedAt = formatJstTimestamp(context.now ?? new Date());
   const colophon = buildColophon(pkg, context.filename, convertedAt);

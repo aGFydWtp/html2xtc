@@ -91,6 +91,126 @@ describe("prepareEpubDocument: cover (spec §19.1 表紙)", () => {
   });
 });
 
+describe("prepareEpubDocument: cover-duplicate spine item skip (青空文庫-style cover page)", () => {
+  function coverPageFiles() {
+    const files = minimalEpub3Files();
+    const opf = (files["OEBPS/content.opf"] as string)
+      .replace(
+        "<manifest>",
+        '<manifest><item id="cover-img" href="cover.png" media-type="image/png" properties="cover-image"/><item id="coverpage" href="coverpage.xhtml" media-type="application/xhtml+xml"/>',
+      )
+      .replace("<spine>", '<spine><itemref idref="coverpage"/>');
+    return {
+      ...files,
+      "OEBPS/content.opf": opf,
+      "OEBPS/cover.png": new Uint8Array([1, 2, 3, 4]),
+      "OEBPS/coverpage.xhtml": `<html><body><img src="cover.png" alt=""/></body></html>`,
+    };
+  }
+
+  it("skips a spine item that renders only the same image as the cover, recording a warning", () => {
+    const zip = buildEpubZip(coverPageFiles());
+    const result = prepareEpubDocument(zip, options({ includeCover: true }), context());
+    // Only chapter1 (real text) renders as a spine section — the coverpage.xhtml duplicate is dropped.
+    expect(result.spineItemCount).toBe(1);
+    expect(result.html).toContain("Hello, world.");
+    // The cover image's data: URL appears exactly once (the standalone .epub-cover
+    // section), not a second time from the duplicate spine item.
+    const dataUrlOccurrences = result.html.split("data:image/png;base64,").length - 1;
+    expect(dataUrlOccurrences).toBe(1);
+    expect(result.warnings).toContainEqual({ code: "COVER_DUPLICATE_SKIPPED" });
+  });
+
+  it("keeps a spine item that reuses the cover image but also carries its own text", () => {
+    const files = coverPageFiles();
+    files["OEBPS/coverpage.xhtml"] =
+      `<html><body><img src="cover.png" alt=""/><p>Front matter</p></body></html>`;
+    const zip = buildEpubZip(files);
+    const result = prepareEpubDocument(zip, options({ includeCover: true }), context());
+    expect(result.spineItemCount).toBe(2);
+    expect(result.html).toContain("Front matter");
+  });
+
+  it("keeps a spine item whose only image is NOT the cover image", () => {
+    const files = coverPageFiles();
+    files["OEBPS/coverpage.xhtml"] = `<html><body><img src="other.png" alt=""/></body></html>`;
+    const opf = (files["OEBPS/content.opf"] as string).replace(
+      "<manifest>",
+      '<manifest><item id="other-img" href="other.png" media-type="image/png"/>',
+    );
+    const zip = buildEpubZip({ ...files, "OEBPS/content.opf": opf, "OEBPS/other.png": new Uint8Array([9, 9, 9]) });
+    const result = prepareEpubDocument(zip, options({ includeCover: true }), context());
+    expect(result.spineItemCount).toBe(2);
+  });
+
+  it("does not skip anything when includeCover is false (no standalone cover to be a duplicate of)", () => {
+    const zip = buildEpubZip(coverPageFiles());
+    const result = prepareEpubDocument(zip, options({ includeCover: false }), context());
+    expect(result.spineItemCount).toBe(2);
+    expect(result.warnings).not.toContainEqual({ code: "COVER_DUPLICATE_SKIPPED" });
+  });
+});
+
+describe("prepareEpubDocument: page margin (spec §13.1 @page, not .epub-book padding)", () => {
+  it("applies marginPx via @page's margin", () => {
+    const zip = buildEpubZip(minimalEpub3Files());
+    const result = prepareEpubDocument(zip, options({ marginPx: 60 }), context());
+    expect(result.html).toMatch(/@page\s*{\s*size:\s*528px 792px;\s*margin:\s*60px;\s*}/);
+  });
+
+  it("no longer hard-codes a competing width/min-height on html/body", () => {
+    const zip = buildEpubZip(minimalEpub3Files());
+    const result = prepareEpubDocument(zip, options(), context());
+    expect(result.html).not.toMatch(/html,\s*body\s*{[^}]*width:\s*528px/);
+    expect(result.html).not.toMatch(/html,\s*body\s*{[^}]*min-height:\s*792px/);
+  });
+});
+
+describe("prepareEpubDocument: image float reset (画像のfloatをEPUB側CSSから打ち消す)", () => {
+  it("neutralizes float on img/svg so a floated image never wraps following text beside it", () => {
+    const zip = buildEpubZip(minimalEpub3Files());
+    const result = prepareEpubDocument(zip, options(), context());
+    expect(result.html).toMatch(/img,\s*svg\s*{[^}]*float:\s*none\s*!important/);
+  });
+});
+
+describe("prepareEpubDocument: cover section sizing (紙面いっぱい・中央配置・改ページ)", () => {
+  function coverOnlyFiles() {
+    const files = minimalEpub3Files();
+    return {
+      ...files,
+      "OEBPS/content.opf": (files["OEBPS/content.opf"] as string).replace(
+        "<manifest>",
+        '<manifest><item id="cover-img" href="cover.png" media-type="image/png" properties="cover-image"/>',
+      ),
+      "OEBPS/cover.png": new Uint8Array([1, 2, 3, 4]),
+    };
+  }
+
+  it("sizes .epub-cover to the page's content box and forces a page break after it", () => {
+    const zip = buildEpubZip(coverOnlyFiles());
+    const result = prepareEpubDocument(zip, options({ marginPx: 48 }), context());
+    expect(result.html).toMatch(/\.epub-cover\s*{[^}]*min-height:\s*696px/);
+    expect(result.html).toMatch(/\.epub-cover\s*{[^}]*break-after:\s*page/);
+  });
+});
+
+describe("prepareEpubDocument: writing-mode placement (Chromium縦書きページ分割の実測知見)", () => {
+  it("applies vertical-rl only to html, never to body, when layout is explicitly vertical", () => {
+    const zip = buildEpubZip(minimalEpub3Files());
+    const result = prepareEpubDocument(zip, options({ layout: "vertical" }), context());
+    expect(result.html).toMatch(/html\s*{\s*writing-mode:\s*vertical-rl\s*!important/);
+    expect(result.html).not.toMatch(/body\s*{[^}]*writing-mode/);
+  });
+
+  it("applies horizontal-tb to .epub-book (not the html root) when layout is explicitly horizontal", () => {
+    const zip = buildEpubZip(minimalEpub3Files());
+    const result = prepareEpubDocument(zip, options({ layout: "horizontal" }), context());
+    expect(result.html).toMatch(/\.epub-book\s*{\s*writing-mode:\s*horizontal-tb\s*!important/);
+    expect(result.html).not.toMatch(/^html\s*{[^}]*writing-mode/m);
+  });
+});
+
 describe("prepareEpubDocument: table of contents (spec §19.1 目次)", () => {
   it("renders a generated TOC linking to the chapter section when includeTableOfContents is true", () => {
     const zip = buildEpubZip(minimalEpub3Files());

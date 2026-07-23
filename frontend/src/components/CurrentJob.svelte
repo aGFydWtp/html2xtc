@@ -17,7 +17,7 @@
         {#if job.sourceLabel}<div class="url-line">{job.sourceLabel}</div>{/if}
         <div class="status-line">
           {#if busy}<span class="spinner"></span>{/if}
-          <span class="badge" class:err={job.status === "failed" || job.status === "expired"}>{statusLabel(job.status)}</span>
+          <span class="badge" class:err={job.status === "failed" || job.status === "expired"}>{statusLabel(job.status, job.sourceType)}</span>
           {#if job.status === "completed"}
             <SaveToLibraryButton jobId={job.jobId} />
             <span class="actions">

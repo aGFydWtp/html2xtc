@@ -2,6 +2,7 @@
 // Copyright (C) 2026 aGFydWtp
 
 import type { XtcConverterContainer } from "./container";
+import type { EpubConvertOptions } from "./epub-options";
 import type { RateLimiter } from "./ratelimiter";
 import type { TextConvertOptions } from "./text-options";
 
@@ -26,11 +27,18 @@ export type ConvertLayout = "horizontal" | "vertical";
  * src/text-upload.ts): same key/filename/size shape as "pdf", but the R2
  * object lives at input/{jobId}/source.txt (src/jobs.ts#inputTextKey) and is
  * plain-text bytes, never HTML/Markdown-interpreted (text-upload spec §4.1).
+ * "epub" is the uploaded-EPUB pipeline (POST /jobs/epub, src/epub-upload.ts,
+ * EPUB spec §6.1): same key/filename/size shape as "pdf"/"text", but the R2
+ * object lives at input/{jobId}/source.epub (src/jobs.ts#inputEpubKey) and is
+ * an EPUB (ZIP) archive, parsed by src/epub/* into a self-contained HTML
+ * document before it ever reaches renderSelfStyledHtmlPdf (EPUB spec §3.2 —
+ * the Container never receives the EPUB itself).
  */
 export type ConvertSource =
   | { kind: "url"; url: string }
   | { kind: "pdf"; key: string; filename: string; size: number }
-  | { kind: "text"; key: string; filename: string; size: number };
+  | { kind: "text"; key: string; filename: string; size: number }
+  | { kind: "epub"; key: string; filename: string; size: number };
 
 /**
  * PDF conversion settings (spec §5.1), applied in the fixed order from spec
@@ -113,6 +121,8 @@ export interface ConvertJobParams {
   pdfOptions?: PdfConvertOptions;
   /** Text conversion settings; only meaningful when source.kind === "text". */
   textOptions?: TextConvertOptions;
+  /** EPUB conversion settings (EPUB spec §4.1.3); only meaningful when source.kind === "epub". */
+  epubOptions?: EpubConvertOptions;
 }
 
 /**
@@ -300,4 +310,16 @@ export interface Env {
    * /jobs/text)のみ止め、ジョブ状態参照・ダウンロードは継続する。
    */
   CONVERSION_MODE?: string;
+
+  // --- EPUB → XTC (EPUB_TO_XTC_IMPLEMENTATION_SPEC.md §5) ---
+  /** Max size in bytes accepted by POST /jobs/epub. Default 48 MiB (50331648) — see src/epub-upload.ts#resolveMaxUploadEpubBytes. */
+  MAX_UPLOAD_EPUB_BYTES?: string;
+  /** Max total decompressed size of an uploaded EPUB's entries. Default 192 MiB (201326592) — see src/epub/archive.ts#resolveMaxEpubUncompressedBytes. */
+  MAX_EPUB_UNCOMPRESSED_BYTES?: string;
+  /** Max decompressed size of a single EPUB ZIP entry. Default 32 MiB (33554432) — see src/epub/archive.ts#resolveMaxEpubEntryBytes. */
+  MAX_EPUB_ENTRY_BYTES?: string;
+  /** Max number of entries in an uploaded EPUB's ZIP central directory. Default 5000 — see src/epub/archive.ts#resolveMaxEpubEntries. */
+  MAX_EPUB_ENTRIES?: string;
+  /** Max size of the self-contained HTML generated from an EPUB (Phase 3). Default 32 MiB (33554432) — see src/jobs.ts#resolveMaxEpubHtmlBytes. */
+  MAX_EPUB_HTML_BYTES?: string;
 }

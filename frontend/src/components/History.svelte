@@ -127,10 +127,10 @@
         <li>
           <div class="info">
             <div class="job-title" class:dim={!done}>
-              {#if j.sourceType === "pdf"}<span class="src-badge">PDF</span>{:else if j.sourceType === "txt"}<span class="src-badge">TXT</span>{/if}
+              {#if j.sourceType === "pdf"}<span class="src-badge">PDF</span>{:else if j.sourceType === "txt"}<span class="src-badge">TXT</span>{:else if j.sourceType === "epub"}<span class="src-badge">EPUB</span>{/if}
               {j.title || j.sourceLabel}
             </div>
-            <div class="date">{formatDate(j.createdAt ?? "")}{done ? "" : ` · ${statusLabel(status)}`}</div>
+            <div class="date">{formatDate(j.createdAt ?? "")}{done ? "" : ` · ${statusLabel(status, j.sourceType)}`}</div>
           </div>
           <button
             type="button"

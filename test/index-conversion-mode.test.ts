@@ -20,7 +20,7 @@ type Env = import("../src/types").Env;
 
 /**
  * 登録モード仕様 Phase3 §7: CONVERSION_MODE ゲート。/convert・/jobs・
- * /jobs/pdf・/jobs/text の4分岐すべてで、メソッドチェック直後・他の
+ * /jobs/pdf・/jobs/text・/jobs/epub の5分岐すべてで、メソッドチェック直後・他の
  * バインディング(R2/AOZORA_DB/BROWSER/CONVERT_WORKFLOW等)に触れる前に
  * ゲートが効くことを、実際の fetch ハンドラ経由で確認する。CF-Connecting-IP
  * を付けないため enforceRateLimit は毎回スキップされ、RATE_LIMITER binding
@@ -46,9 +46,10 @@ const ENDPOINTS: { path: string; init: RequestInit }[] = [
   { path: "/jobs", init: { method: "POST", body: "not json" } },
   { path: "/jobs/pdf", init: { method: "POST", headers: { "Content-Type": "application/pdf" } } },
   { path: "/jobs/text", init: { method: "POST", headers: { "Content-Type": "text/plain" } } },
+  { path: "/jobs/epub", init: { method: "POST", headers: { "Content-Type": "application/epub+zip" } } },
 ];
 
-describe("CONVERSION_MODE gate — /convert, /jobs, /jobs/pdf, /jobs/text", () => {
+describe("CONVERSION_MODE gate — /convert, /jobs, /jobs/pdf, /jobs/text, /jobs/epub", () => {
   for (const { path, init } of ENDPOINTS) {
     it(`${path}: rejects with 503 "conversion is currently disabled" before touching any other binding`, async () => {
       const env = minimalEnv({ CONVERSION_MODE: "disabled" });

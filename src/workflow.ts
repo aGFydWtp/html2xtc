@@ -5,13 +5,26 @@ import { WorkflowEntrypoint } from "cloudflare:workers";
 import type { WorkflowEvent, WorkflowStep } from "cloudflare:workers";
 import { NonRetryableError } from "cloudflare:workflows";
 import { convertInContainer, convertUploadedPdfInContainer } from "./container";
+import { DEFAULT_EPUB_OPTIONS } from "./epub-options";
+import type { EpubConvertOptions } from "./epub-options";
+import {
+  resolveMaxEpubEntries,
+  resolveMaxEpubEntryBytes,
+  resolveMaxEpubUncompressedBytes,
+} from "./epub/archive";
+import { EpubError } from "./epub/errors";
+import { prepareEpubDocument } from "./epub/html";
+import { resolveMaxUploadEpubBytes } from "./epub-upload";
 import { prepareRenderInput } from "./extract";
 import { buildInlineFontCss } from "./fonts";
 import {
   articleHtmlKey,
+  epubFontsCssKey,
+  epubHtmlKey,
   fontsCssKey,
   intermediatePdfKey,
   outputXtcKey,
+  resolveMaxEpubHtmlBytes,
   resolveMaxPdfBytes,
 } from "./jobs";
 import { renderPdf, renderPdfFromHtml, renderSelfStyledHtmlPdf } from "./pdf";
@@ -100,6 +113,15 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
         jobId,
         source,
         event.payload.textOptions ?? DEFAULT_TEXT_OPTIONS,
+        step,
+      );
+    }
+
+    if (source.kind === "epub") {
+      return await this.runEpubSource(
+        jobId,
+        source,
+        event.payload.epubOptions ?? DEFAULT_EPUB_OPTIONS,
         step,
       );
     }
@@ -754,6 +776,293 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
       // gets cleaned up by the input//intermediate/ R2 lifecycle rules
       // within a day.
       await step.do("delete-text-intermediates", async () => {
+        const keys = [source.key, articleKey, fontsKey, pdfKey].filter(
+          (key): key is string => key !== null,
+        );
+        for (const key of keys) {
+          try {
+            await this.env.XTC_BUCKET.delete(key);
+          } catch (error) {
+            console.error(`[${jobId}] best-effort delete of ${key} failed`, error);
+          }
+        }
+      });
+    }
+  }
+
+  /**
+   * EPUB-upload pipeline (EPUB_TO_XTC_IMPLEMENTATION_SPEC.md §14): prepare-epub
+   * (re-fetch + re-verify size, parse+sanitize the archive via
+   * prepareEpubDocument — the single Phase 3 entrypoint — build the inline
+   * font CSS) -> render-epub-pdf (renderSelfStyledHtmlPdf, same as the TXT
+   * pipeline's render-text-pdf — deliberately NOT renderPdfFromHtml, see that
+   * function's doc comment in src/pdf.ts) -> convert-xtc (reuses the same
+   * trusted /convert Container endpoint the URL/TXT pipelines use, since the
+   * rendered PDF is one this service produced itself) ->
+   * delete-epub-intermediates (all four R2 objects, success or failure
+   * alike, spec §14.1.4).
+   *
+   * Mirrors runTextSource's structure deliberately (design decision D12):
+   * same step pair for prepare/render, same font-CSS handoff via its own R2
+   * key, same convert-xtc/cleanup shape. Title reaches the XTC via the
+   * existing HTML-<title> -> Chromium PDF metadata -> converter/app.py
+   * read-back path (prepareEpubDocument already writes the EPUB's title into
+   * the generated HTML's <title>) — convertInContainer's request-header
+   * surface is deliberately left untouched (only `author` travels that way,
+   * exactly as it already does for TXT) so as not to collide with the
+   * existing X-Xtc-Title *response* header src/jobs.ts#decodeTitleHeader
+   * reads (design decision D1).
+   *
+   * Step outputs never carry the EPUB body or the generated HTML (spec
+   * §14.1.1/§22) — only R2 keys, small counts, and warning codes.
+   */
+  private async runEpubSource(
+    jobId: string,
+    source: Extract<ConvertSource, { kind: "epub" }>,
+    epubOptions: EpubConvertOptions,
+    step: WorkflowStep,
+  ): Promise<{ xtcKey: string; title?: string }> {
+    let articleKey: string | null = null;
+    let fontsKey: string | null = null;
+    let pdfKey: string | null = null;
+    // Resolved by prepare-epub (prepareEpubDocument's OPF dc:creator) and
+    // forwarded to convert-xtc's convertInContainer call, exactly like
+    // runTextSource's resolvedAuthor — the only other /convert caller with
+    // an author to set, since the title alone travels via the PDF's own
+    // metadata (document.title -> Chromium print -> read_pdf_metadata).
+    let resolvedAuthor: string | undefined;
+
+    try {
+      ({ articleKey, fontsKey, author: resolvedAuthor } = await step.do(
+        "prepare-epub",
+        {
+          // No retry budget beyond one extra attempt: every failure
+          // prepareEpubDocument can produce (malformed archive, encrypted,
+          // fixed layout, empty spine, oversized) is deterministic for this
+          // exact upload — see the EpubError.deterministic branch below,
+          // which skips retries entirely via NonRetryableError. The single
+          // retry only covers a transient R2 get/put or font-fetch hiccup.
+          retries: { limit: 1, delay: "5 seconds", backoff: "constant" },
+          // Covers the R2 round trip, ZIP parsing, and
+          // buildInlineFontCss's font-fetch fan-out (up to 8 css2 + N woff2
+          // fetches at 10s each, run in parallel — src/fonts.ts), mirroring
+          // prepare-text's budget for the same reason.
+          timeout: "3 minutes",
+        },
+        async () => {
+          const input = await this.env.XTC_BUCKET.get(source.key);
+          if (input === null) {
+            // Only possible if the upload expired or was deleted mid-job.
+            throw new NonRetryableError("uploaded EPUB is missing");
+          }
+          // Defense in depth (design decision D13): the Worker already
+          // enforced this at upload time (spec §7.3/§18's "Content-Length
+          // と保存サイズを照合する"); a stale/tampered R2 object should
+          // never reach ZIP parsing. Mirrors prepare-text's identical
+          // re-check against MAX_TEXT_FILE_BYTES.
+          const maxUploadBytes = resolveMaxUploadEpubBytes(this.env);
+          if (input.size > maxUploadBytes) {
+            throw new NonRetryableError(
+              `uploaded EPUB exceeds the ${maxUploadBytes} byte limit`,
+            );
+          }
+
+          const bytes = new Uint8Array(await input.arrayBuffer());
+
+          let prepared;
+          try {
+            prepared = prepareEpubDocument(bytes, epubOptions, {
+              filename: source.filename,
+              limits: {
+                maxEntries: resolveMaxEpubEntries(this.env),
+                maxEntryBytes: resolveMaxEpubEntryBytes(this.env),
+                maxTotalUncompressedBytes: resolveMaxEpubUncompressedBytes(this.env),
+                maxHtmlBytes: resolveMaxEpubHtmlBytes(this.env),
+              },
+            });
+          } catch (error) {
+            if (error instanceof EpubError) {
+              // errors.ts's DETERMINISTIC_ERROR_CODES allowlist is the
+              // authority here: every code it currently defines describes a
+              // property of the uploaded bytes, but the flag is checked
+              // explicitly (not assumed) so a future code that ISN'T added
+              // to that allowlist fails safe as retryable instead of
+              // silently swallowing a real platform hiccup.
+              if (error.deterministic) {
+                throw new NonRetryableError(error.clientMessage);
+              }
+              throw new Error(error.clientMessage);
+            }
+            throw error; // unexpected — stays retryable
+          }
+
+          // Structural warning codes only (never EPUB paths/text — spec
+          // §14.1.1/§17): every code prepareEpubDocument currently emits
+          // (SPINE_ITEM_MISSING, CHAPTER_UNPARSEABLE) carries no `detail`.
+          if (prepared.warnings.length > 0) {
+            console.log(
+              `[${jobId}] epub: warnings=${prepared.warnings.map((w) => w.code).join(",")}`,
+            );
+          }
+
+          const key = epubHtmlKey(jobId);
+          await this.env.XTC_BUCKET.put(key, prepared.html, {
+            httpMetadata: { contentType: "text/html; charset=utf-8" },
+          });
+
+          // Font inlining is fail-soft (src/fonts.ts): a missing/failed web
+          // font degrades to the generated HTML's own font-family fallback
+          // baked into buildFinalCss, never fails the job. The whole
+          // generated HTML is passed as the subset-text source per
+          // prepareEpubDocument's own doc comment (design decision D12) —
+          // intentional over-inclusion, matching src/fonts.ts's stance.
+          const fontCss = await buildInlineFontCss(prepared.html, jobId, fetch, epubOptions.font);
+          let storedFontsKey: string | null = null;
+          if (fontCss !== null) {
+            const fKey = epubFontsCssKey(jobId);
+            try {
+              await this.env.XTC_BUCKET.put(fKey, fontCss, {
+                httpMetadata: { contentType: "text/css; charset=utf-8" },
+              });
+              storedFontsKey = fKey;
+            } catch (error) {
+              console.error(
+                `[${jobId}] R2 put ${fKey} failed; rendering without the inline font`,
+                error,
+              );
+            }
+          }
+
+          return {
+            articleKey: key,
+            fontsKey: storedFontsKey,
+            title: prepared.title,
+            author: prepared.author,
+            layout: prepared.layout,
+            spineItemCount: prepared.spineItemCount,
+            warnings: prepared.warnings.map((w) => w.code),
+          };
+        },
+      ));
+
+      ({ pdfKey } = await step.do(
+        "render-epub-pdf",
+        {
+          retries: { limit: 2, delay: "10 seconds", backoff: "exponential" },
+          // Same budget as render-text-pdf: goto/font grace + the 300s
+          // pdf-generation cap in pdf.ts, plus R2 I/O margin.
+          timeout: "7 minutes",
+        },
+        async () => {
+          if (articleKey === null) {
+            // Unreachable in practice (prepare-epub always returns a key on
+            // success or throws), but keeps this step's input contract
+            // explicit and satisfies strict null checking.
+            throw new NonRetryableError("prepared EPUB HTML is missing");
+          }
+          const article = await this.env.XTC_BUCKET.get(articleKey);
+          if (article === null) {
+            // Only possible if the intermediate expired mid-job.
+            throw new NonRetryableError("prepared EPUB HTML is missing");
+          }
+          let fontCss: string | null = null;
+          if (fontsKey !== null) {
+            try {
+              const fonts = await this.env.XTC_BUCKET.get(fontsKey);
+              fontCss = fonts !== null ? await fonts.text() : null;
+            } catch (error) {
+              console.error(`[${jobId}] R2 get ${fontsKey} failed`, error);
+            }
+          }
+
+          const response = await renderSelfStyledHtmlPdf(
+            this.env,
+            await article.text(),
+            fontCss,
+          );
+          if (!response.ok) {
+            console.error(
+              `[${jobId}] Browser Run returned ${response.status}: ${await response.text()}`,
+            );
+            throw new Error("PDF generation failed");
+          }
+          const pdfBytes = await response.arrayBuffer();
+          const maxPdfBytes = resolveMaxPdfBytes(this.env);
+          if (pdfBytes.byteLength > maxPdfBytes) {
+            // Deterministic: retrying would render the same PDF.
+            throw new NonRetryableError(
+              `rendered PDF exceeds the ${maxPdfBytes} byte limit; try a smaller font size or fewer chapters`,
+            );
+          }
+          const key = intermediatePdfKey(jobId);
+          await this.env.XTC_BUCKET.put(key, pdfBytes, {
+            httpMetadata: { contentType: "application/pdf" },
+          });
+          return { pdfKey: key };
+        },
+      ));
+
+      const { xtcKey, title } = await step.do(
+        "convert-xtc",
+        {
+          retries: { limit: 2, delay: "30 seconds", backoff: "constant" },
+          timeout: "12 minutes",
+        },
+        async () => {
+          if (pdfKey === null) {
+            throw new NonRetryableError("intermediate PDF is missing");
+          }
+          const pdfSource = await this.env.XTC_BUCKET.get(pdfKey);
+          if (pdfSource === null) {
+            throw new NonRetryableError("intermediate PDF is missing");
+          }
+          let response: Response;
+          try {
+            // Same trusted /convert endpoint + FixedLengthStream requirement
+            // as the URL/TXT pipelines' convert-xtc step — this PDF was
+            // rendered by this service's own Browser Run call above, not
+            // uploaded by the client. resolvedAuthor (prepare-epub's
+            // prepared.author, the OPF dc:creator) rides along as
+            // X-Xtc-Author (src/container.ts), same as the TXT pipeline.
+            response = await convertInContainer(
+              this.env,
+              jobId,
+              pdfSource.body.pipeThrough(new FixedLengthStream(pdfSource.size)),
+              CONVERTER_FETCH_TIMEOUT_MS,
+              resolvedAuthor,
+            );
+          } catch (error) {
+            if (error instanceof DOMException && error.name === "TimeoutError") {
+              throw new NonRetryableError(
+                "XTC conversion timed out; the document is too large",
+              );
+            }
+            throw error; // network/container failures stay retryable
+          }
+          if (!response.ok) {
+            console.error(
+              `[${jobId}] converter returned ${response.status}: ${await response.text()}`,
+            );
+            if (response.status === 413) {
+              throw new NonRetryableError(
+                `rendered PDF exceeds the ${resolveMaxPdfBytes(this.env)} byte limit; try a smaller font size or fewer chapters`,
+              );
+            }
+            throw new Error("XTC conversion failed");
+          }
+          const { title } = await storeXtcOutput(this.env, jobId, response);
+          return { xtcKey: outputXtcKey(jobId), title };
+        },
+      );
+
+      return { xtcKey, title };
+    } finally {
+      // Runs on success and on terminal failure alike (spec §14.1.4): every
+      // input/intermediate object this pipeline produced is removed, not
+      // just the uploaded EPUB. Best-effort — a delete failure here still
+      // gets cleaned up by the input//intermediate/ R2 lifecycle rules
+      // within a day.
+      await step.do("delete-epub-intermediates", async () => {
         const keys = [source.key, articleKey, fontsKey, pdfKey].filter(
           (key): key is string => key !== null,
         );

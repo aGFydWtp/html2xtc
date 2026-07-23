@@ -5,6 +5,9 @@ import {
   fontsCssKey,
   decideMissingDownload,
   decodeTitleHeader,
+  epubFontsCssKey,
+  epubHtmlKey,
+  inputEpubKey,
   inputTextKey,
   intermediatePdfKey,
   mapInstanceStatus,
@@ -12,6 +15,7 @@ import {
   needsPhaseProbe,
   outputXtcKey,
   resolveExtractMinChars,
+  resolveMaxEpubHtmlBytes,
   resolveMaxPdfBytes,
   sanitizeTitle,
   titleFromOutput,
@@ -44,6 +48,33 @@ describe("R2 key layout", () => {
 
   it("puts the uploaded TXT under input/ like the uploaded PDF", () => {
     expect(inputTextKey(JOB_ID)).toBe(`input/${JOB_ID}/source.txt`);
+  });
+
+  it("puts the uploaded EPUB under input/ like the uploaded PDF/TXT", () => {
+    expect(inputEpubKey(JOB_ID)).toBe(`input/${JOB_ID}/source.epub`);
+  });
+
+  it("shares the intermediate/ lifecycle prefix for the EPUB HTML", () => {
+    expect(epubHtmlKey(JOB_ID)).toBe(`intermediate/${JOB_ID}/epub.html`);
+  });
+
+  it("shares the intermediate/ lifecycle prefix for the EPUB fonts css", () => {
+    expect(epubFontsCssKey(JOB_ID)).toBe(`intermediate/${JOB_ID}/epub-fonts.css`);
+  });
+});
+
+describe("resolveMaxEpubHtmlBytes", () => {
+  it("defaults to 32 MiB", () => {
+    expect(resolveMaxEpubHtmlBytes({})).toBe(33_554_432);
+  });
+
+  it("honors a positive override", () => {
+    expect(resolveMaxEpubHtmlBytes({ MAX_EPUB_HTML_BYTES: "1000" })).toBe(1000);
+  });
+
+  it("falls back on garbage or non-positive values", () => {
+    expect(resolveMaxEpubHtmlBytes({ MAX_EPUB_HTML_BYTES: "banana" })).toBe(33_554_432);
+    expect(resolveMaxEpubHtmlBytes({ MAX_EPUB_HTML_BYTES: "0" })).toBe(33_554_432);
   });
 });
 

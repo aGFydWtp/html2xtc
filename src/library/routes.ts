@@ -4,6 +4,7 @@
 import { verifyCsrf } from "../auth/csrf";
 import type { Account } from "../auth/sessions";
 import { requireSession } from "../auth/sessions";
+import { autoAddItemToSoleActiveDevice } from "../devices/service";
 import { xtcContentDisposition } from "../jobs";
 import type { Router } from "../router";
 import { logAuditEvent } from "../security/audit";
@@ -69,18 +70,23 @@ export function registerLibraryRoutes(router: Router): void {
     if (author !== undefined && typeof author !== "string") {
       throw Errors.badRequest("INVALID_AUTHOR", "author must be a string");
     }
-    const item = await saveJobToLibrary(env, account, {
+    const result = await saveJobToLibrary(env, account, {
       jobId,
       ...(title !== undefined ? { title } : {}),
       ...(author !== undefined ? { author } : {}),
     });
     // Fires even on the idempotent-replay path (an already-saved jobId) —
-    // saveJobToLibrary doesn't distinguish "created" from "returned
-    // existing" in its result, and over-logging a harmless replay is
-    // preferable to threading that distinction through just for the audit
-    // trail.
-    logAuditEvent("library.item.created", { accountId: account.id, itemId: item.id });
-    return Response.json({ item });
+    // over-logging a harmless replay is preferable to conditioning this
+    // audit event on the created/existing distinction, which is only used
+    // below to decide whether to auto-add the item to a sole active device.
+    logAuditEvent("library.item.created", { accountId: account.id, itemId: result.item.id });
+    if (result.created) {
+      // Best-effort, never throws — a failed auto-add must not turn this
+      // successful library save into an error response (see
+      // src/devices/service.ts's autoAddItemToSoleActiveDevice).
+      await autoAddItemToSoleActiveDevice(env, account, result.item.id);
+    }
+    return Response.json({ item: result.item });
   });
 
   router.get("/api/library/items", async (request, env) => {

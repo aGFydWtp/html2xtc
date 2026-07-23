@@ -86,6 +86,23 @@ function toDto(item: LibraryItem): LibraryItemDto {
 }
 
 /**
+ * Result of saveJobToLibrary: `created` distinguishes a genuine new row
+ * (created: true) from every other case that returns an already-existing
+ * item (the up-front idempotency check, or the raced-insert recovery path) —
+ * `created: false`. This is an internal-only signal; the HTTP response body
+ * (src/library/routes.ts) only ever sends `item`, never `created`, so the
+ * public JSON shape is unchanged. Consumed by
+ * src/devices/service.ts's autoAddItemToSoleActiveDevice, which must only
+ * run on a genuine new save — never on the idempotent-replay path, or
+ * replaying an already-saved jobId would resurrect an item a user
+ * deliberately removed from a device's delivery list.
+ */
+export interface SaveJobToLibraryResult {
+  item: LibraryItemDto;
+  created: boolean;
+}
+
+/**
  * Implements POST /api/library/items/from-job (plan §8.2):
  *  1. validate jobId
  *  2. return the existing item idempotently if this job was already saved
@@ -109,7 +126,7 @@ export async function saveJobToLibrary(
   >,
   account: Account,
   request: FromJobRequest,
-): Promise<LibraryItemDto> {
+): Promise<SaveJobToLibraryResult> {
   // 登録モード仕様 Phase3 §7: LIBRARY_WRITE_MODE==="read-only" のときだけ
   // 新規保存を止める。閲覧(listLibrary)・更新(updateLibrary)・削除
   // (deleteLibrary)・ダウンロード(getLibraryDownload)は対象外 — このガード
@@ -123,7 +140,7 @@ export async function saveJobToLibrary(
 
   const existing = await findLibraryItemByJobId(env.APP_DB, account.id, request.jobId);
   if (existing !== null) {
-    return toDto(existing);
+    return { item: toDto(existing), created: false };
   }
 
   const itemCount = await countActiveLibraryItems(env.APP_DB, account.id);
@@ -175,16 +192,16 @@ export async function saveJobToLibrary(
     // its result rather than an error the client didn't cause.
     const raced = await findLibraryItemByJobId(env.APP_DB, account.id, request.jobId);
     if (raced !== null) {
-      return toDto(raced);
+      return { item: toDto(raced), created: false };
     }
     throw Errors.internal("failed to save library item");
   }
 
-  const created = await getLibraryItem(env.APP_DB, account.id, itemId);
-  if (created === null) {
+  const createdItem = await getLibraryItem(env.APP_DB, account.id, itemId);
+  if (createdItem === null) {
     throw Errors.internal("failed to save library item");
   }
-  return toDto(created);
+  return { item: toDto(createdItem), created: true };
 }
 
 /** GET /api/library/items — deleted_at IS NULL only, created_at DESC (plan §9.2). */

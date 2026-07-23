@@ -137,7 +137,8 @@ describe("saveJobToLibrary — item-count quota", () => {
     };
 
     const result = await saveJobToLibrary(env, { id: ACCOUNT_ID, displayName: "Haruki" }, { jobId: JOB_ID });
-    expect(result.sizeBytes).toBe(99);
+    expect(result.item.sizeBytes).toBe(99);
+    expect(result.created).toBe(true);
     expect(db.rows).toHaveLength(1);
   });
 });
@@ -182,7 +183,7 @@ describe("saveJobToLibrary — byte-total quota", () => {
     };
 
     const result = await saveJobToLibrary(env, { id: ACCOUNT_ID, displayName: "Haruki" }, { jobId: JOB_ID });
-    expect(result.sizeBytes).toBe(100);
+    expect(result.item.sizeBytes).toBe(100);
     expect(bucket.deletedKeys).toHaveLength(0);
   });
 });

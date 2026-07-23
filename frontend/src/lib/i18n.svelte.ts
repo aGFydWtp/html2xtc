@@ -656,7 +656,7 @@ export const I18N: Record<Lang, Messages> = {
 
     flasher_title: "CrossPoint JP",
     flasher_intro: "ブラウザからXteink X3へファームウェアをインストールできます。",
-    flasher_fork_notice: "このファームウェアは CrossPoint JP をフォークし、XTC変換アプリと接続する機能を追加したものです。",
+    flasher_fork_notice: "このファームウェアは CrossPoint JP をフォークし、この「XTC 変換」アプリと接続する機能を追加したものです。",
     flasher_upstream_label: "フォーク元: CrossPoint JP (GitHub)",
     flasher_channel_heading: "ファームウェアの選択",
     flasher_dev: "開発版",

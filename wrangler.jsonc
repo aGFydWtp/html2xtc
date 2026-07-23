@@ -42,16 +42,24 @@
 		// 上記のとおり "invite" のまま据え置く): サービス全体クォータ既定値
 		// （src/quotas.ts）。TURNSTILE_SECRET_KEY / REGISTRATION_IP_PEPPER /
 		// INTERNAL_STATUS_SECRET は Wrangler secret（`wrangler secret put`）
-		// でのみ設定し、ここには絶対に書かない。TURNSTILE_SITE_KEY も open を
-		// 実際に有効化する運用判断の一部としてここに追加する（実サイトキー
-		// が無い間は未設定のままでよい — 未設定なら /api/public/config は
-		// turnstileSiteKey: null を返す）。
+		// でのみ設定し、ここには絶対に書かない。
 		"MAX_TOTAL_ACCOUNTS": "500",
 		"MAX_NEW_ACCOUNTS_PER_DAY": "50",
 		"MAX_NEW_ACCOUNTS_PER_IP_PER_DAY": "3",
 		"MAX_TOTAL_LIBRARY_BYTES": "53687091200",
 		"TOTAL_STORAGE_WARNING_PERCENT": "80",
 		"TOTAL_STORAGE_STOP_PERCENT": "95",
+		// Turnstile site key（公開情報。ボット判定に使う公開鍵で秘匿不要 —
+		// 対の秘密鍵 TURNSTILE_SECRET_KEY は `wrangler secret put` でのみ設定）。
+		// 公開登録（open）のボット対策ウィジェット用（PasskeyRegistrationDialog.
+		// svelte）。未設定のままだと /api/public/config は turnstileSiteKey:
+		// null を返し、ウィジェット自体を出さない。
+		"TURNSTILE_SITE_KEY": "0x4AAAAAAD7nLusCnJNs4LvK",
+		// 利用規約・プライバシーポリシー共通の1版（本サービスでは文書ごとに
+		// バージョンを分けず、この1つの値で両方をカバーする）。登録時に
+		// acceptedTermsVersion として送信され D1 に記録される。値を変える際は
+		// frontend/public/about.html の最終改定日・適用開始日の表記も合わせて
+		// 更新すること。
 		"TERMS_VERSION": "2026-07-23"
 		// 登録モード仕様 Phase 3 (src/auth/registration-mode.ts の
 		// resolveRegistrationClosedReason, src/feature-flags.ts): 以下は

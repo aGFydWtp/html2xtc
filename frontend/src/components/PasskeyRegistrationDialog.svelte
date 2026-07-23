@@ -198,9 +198,7 @@
             </label>
             <label class="check-field">
               <input type="checkbox" bind:checked={agreedPrivacy} />
-              <!-- TODO(登録モード仕様 Phase2): 実際のプライバシーポリシー文書はユーザーが
-                   別途用意する。ここでは frontend/public/about.html の #privacy への
-                   暫定リンクを使っている（本文自体は既存の "プライバシー" セクション）。 -->
+              <!-- 利用規約・プライバシーは frontend/public/about.html に掲載 -->
               <span>{t("register_privacy_agree_before")}<a href="/about#privacy" target="_blank" rel="noopener">{t("register_privacy_link")}</a>{t("register_privacy_agree_after")}</span>
             </label>
             {#if turnstileSiteKeyPresent}

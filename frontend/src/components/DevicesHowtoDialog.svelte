@@ -45,19 +45,20 @@
     <h3>{t("devices_howto_step1_heading")}</h3>
     <ol>
       <li>{t("devices_howto_step1_device")}</li>
-      <li>{t("devices_howto_step1_browser")}</li>
-      <li>{t("devices_howto_step1_usb")}</li>
+      <li>{t("devices_howto_step1_firmware")}</li>
+      <li>{t("devices_howto_step1_connect")}</li>
       <li>{t("devices_howto_step1_flasher")}</li>
     </ol>
+    <button type="button" class="secondary" onclick={goToFlasher}>{t("devices_empty_flash")}</button>
     <h3>{t("devices_howto_step2_heading")}</h3>
     <ol>
+      <li>{t("devices_howto_step2_menu")}</li>
       <li>{t("devices_howto_step2_qr")}</li>
       <li>{t("devices_howto_step2_scan")}</li>
       <li>{t("devices_howto_step2_login")}</li>
       <li>{t("devices_howto_step2_approve")}</li>
       <li>{t("devices_howto_step2_expiry")}</li>
     </ol>
-    <button type="button" class="secondary" onclick={goToFlasher}>{t("devices_empty_flash")}</button>
   </div>
   <div class="dlg-actions">
     <button type="button" class="dlg-cancel" onclick={() => closeDevicesHowtoDialog()}>{t("register_closed_close")}</button>

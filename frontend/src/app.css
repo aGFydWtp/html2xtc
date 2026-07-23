@@ -94,3 +94,61 @@ dialog.simple-dialog.wide { width: min(560px, calc(100vw - 32px)); }
   white-space: nowrap;
 }
 .simple-dialog .dlg-submit:disabled { opacity: .55; cursor: default; }
+
+/* ESP Web Tools のインストールダイアログ（<esp-web-install-button> クリックで
+   esp-web-tools/dist/connect.js が document.createElement("ewt-install-dialog")
+   → document.body.appendChild() する Custom Element）のテーマ調整。
+   Flasher.svelte の scoped <style> は Shadow DOM 外の document.body 直下に
+   生成されるこの要素には届かないため、ここ（グローバル）に置く。CSS のみで
+   JS ロジックは変更しない。
+
+   下記はすべて esp-web-tools/dist/styles.js・install-dialog.js および
+   @material/web のソースで実在を確認したカスタムプロパティのみを上書きする
+   （実装時の裏取り表は実装ログ参照）。値は html2xtc の既存トークン（--ink 等）
+   への参照のみで、16進カラーのベタ書きはしない。
+
+   [!important について]
+   esp-web-tools は下記グループ B を自身の `:host { --x: ...; }`（styles.js）
+   で再定義済み。CSS 詳細度は擬似クラス `:host` が (0,1,0)、外側からの要素型
+   セレクタ `ewt-install-dialog` が (0,0,1) であり、`:host` 側が優先されるため、
+   外部からの上書きには !important が必須（グループ Bのみ）。
+   グループ C は esp-web-tools/@material/web のどちらも `:host` で値を宣言して
+   おらず、内部コンポーネントの `var(--x, フォールバック値)` の解決先として
+   参照されるのみなので、通常宣言で上書きできる（!important 不要）。 */
+ewt-install-dialog {
+  /* グループ B: esp-web-tools/dist/styles.js の :host{} を上書き（詳細度対策で !important） */
+  --roboto-font: "Zen Kaku Gothic New", system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif !important;
+  --text-color: var(--muted2) !important;
+  --danger-color: var(--error) !important;
+  --md-sys-color-primary: var(--ink) !important;
+  --md-sys-color-on-primary: var(--ink-text) !important;
+  --md-ref-typeface-brand: var(--roboto-font) !important;
+  --md-ref-typeface-plain: var(--roboto-font) !important;
+  --md-sys-color-surface: var(--bg) !important;
+  --md-sys-color-surface-container: var(--card) !important;
+  --md-sys-color-surface-container-high: var(--card) !important;
+  --md-sys-color-surface-container-highest: var(--panel) !important;
+  --md-sys-color-secondary-container: var(--panel) !important;
+  --md-sys-typescale-headline-font: var(--roboto-font) !important;
+  --md-sys-typescale-title-font: var(--roboto-font) !important;
+
+  /* グループ C: esp-web-tools は上書きしておらず、@material/web 内部の
+     var(--x, フォールバック) 解決先としてのみ効く（!important 不要） */
+  --md-sys-color-on-surface: var(--text);
+  --md-sys-color-on-surface-variant: var(--muted2);
+  --md-sys-color-outline-variant: var(--line);
+  --md-sys-color-error: var(--error);
+  --md-sys-color-scrim: var(--ink);
+  /* Material 既定の 28px（角丸）を .simple-dialog の 4px に揃える */
+  --md-dialog-container-shape: 4px;
+
+  /* 見出し・本文のタイポグラフィを .simple-dialog の .dlg-title / .dlg-body に寄せる。
+     dialog-styles.css が var(--md-dialog-headline-size, ...) の形で参照しており、
+     esp-web-tools 側の :host 宣言は無い。letter-spacing に対応する変数は
+     存在しないため、そこだけは既存ダイアログ（.04em）と揃わない。 */
+  --md-dialog-headline-size: 16px;
+  --md-dialog-headline-weight: 700;
+  --md-dialog-headline-line-height: 1.5;
+  --md-dialog-supporting-text-size: 14px;
+  --md-dialog-supporting-text-line-height: 1.8;
+}

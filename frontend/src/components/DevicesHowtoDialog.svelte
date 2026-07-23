@@ -12,6 +12,7 @@
   import imgSaveLibrary from "../assets/howto/05-save-to-library.webp";
   import imgEditLibraryMenu from "../assets/howto/06-edit-library-menu.webp";
   import imgDeviceLibrarySave from "../assets/howto/07-device-library-save.webp";
+  import imgDeviceMyxtcList from "../assets/howto/08-device-myxtc-list.webp";
 
   let dlg = $state<HTMLDialogElement | null>(null);
 
@@ -92,6 +93,15 @@
       <li>
         {t("devices_howto_step3_check_save")}
         <img src={imgDeviceLibrarySave} alt={t("devices_howto_img_device_library_save")} width="1000" height="1250" loading="lazy" />
+      </li>
+      <li>
+        {t("devices_howto_step3_device_menu")}
+        <!-- 端末トップの「マイXTC」画面はステップ2の 01 と同じ画像を使い回す。 -->
+        <img src={imgMyxtcMenu} alt={t("devices_howto_img_device_myxtc")} width="563" height="563" loading="lazy" />
+      </li>
+      <li>
+        {t("devices_howto_step3_device_list")}
+        <img src={imgDeviceMyxtcList} alt={t("devices_howto_img_device_list")} width="563" height="563" loading="lazy" />
       </li>
     </ol>
   </div>

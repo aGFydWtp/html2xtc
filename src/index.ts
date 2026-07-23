@@ -678,7 +678,19 @@ async function handleCreateEpubJob(request: Request, env: Env): Promise<Response
   const key = inputEpubKey(jobId);
   const declaredSize = lengthCheck.length;
 
-  const saveResult = await saveUploadedEpub(env, key, body, declaredSize, filename);
+  // Unlike request.body (PDF/TXT uploads), peekLeadingBytes's reconstructed
+  // `body` has no known length, and R2 put() only accepts streams with a
+  // known length (Request/Response bodies or the readable half of a
+  // FixedLengthStream) — mirrors the same requirement documented on
+  // convertInContainer (src/container.ts) and used from R2 reads throughout
+  // src/workflow.ts.
+  const saveResult = await saveUploadedEpub(
+    env,
+    key,
+    body.pipeThrough(new FixedLengthStream(declaredSize)),
+    declaredSize,
+    filename,
+  );
   if (!saveResult.ok) {
     return Response.json({ error: saveResult.error }, { status: saveResult.status });
   }

@@ -350,10 +350,11 @@ export interface Messages {
   devices_howto_title: string;
   devices_howto_step1_heading: string;
   devices_howto_step1_device: string;
-  devices_howto_step1_browser: string;
-  devices_howto_step1_usb: string;
+  devices_howto_step1_firmware: string;
+  devices_howto_step1_connect: string;
   devices_howto_step1_flasher: string;
   devices_howto_step2_heading: string;
+  devices_howto_step2_menu: string;
   devices_howto_step2_qr: string;
   devices_howto_step2_scan: string;
   devices_howto_step2_login: string;
@@ -710,12 +711,13 @@ export const I18N: Record<Lang, Messages> = {
     devices_howto_btn: "端末の追加方法",
     devices_howto_title: "端末の登録方法",
     devices_howto_step1_heading: "ステップ1: ファームウェアのインストール",
-    devices_howto_step1_device: "対応端末は Xteink X3 です。専用ファームウェア「CrossPoint JP」をインストールする必要があります。",
-    devices_howto_step1_browser: "Web Serial API に対応した Chrome または Edge ブラウザが必要です。",
-    devices_howto_step1_usb: "端末とパソコンを USB-C ケーブルで接続します。",
+    devices_howto_step1_device: "対応端末は Xteink X3 です。",
+    devices_howto_step1_firmware: "専用ファームウェア「CrossPoint JP」をインストールする必要があります。CrossPoint JP は、端末をこの「XTC 変換」アプリに接続する機能を追加したファームウェアです。",
+    devices_howto_step1_connect: "Xteink X3 はポゴピン接続です。詳しい接続手順は「ファームウェア」タブの案内をご覧ください。",
     devices_howto_step1_flasher: "「ファームウェア」タブを開き、画面の手順に従ってインストールします。",
     devices_howto_step2_heading: "ステップ2: アカウントとのペアリング",
-    devices_howto_step2_qr: "インストール後、端末の画面に QR コードとユーザーコードが表示されます。",
+    devices_howto_step2_menu: "インストール後、端末のトップ画面に「マイXTC」というメニューが追加されます。",
+    devices_howto_step2_qr: "「マイXTC」を開くと、QR コードとユーザーコードが表示されます。",
     devices_howto_step2_scan: "パソコンやスマートフォンでその QR コードを読み取るか、表示された URL を開くと、ペアリング承認ダイアログが開きます。",
     devices_howto_step2_login: "ログインしていない場合は、パスキーでログインします。",
     devices_howto_step2_approve: "端末の名前を入力して「承認する」を押すと、端末が一覧に追加されます。",
@@ -1071,12 +1073,13 @@ export const I18N: Record<Lang, Messages> = {
     devices_howto_btn: "How to add a device",
     devices_howto_title: "How to register a device",
     devices_howto_step1_heading: "Step 1: Install the firmware",
-    devices_howto_step1_device: "The supported device is the Xteink X3. It needs the dedicated CrossPoint JP firmware installed.",
-    devices_howto_step1_browser: "You'll need Chrome or Edge (a browser that supports the Web Serial API).",
-    devices_howto_step1_usb: "Connect the device to your computer with a USB-C cable.",
+    devices_howto_step1_device: "The supported device is the Xteink X3.",
+    devices_howto_step1_firmware: "It needs the dedicated CrossPoint JP firmware installed. CrossPoint JP adds the ability to connect the device to this XTC Converter app.",
+    devices_howto_step1_connect: "The Xteink X3 connects via pogo pins. See the Firmware tab for detailed connection steps.",
     devices_howto_step1_flasher: "Open the Firmware tab and follow the on-screen instructions to install it.",
     devices_howto_step2_heading: "Step 2: Pair it with your account",
-    devices_howto_step2_qr: "After installation, the device screen shows a QR code and a user code.",
+    devices_howto_step2_menu: "After installation, a “マイXTC” (My XTC) menu appears on the device's home screen.",
+    devices_howto_step2_qr: "Open “マイXTC” to see a QR code and a user code.",
     devices_howto_step2_scan: "Scan the QR code with your computer or phone (or open the URL it shows) to open the pairing approval dialog.",
     devices_howto_step2_login: "Log in with your passkey if you aren't already.",
     devices_howto_step2_approve: "Enter a name for the device and press “Approve” to add it to your list.",

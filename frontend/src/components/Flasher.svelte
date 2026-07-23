@@ -11,6 +11,10 @@
 
   type EspWebInstallButtonElement = HTMLElement & { manifest: string };
 
+  // 配布ファームウェアのフォーク元。html2xtc 用に接続機能を追加したフォーク版で
+  // あることを明示するために表示する（本家との混同防止）。
+  const FLASHER_UPSTREAM_URL = "https://github.com/zrn-ns/crosspoint-jp";
+
   // 両チャンネルとも利用不可の間は未選択（null）のままにする（実装仕様書 §5.5 優先順位3）。
   let channel = $state<FirmwareChannel | null>(null);
   let devState = $state<ManifestState>({ status: "loading" });
@@ -81,6 +85,10 @@
 <section class="flasher">
   <h2>{t("flasher_title")}</h2>
   <p class="intro">{t("flasher_intro")}</p>
+  <p class="fork-notice">
+    {t("flasher_fork_notice")}
+    <a href={FLASHER_UPSTREAM_URL} target="_blank" rel="noopener noreferrer">{t("flasher_upstream_label")}</a>
+  </p>
 
   <!-- 警告の優先順位（実装仕様書 §11.5）: 非HTTPS > Web Serial非対応 > manifest取得失敗 > 通常表示。 -->
   {#if !secureContext}
@@ -164,6 +172,8 @@
   section.flasher { padding: 0 0 30px; }
   section.flasher h2 { margin: 0 0 8px; font-size: 20px; }
   section.flasher .intro { margin: 0 0 20px; color: var(--muted2); line-height: 1.8; }
+  section.flasher .fork-notice { margin: 0 0 20px; color: var(--muted2); font-size: 13px; line-height: 1.8; }
+  section.flasher .fork-notice a { color: inherit; }
 
   .notice { padding: 12px 14px; margin: 0 0 18px; border-radius: 4px; font-size: 14px; line-height: 1.7; }
   .notice.error { border: 1px solid var(--error); color: var(--error); }

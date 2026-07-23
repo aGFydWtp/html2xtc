@@ -238,6 +238,8 @@ export interface Messages {
   // --- CrossPoint JP ファームウェア更新（実装仕様書 §13） ---------------------
   flasher_title: string;
   flasher_intro: string;
+  flasher_fork_notice: string;
+  flasher_upstream_label: string;
   flasher_channel_heading: string;
   flasher_dev: string;
   flasher_dev_description: string;
@@ -654,6 +656,8 @@ export const I18N: Record<Lang, Messages> = {
 
     flasher_title: "CrossPoint JP",
     flasher_intro: "ブラウザからXteink X3へファームウェアをインストールできます。",
+    flasher_fork_notice: "このファームウェアは CrossPoint JP をフォークし、この「XTC 変換」アプリと接続する機能を追加したものです。",
+    flasher_upstream_label: "フォーク元: CrossPoint JP (GitHub)",
     flasher_channel_heading: "ファームウェアの選択",
     flasher_dev: "開発版",
     flasher_dev_description: "最新の変更を含む開発ビルドです。",
@@ -1065,6 +1069,8 @@ export const I18N: Record<Lang, Messages> = {
 
     flasher_title: "CrossPoint JP",
     flasher_intro: "Install firmware on an Xteink X3 directly from your browser.",
+    flasher_fork_notice: "This firmware is a fork of CrossPoint JP that adds the ability to connect to the XTC Converter app.",
+    flasher_upstream_label: "Upstream: CrossPoint JP (GitHub)",
     flasher_channel_heading: "Choose firmware",
     flasher_dev: "Development",
     flasher_dev_description: "The latest development build with recent changes.",

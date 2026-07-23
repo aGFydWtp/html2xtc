@@ -22,6 +22,7 @@ export interface Messages {
   dl: string;
   menu_label: string;
   menu_open: string;
+  menu_howto: string;
   menu_dl: string;
   menu_preview: string;
   preview: string;
@@ -412,6 +413,7 @@ export const I18N: Record<Lang, Messages> = {
     dl: "XTC をダウンロード",
     menu_label: "操作メニュー",
     menu_open: "メニューを開く",
+    menu_howto: "使い方",
     menu_dl: "XTC ダウンロード",
     menu_preview: "XTC プレビュー",
     preview: "プレビュー",
@@ -725,7 +727,7 @@ export const I18N: Record<Lang, Messages> = {
     devices_revoke_confirm: "この端末を解除しますか？以後、この端末からのアクセスはできなくなります。",
     devices_last_seen_never: "未接続",
     devices_howto_btn: "端末の追加方法",
-    devices_howto_title: "端末の登録方法",
+    devices_howto_title: "使い方",
     devices_howto_step1_heading: "ステップ1: ファームウェアのインストール",
     devices_howto_step1_device: "対応端末は Xteink X3 です。",
     devices_howto_step1_firmware: "専用ファームウェア「CrossPoint JP」をインストールする必要があります。CrossPoint JP は、端末をこの「XTC 変換」アプリに接続する機能を追加したファームウェアです。",
@@ -788,6 +790,7 @@ export const I18N: Record<Lang, Messages> = {
     dl: "Download XTC",
     menu_label: "Actions",
     menu_open: "Open menu",
+    menu_howto: "How to use",
     menu_dl: "Download XTC",
     menu_preview: "Preview XTC",
     preview: "Preview",
@@ -1103,7 +1106,7 @@ export const I18N: Record<Lang, Messages> = {
     devices_revoke_confirm: "Unpair this device? It will no longer be able to connect.",
     devices_last_seen_never: "Never connected",
     devices_howto_btn: "How to add a device",
-    devices_howto_title: "How to register a device",
+    devices_howto_title: "How to use",
     devices_howto_step1_heading: "Step 1: Install the firmware",
     devices_howto_step1_device: "The supported device is the Xteink X3.",
     devices_howto_step1_firmware: "It needs the dedicated CrossPoint JP firmware installed. CrossPoint JP adds the ability to connect the device to this XTC Converter app.",

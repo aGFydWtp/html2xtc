@@ -2,7 +2,7 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import { authStore } from "../lib/auth.svelte";
-  import { openAccountDialog, openLoginDialog, openRegistrationDialog } from "../lib/authDialogs.svelte";
+  import { openAccountDialog, openDevicesHowtoDialog, openLoginDialog, openRegistrationDialog } from "../lib/authDialogs.svelte";
   import { getLang, setLang, t } from "../lib/i18n.svelte";
   import { publicConfigStore } from "../lib/publicConfig.svelte";
 
@@ -83,6 +83,10 @@
     hideMenu();
     openLoginDialog();
   }
+  function menuHowto(): void {
+    hideMenu();
+    openDevicesHowtoDialog();
+  }
   // 本番の REGISTRATION_MODE は "invite" のまま据え置かれるため、この
   // ボタンは publicConfig.registrationMode === "open" のときだけ描画される
   // （invite/closed では従来通りログインボタンのみ — 実装計画の最重要方針）。
@@ -139,6 +143,7 @@
   {#if authStore.account || authStore.ready}
     <hr />
   {/if}
+  <button type="button" class="item" onclick={menuHowto}>{t("menu_howto")}</button>
   <div class="lang" role="group" aria-label="Language">
     <button type="button" aria-pressed={getLang() === "ja"} onclick={() => setLang("ja")}>日本語</button>
     <button type="button" aria-pressed={getLang() === "en"} onclick={() => setLang("en")}>EN</button>

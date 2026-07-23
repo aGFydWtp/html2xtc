@@ -31,8 +31,8 @@ export interface EpubConvertOptions {
 export const DEFAULT_EPUB_OPTIONS: EpubConvertOptions = {
   layout: "auto",
   font: "BIZ UDMincho",
-  fontSizePx: 22,
-  marginPx: 48,
+  fontSizePx: 24,
+  marginPx: 40,
   chapterPageBreak: true,
   includeCover: true,
   includeTableOfContents: false,

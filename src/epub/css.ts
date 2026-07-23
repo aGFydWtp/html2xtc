@@ -268,10 +268,28 @@ export type CssUrlResolver = (rawUrl: string) => string | undefined;
  * anything meaningless in a static PDF capture (`animation*`,
  * `transition*`), and `content`/`filter`/`transform`, which are not needed
  * for EPUB reading layout and would otherwise widen the url()/expression()
- * surface for no reader-visible benefit. Spec §10.4's "possible to preserve"
- * list (writing-mode, text-orientation, text-combine-upright, text-emphasis,
- * ruby-position, break-*, page-break-*, white-space, text-align,
- * line-height) is a strict subset of this set.
+ * surface for no reader-visible benefit.
+ *
+ * `writing-mode` is the one deliberate exception to "preserve whatever the
+ * EPUB's own CSS says": it is dropped here, everywhere it can appear
+ * (stylesheets, inline `<style>`, inline `style=""` — this allowlist is the
+ * single choke point for all three), so html.ts's own correction CSS is the
+ * ONLY place `writing-mode` is ever declared in the generated document. Two
+ * concrete, demonstrated reasons: (1) an EPUB that ships its own
+ * `body { writing-mode: ... }` otherwise wins over html.ts's root-level
+ * rule for that element (an element's own declaration always beats an
+ * inherited one, `!important` or not — CSS cascades per element, not
+ * across the tree), which silently defeats an explicit (non-"auto")
+ * `layout` choice; single-sourcing writing-mode fixes that unconditionally.
+ * (2) real-world 青空文庫-derived EPUBs routinely declare
+ * `html, body { writing-mode: vertical-rl }` themselves, so leaving it
+ * allowed doesn't just risk an override failure, it's the *common* case.
+ * `text-orientation` (and everything else on spec's original preserve list
+ * — text-combine-upright, text-emphasis*, ruby-position, break-*,
+ * page-break-*, white-space, text-align, line-height) has no such
+ * override/duplication concern (it doesn't establish a
+ * block-progression/fragmentation context the way writing-mode does) and
+ * stays allowed.
  */
 const ALLOWED_PROPERTIES: ReadonlySet<string> = new Set([
   "color",
@@ -307,7 +325,6 @@ const ALLOWED_PROPERTIES: ReadonlySet<string> = new Set([
   "word-break",
   "overflow-wrap",
   "word-wrap",
-  "writing-mode",
   "text-orientation",
   "text-combine-upright",
   "text-emphasis",

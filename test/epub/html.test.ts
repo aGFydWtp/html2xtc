@@ -20,7 +20,6 @@ function context(overrides: Partial<PrepareEpubDocumentContext> = {}): PrepareEp
   return {
     filename: "book.epub",
     limits: GENEROUS_LIMITS,
-    now: new Date("2026-07-23T03:00:00Z"),
     ...overrides,
   };
 }
@@ -172,6 +171,12 @@ describe("prepareEpubDocument: image float reset (画像のfloatをEPUB側CSSか
     const result = prepareEpubDocument(zip, options(), context());
     expect(result.html).toMatch(/img,\s*svg\s*{[^}]*float:\s*none\s*!important/);
   });
+
+  it("also zeroes img/svg margin (real-Chromium regression: a non-zero EPUB-supplied img margin inside .epub-cover's flex box pushed the cover onto page 2 and left page 1 blank)", () => {
+    const zip = buildEpubZip(minimalEpub3Files());
+    const result = prepareEpubDocument(zip, options(), context());
+    expect(result.html).toMatch(/img,\s*svg\s*{[^}]*margin:\s*0\s*!important/);
+  });
 });
 
 describe("prepareEpubDocument: cover section sizing (紙面いっぱい・中央配置・改ページ)", () => {
@@ -195,7 +200,7 @@ describe("prepareEpubDocument: cover section sizing (紙面いっぱい・中央
   });
 });
 
-describe("prepareEpubDocument: writing-mode placement (Chromium縦書きページ分割の実測知見)", () => {
+describe("prepareEpubDocument: writing-mode placement and single-sourcing", () => {
   it("applies vertical-rl only to html, never to body, when layout is explicitly vertical", () => {
     const zip = buildEpubZip(minimalEpub3Files());
     const result = prepareEpubDocument(zip, options({ layout: "vertical" }), context());
@@ -208,6 +213,40 @@ describe("prepareEpubDocument: writing-mode placement (Chromium縦書きペー�
     const result = prepareEpubDocument(zip, options({ layout: "horizontal" }), context());
     expect(result.html).toMatch(/\.epub-book\s*{\s*writing-mode:\s*horizontal-tb\s*!important/);
     expect(result.html).not.toMatch(/^html\s*{[^}]*writing-mode/m);
+  });
+
+  it("strips an EPUB's own html/body writing-mode entirely, even when the EPUB declares it on both (青空文庫実例と同じ構成)", () => {
+    const files = minimalEpub3Files();
+    const zip = buildEpubZip({
+      ...files,
+      "OEBPS/chapter1.xhtml": `<html><head><style>html, body { writing-mode: vertical-rl; }</style></head><body><p>x</p></body></html>`,
+    });
+    const result = prepareEpubDocument(zip, options({ layout: "auto" }), context());
+    // auto-detection still picks up vertical from the EPUB's own (now
+    // pre-sanitize-scanned) CSS...
+    expect(result.layout).toBe("vertical");
+    // ...but the EPUB's own writing-mode declaration itself never reaches
+    // the generated document — html.ts's own `html { writing-mode: ... }`
+    // rule is the only one present.
+    const writingModeOccurrences = (result.html.match(/writing-mode\s*:/g) ?? []).length;
+    expect(writingModeOccurrences).toBe(1);
+    expect(result.html).toMatch(/^html\s*{\s*writing-mode:\s*vertical-rl;/m);
+  });
+
+  it("an explicit layout choice always wins, even when the EPUB's own CSS declares the opposite on body", () => {
+    const files = minimalEpub3Files();
+    const zip = buildEpubZip({
+      ...files,
+      "OEBPS/chapter1.xhtml": `<html><head><style>body { writing-mode: horizontal-tb; }</style></head><body><p>x</p></body></html>`,
+    });
+    const result = prepareEpubDocument(zip, options({ layout: "vertical" }), context());
+    expect(result.layout).toBe("vertical");
+    // The EPUB's own conflicting body-level declaration is gone — it can no
+    // longer silently win over the explicit choice (an element's own
+    // declaration would otherwise always beat html's inherited one,
+    // !important on html notwithstanding).
+    expect(result.html).not.toMatch(/body\s*{[^}]*writing-mode/);
+    expect(result.html).toMatch(/html\s*{\s*writing-mode:\s*vertical-rl\s*!important/);
   });
 });
 
@@ -297,17 +336,20 @@ describe("prepareEpubDocument: auto layout (spec §19.1 auto layout)", () => {
   });
 });
 
-describe("prepareEpubDocument: colophon (spec §19.1 奥付)", () => {
-  it("includes title, author, format, filename and the personal-use notice", () => {
+describe("prepareEpubDocument: no colophon (奥付なし — EPUB自身がソースなので不要)", () => {
+  it("never emits an epub-colophon section, unlike the URL-render path", () => {
     const zip = buildEpubZip(minimalEpub3Files());
     const result = prepareEpubDocument(zip, options(), context({ filename: "my-book.epub" }));
-    expect(result.html).toContain('class="epub-colophon"');
-    expect(result.html).toContain("Minimal Test Book");
-    expect(result.html).toContain("Test Author");
-    expect(result.html).toContain("入力形式: EPUB");
-    expect(result.html).toContain("my-book.epub");
-    expect(result.html).toContain("個人的利用のために作成");
-    expect(result.html).toContain("Redistribution prohibited");
+    expect(result.html).not.toContain('class="epub-colophon"');
+    expect(result.html).not.toContain("個人的利用のために作成");
+    expect(result.html).not.toContain("Redistribution prohibited");
+    // the original filename otherwise only appeared in the colophon's
+    // "元ファイル名" line — confirm it's gone from the output too, not just
+    // the wrapping section.
+    expect(result.html).not.toContain("my-book.epub");
+    // title/author still surface elsewhere (the <title>/<meta author> the
+    // "title / author" describe block below already covers) — this block
+    // only asserts the colophon itself is gone.
   });
 });
 

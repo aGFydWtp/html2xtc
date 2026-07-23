@@ -87,9 +87,9 @@
     hideMenu();
     openDevicesHowtoDialog();
   }
-  // 本番の REGISTRATION_MODE は "invite" のまま据え置かれるため、この
-  // ボタンは publicConfig.registrationMode === "open" のときだけ描画される
-  // （invite/closed では従来通りログインボタンのみ — 実装計画の最重要方針）。
+  // このボタンは publicConfig.registrationMode === "open" のときだけ描画される
+  // （invite/closed ではログインボタンのみ — 実装計画の最重要方針）。モードは
+  // /api/public/config から取得する値で、フロント側で特定のモードを前提にしない。
   function menuRegisterOpen(): void {
     hideMenu();
     openRegistrationDialog({ mode: "open" });

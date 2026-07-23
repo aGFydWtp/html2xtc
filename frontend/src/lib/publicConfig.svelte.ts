@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // GET /api/public/config を起動時に一度だけ取得して保持する軽量ストア
 // （登録モード仕様 Phase2 §5.2 (1) / src/public-config.ts が返す形と対応）。
-// 本番の REGISTRATION_MODE は "invite" のまま据え置かれるため、この
-// ストアの registrationMode は本番では常に "invite" にしかならず、
-// mode === "open" 限定の UI（Header の「新規登録」、
-// PasskeyRegistrationDialog の公開登録フォーム）は本番では一切表示されない
-// （PHASE2_GAP_ANALYSIS.md 冒頭の前提と同じ境界線）。
+// registrationMode はサーバー側の設定（REGISTRATION_MODE）が決める値で、
+// フロント側では特定のモードを前提にしない。mode === "open" 限定の UI
+// （Header の「新規登録」、PasskeyRegistrationDialog の公開登録フォーム）は
+// このストアが保持する値だけを見て出し分ける。
 // 取得前・取得失敗時は既定値（invite 相当・登録UIなし）のまま fail-safe。
 
 import { apiGet } from "./api";
@@ -53,7 +52,7 @@ function parseLimits(raw: unknown): PublicConfigLimits | null {
 
 class PublicConfigStore {
   // 既定値は「invite・登録不可」— サーバー未応答/エラー時も open 専用 UI が
-  // 誤って出てこないための fail-safe（本番の invite/closed 環境と同じ見た目）。
+  // 誤って出てこないための fail-safe（登録 UI なしの見た目に倒す）。
   registrationMode = $state<RegistrationMode>("invite");
   registrationAvailable = $state(false);
   // 登録モード仕様 Phase3 §4: mode==="closed" のときだけ意味を持つ。公開可

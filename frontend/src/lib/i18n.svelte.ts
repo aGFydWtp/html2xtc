@@ -359,7 +359,19 @@ export interface Messages {
   devices_howto_step2_scan: string;
   devices_howto_step2_login: string;
   devices_howto_step2_approve: string;
+  devices_howto_step2_completed: string;
   devices_howto_step2_expiry: string;
+  devices_howto_step3_heading: string;
+  devices_howto_step3_save: string;
+  devices_howto_step3_edit_menu: string;
+  devices_howto_step3_check_save: string;
+  devices_howto_img_myxtc_menu: string;
+  devices_howto_img_pairing_qr: string;
+  devices_howto_img_pairing_approve: string;
+  devices_howto_img_pairing_completed: string;
+  devices_howto_img_save_library: string;
+  devices_howto_img_edit_library_menu: string;
+  devices_howto_img_device_library_save: string;
 
   device_library_title: (name: string) => string;
   device_library_select_all: string;
@@ -721,7 +733,19 @@ export const I18N: Record<Lang, Messages> = {
     devices_howto_step2_scan: "パソコンやスマートフォンでその QR コードを読み取るか、表示された URL を開くと、ペアリング承認ダイアログが開きます。",
     devices_howto_step2_login: "ログインしていない場合は、パスキーでログインします。",
     devices_howto_step2_approve: "端末の名前を入力して「承認する」を押すと、端末が一覧に追加されます。",
+    devices_howto_step2_completed: "端末の画面に「ペアリングが完了しました」と表示されれば、ペアリングは完了です。",
     devices_howto_step2_expiry: "ペアリングの有効期限は発行から10分です。期限切れの場合は端末側でやり直してください。",
+    devices_howto_step3_heading: "ステップ3: 端末へ本を送る",
+    devices_howto_step3_save: "本をライブラリへ保存します。ログイン中に変換した本は自動でライブラリへ保存されますが、保存されていない場合は「変換」タブの履歴で本の ⋮ を開き「ライブラリへ保存」を選びます。",
+    devices_howto_step3_edit_menu: "「端末」タブで対象の端末の ⋮ を開き、「配信リストを編集」を選びます。",
+    devices_howto_step3_check_save: "送りたい本にチェックを入れて「保存する」を押すと、端末の配信リストに追加されます。",
+    devices_howto_img_myxtc_menu: "端末のトップ画面。メニューに「マイXTC」が表示されている",
+    devices_howto_img_pairing_qr: "端末の「マイXTC」画面。QRコードとユーザーコードが表示されている",
+    devices_howto_img_pairing_approve: "Web側のペアリング承認ダイアログ。端末の名前を入力し「承認する」を押す画面",
+    devices_howto_img_pairing_completed: "端末の画面に「ペアリングが完了しました」と表示されている",
+    devices_howto_img_save_library: "「履歴」の ⋮ メニューに「ライブラリへ保存」が表示されている",
+    devices_howto_img_edit_library_menu: "端末一覧の ⋮ メニューに「配信リストを編集」が表示されている",
+    devices_howto_img_device_library_save: "配信リストの編集ダイアログ。本にチェックを入れて「保存する」を押す画面",
 
     device_library_title: (name) => `配信リストの編集 — ${name}`,
     device_library_select_all: "すべて追加",
@@ -1083,7 +1107,19 @@ export const I18N: Record<Lang, Messages> = {
     devices_howto_step2_scan: "Scan the QR code with your computer or phone (or open the URL it shows) to open the pairing approval dialog.",
     devices_howto_step2_login: "Log in with your passkey if you aren't already.",
     devices_howto_step2_approve: "Enter a name for the device and press “Approve” to add it to your list.",
+    devices_howto_step2_completed: "When the device's screen shows “ペアリングが完了しました” (Pairing complete), pairing is done.",
     devices_howto_step2_expiry: "The pairing code expires 10 minutes after it's issued. If it expires, start again on the device.",
+    devices_howto_step3_heading: "Step 3: Send a book to the device",
+    devices_howto_step3_save: "Save the book to your library. Books converted while logged in are saved automatically; if it isn't saved yet, open the ⋮ menu on the entry under History (on the Convert tab) and choose “Save to library.”",
+    devices_howto_step3_edit_menu: "On the Devices tab, open the ⋮ menu for the device and choose “Edit reading list.”",
+    devices_howto_step3_check_save: "Check the book you want to send and press “Save” to add it to the device's reading list.",
+    devices_howto_img_myxtc_menu: "The device's home screen, with the “マイXTC” (My XTC) menu item shown",
+    devices_howto_img_pairing_qr: "The device's “マイXTC” screen, showing a QR code and a user code",
+    devices_howto_img_pairing_approve: "The pairing approval dialog on the web, with a device name field and an “Approve” button",
+    devices_howto_img_pairing_completed: "The device's screen showing “ペアリングが完了しました” (Pairing complete)",
+    devices_howto_img_save_library: "The history row menu showing the “Save to library” option",
+    devices_howto_img_edit_library_menu: "The device row menu showing the “Edit reading list” option",
+    devices_howto_img_device_library_save: "The reading list editor dialog, with a book checked and the “Save” button",
 
     device_library_title: (name) => `Edit reading list — ${name}`,
     device_library_select_all: "Add all",

@@ -5,6 +5,13 @@
   // showModal()/close() を同期する」パターンを踏襲する。
   import { closeDevicesHowtoDialog, devicesHowtoDialog } from "../lib/authDialogs.svelte";
   import { t } from "../lib/i18n.svelte";
+  import imgMyxtcMenu from "../assets/howto/01-myxtc-menu.webp";
+  import imgPairingQr from "../assets/howto/02-pairing-qr.webp";
+  import imgPairingApprove from "../assets/howto/03-pairing-approve.webp";
+  import imgPairingCompleted from "../assets/howto/04-pairing-completed.webp";
+  import imgSaveLibrary from "../assets/howto/05-save-to-library.webp";
+  import imgEditLibraryMenu from "../assets/howto/06-edit-library-menu.webp";
+  import imgDeviceLibrarySave from "../assets/howto/07-device-library-save.webp";
 
   let dlg = $state<HTMLDialogElement | null>(null);
 
@@ -52,12 +59,40 @@
     <button type="button" class="secondary" onclick={goToFlasher}>{t("devices_empty_flash")}</button>
     <h3>{t("devices_howto_step2_heading")}</h3>
     <ol>
-      <li>{t("devices_howto_step2_menu")}</li>
-      <li>{t("devices_howto_step2_qr")}</li>
+      <li>
+        {t("devices_howto_step2_menu")}
+        <img src={imgMyxtcMenu} alt={t("devices_howto_img_myxtc_menu")} width="563" height="563" loading="lazy" />
+      </li>
+      <li>
+        {t("devices_howto_step2_qr")}
+        <img src={imgPairingQr} alt={t("devices_howto_img_pairing_qr")} width="563" height="563" loading="lazy" />
+      </li>
       <li>{t("devices_howto_step2_scan")}</li>
       <li>{t("devices_howto_step2_login")}</li>
-      <li>{t("devices_howto_step2_approve")}</li>
+      <li>
+        {t("devices_howto_step2_approve")}
+        <img src={imgPairingApprove} alt={t("devices_howto_img_pairing_approve")} width="1000" height="1249" loading="lazy" />
+      </li>
+      <li>
+        {t("devices_howto_step2_completed")}
+        <img src={imgPairingCompleted} alt={t("devices_howto_img_pairing_completed")} width="563" height="563" loading="lazy" />
+      </li>
       <li>{t("devices_howto_step2_expiry")}</li>
+    </ol>
+    <h3>{t("devices_howto_step3_heading")}</h3>
+    <ol>
+      <li>
+        {t("devices_howto_step3_save")}
+        <img src={imgSaveLibrary} alt={t("devices_howto_img_save_library")} width="1000" height="1250" loading="lazy" />
+      </li>
+      <li>
+        {t("devices_howto_step3_edit_menu")}
+        <img src={imgEditLibraryMenu} alt={t("devices_howto_img_edit_library_menu")} width="1000" height="1251" loading="lazy" />
+      </li>
+      <li>
+        {t("devices_howto_step3_check_save")}
+        <img src={imgDeviceLibrarySave} alt={t("devices_howto_img_device_library_save")} width="1000" height="1250" loading="lazy" />
+      </li>
     </ol>
   </div>
   <div class="dlg-actions">
@@ -70,6 +105,10 @@
   .dlg-body h3:not(:first-child) { margin-top: 18px; }
   .dlg-body ol { margin: 0; padding-left: 20px; color: var(--muted2); font-size: 14px; line-height: 1.7; }
   .dlg-body ol li + li { margin-top: 4px; }
+  .dlg-body ol img {
+    display: block; margin: 8px 0 4px; max-width: 100%; height: auto;
+    border: 1px solid var(--line); border-radius: 4px;
+  }
   .dlg-body button.secondary {
     margin-top: 18px; padding: 8px 18px; font: inherit; font-size: 14px; font-weight: 500; border-radius: 4px;
     border: 1px solid var(--ink); background: var(--card); color: var(--ink); cursor: pointer;

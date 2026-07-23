@@ -146,7 +146,7 @@ describe("saveJobToLibrary — LIBRARY_WRITE_MODE gate", () => {
     const env = buildEnv(db, bucket);
 
     const result = await saveJobToLibrary(env, { id: ACCOUNT_ID, displayName: "Haruki" }, { jobId: JOB_ID });
-    expect(result.sizeBytes).toBe(99);
+    expect(result.item.sizeBytes).toBe(99);
   });
 
   it("allows the save on an unrecognized LIBRARY_WRITE_MODE value (falls back to read-write, never fails closed)", async () => {
@@ -155,7 +155,7 @@ describe("saveJobToLibrary — LIBRARY_WRITE_MODE gate", () => {
     const env = buildEnv(db, bucket, { LIBRARY_WRITE_MODE: "banana" });
 
     const result = await saveJobToLibrary(env, { id: ACCOUNT_ID, displayName: "Haruki" }, { jobId: JOB_ID });
-    expect(result.sizeBytes).toBe(99);
+    expect(result.item.sizeBytes).toBe(99);
   });
 
   it("allows the save when explicitly read-write", async () => {
@@ -164,6 +164,6 @@ describe("saveJobToLibrary — LIBRARY_WRITE_MODE gate", () => {
     const env = buildEnv(db, bucket, { LIBRARY_WRITE_MODE: "read-write" });
 
     const result = await saveJobToLibrary(env, { id: ACCOUNT_ID, displayName: "Haruki" }, { jobId: JOB_ID });
-    expect(result.sizeBytes).toBe(99);
+    expect(result.item.sizeBytes).toBe(99);
   });
 });

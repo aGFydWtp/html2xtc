@@ -173,8 +173,11 @@ describe("saveJobToLibrary — idempotent recovery from a UNIQUE(account_id, sou
     const result = await saveJobToLibrary(env, account, { jobId: JOB_ID });
 
     // Got the *other* request's row back, not a duplicate and not an error.
-    expect(result.id).toBe(winningItemId);
-    expect(result.title).toBe("Winner Title");
+    expect(result.item.id).toBe(winningItemId);
+    expect(result.item.title).toBe("Winner Title");
+    // This is the raced-recovery path, not a genuine new insert — callers
+    // (e.g. the auto-add-to-sole-device feature) must not treat it as "created".
+    expect(result.created).toBe(false);
     // Still exactly one row for this job — no duplicate was left behind.
     expect(db.rows.filter((r) => r.source_job_id === JOB_ID)).toHaveLength(1);
     // The R2 object this request itself copied (before losing the DB race)

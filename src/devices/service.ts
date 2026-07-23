@@ -3,6 +3,7 @@
 
 import type { Account } from "../auth/sessions";
 import { isValidItemId } from "../library/service";
+import { logAuditEvent } from "../security/audit";
 import { Errors } from "../security/errors";
 import type { Env } from "../types";
 import {
@@ -240,4 +241,55 @@ export async function replaceDeviceLibrary(
 
   const items = await listDeviceLibraryItems(env.APP_DB, deviceId);
   return { version: request.expectedVersion + 1, items };
+}
+
+/**
+ * Best-effort auto-delivery: called only from src/library/routes.ts's
+ * from-job handler, and only when saveJobToLibrary genuinely inserted a new
+ * row (never on its idempotent-replay path — resurrecting an item a user
+ * deliberately removed from a device's list would be surprising). If the
+ * account currently has exactly one active device, appends the new item to
+ * that device's delivery list end, reusing replaceDeviceLibrary so the
+ * version bump / optimistic-lock bookkeeping stays in one place. No-ops for
+ * zero or multiple active devices, and for a device whose list already
+ * contains the item (avoids a duplicate device_library_items PK).
+ *
+ * Never throws: any failure here (a lost version race, a device revoked in
+ * the interim, a D1 error) must not turn a successful library save into an
+ * error response — it's recorded via logAuditEvent instead of being
+ * silently dropped.
+ */
+export async function autoAddItemToSoleActiveDevice(
+  env: Pick<Env, "APP_DB">,
+  account: Account,
+  libraryItemId: string,
+): Promise<void> {
+  try {
+    const devices = await listDevicesForAccount(env.APP_DB, account.id);
+    if (devices.length !== 1) {
+      return;
+    }
+    const device = devices[0];
+    const library = await getDeviceLibrary(env, account, device.id);
+    if (library.items.some((item) => item.id === libraryItemId)) {
+      return;
+    }
+    const itemIds = [...library.items.map((item) => item.id), libraryItemId];
+    const updated = await replaceDeviceLibrary(env, account, device.id, {
+      expectedVersion: library.version,
+      itemIds,
+    });
+    logAuditEvent("device.library.auto_added", {
+      accountId: account.id,
+      deviceId: device.id,
+      itemId: libraryItemId,
+      version: updated.version,
+    });
+  } catch (error) {
+    console.error(`auto-add of library item ${libraryItemId} to the sole active device failed`, error);
+    logAuditEvent("device.library.auto_add_failed", {
+      accountId: account.id,
+      itemId: libraryItemId,
+    });
+  }
 }

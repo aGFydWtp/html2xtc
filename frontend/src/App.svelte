@@ -6,6 +6,7 @@
   import ConvertForm from "./components/ConvertForm.svelte";
   import CurrentJob from "./components/CurrentJob.svelte";
   import Devices from "./components/Devices.svelte";
+  import DevicesHowtoDialog from "./components/DevicesHowtoDialog.svelte";
   import Flasher from "./components/Flasher.svelte";
   import Header from "./components/Header.svelte";
   import History from "./components/History.svelte";
@@ -137,6 +138,7 @@
 <PasskeyRegistrationDialog />
 <RegistrationClosedDialog />
 <PairingApprovalDialog />
+<DevicesHowtoDialog />
 <Account />
 
 <style>

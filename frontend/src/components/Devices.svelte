@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import { authStore } from "../lib/auth.svelte";
-  import { openLoginDialog } from "../lib/authDialogs.svelte";
+  import { openDevicesHowtoDialog, openLoginDialog } from "../lib/authDialogs.svelte";
   import { devicesStore, type Device } from "../lib/devices.svelte";
   import { t } from "../lib/i18n.svelte";
   import { formatDate } from "../lib/jobs.svelte";
@@ -60,56 +60,61 @@
       <p class="note">{t("account_login_prompt")}</p>
       <button type="button" class="secondary" onclick={openLoginDialog}>{t("account_login")}</button>
     </div>
-  {:else if devicesStore.loadState === "loading" || devicesStore.loadState === "idle"}
-    <p class="note">{t("library_loading")}</p>
-  {:else if devicesStore.loadState === "fail"}
-    <p class="error-text">{t("devices_load_failed")}</p>
-  {:else if devicesStore.devices.length === 0}
-    <div class="devices-empty">
-      <p class="note">{t("devices_empty")}</p>
-      <p class="note">{t("devices_empty_hint")}</p>
-      <button type="button" class="secondary" onclick={goToFlasher}>{t("devices_empty_flash")}</button>
-    </div>
   {:else}
-    <ul class="items">
-      {#each devicesStore.devices as device (device.id)}
-        <li class="device-row">
-          {#if renamingId === device.id}
-            <div class="edit-fields">
-              <input type="text" bind:value={nameInput} maxlength="100" />
-              <div class="row-actions">
-                <button type="button" class="text-btn" onclick={() => (renamingId = null)}>{t("cancel")}</button>
-                <button
-                  type="button"
-                  class="text-btn primary"
-                  disabled={busyId === device.id || !nameInput.trim()}
-                  onclick={() => void saveRename(device)}
-                >{t("save")}</button>
+    <div class="device-actions">
+      <button type="button" class="bulk-btn" onclick={openDevicesHowtoDialog}>{t("devices_howto_btn")}</button>
+    </div>
+    {#if devicesStore.loadState === "loading" || devicesStore.loadState === "idle"}
+      <p class="note">{t("library_loading")}</p>
+    {:else if devicesStore.loadState === "fail"}
+      <p class="error-text">{t("devices_load_failed")}</p>
+    {:else if devicesStore.devices.length === 0}
+      <div class="devices-empty">
+        <p class="note">{t("devices_empty")}</p>
+        <p class="note">{t("devices_empty_hint")}</p>
+        <button type="button" class="secondary" onclick={goToFlasher}>{t("devices_empty_flash")}</button>
+      </div>
+    {:else}
+      <ul class="items">
+        {#each devicesStore.devices as device (device.id)}
+          <li class="device-row">
+            {#if renamingId === device.id}
+              <div class="edit-fields">
+                <input type="text" bind:value={nameInput} maxlength="100" />
+                <div class="row-actions">
+                  <button type="button" class="text-btn" onclick={() => (renamingId = null)}>{t("cancel")}</button>
+                  <button
+                    type="button"
+                    class="text-btn primary"
+                    disabled={busyId === device.id || !nameInput.trim()}
+                    onclick={() => void saveRename(device)}
+                  >{t("save")}</button>
+                </div>
               </div>
-            </div>
-          {:else}
-            <div class="info">
-              <div class="title">{device.name}</div>
-              <div class="meta">
-                <span>{lastSeenText(device)}</span>
+            {:else}
+              <div class="info">
+                <div class="title">{device.name}</div>
+                <div class="meta">
+                  <span>{lastSeenText(device)}</span>
+                </div>
               </div>
-            </div>
-            <RowMenu
-              items={[
-                { label: t("devices_rename"), onSelect: () => startRename(device) },
-                { label: t("devices_edit_library"), onSelect: () => (editingLibraryFor = device) },
-                {
-                  label: t("devices_revoke"),
-                  danger: true,
-                  disabled: busyId === device.id,
-                  onSelect: () => void onRevoke(device),
-                },
-              ]}
-            />
-          {/if}
-        </li>
-      {/each}
-    </ul>
+              <RowMenu
+                items={[
+                  { label: t("devices_rename"), onSelect: () => startRename(device) },
+                  { label: t("devices_edit_library"), onSelect: () => (editingLibraryFor = device) },
+                  {
+                    label: t("devices_revoke"),
+                    danger: true,
+                    disabled: busyId === device.id,
+                    onSelect: () => void onRevoke(device),
+                  },
+                ]}
+              />
+            {/if}
+          </li>
+        {/each}
+      </ul>
+    {/if}
   {/if}
 </section>
 
@@ -120,6 +125,19 @@
 <style>
   section.devices { padding: 0 0 24px; }
   .login-gate, .devices-empty { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; }
+  /* Library.svelte の .bulk-bar と同じ領域スタイリング（横スクロール＋スクロールバー非表示）。 */
+  .device-actions {
+    display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
+    flex-wrap: nowrap; overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .device-actions::-webkit-scrollbar { display: none; }
+  .device-actions > :global(*) { flex: none; }
+  .device-actions .bulk-btn {
+    padding: 8px 18px; font: inherit; font-size: 14px; font-weight: 500; border-radius: 4px;
+    border: 1px solid var(--ink); background: var(--card); color: var(--ink); cursor: pointer;
+  }
+  .device-actions .bulk-btn:hover:not(:disabled) { background: var(--panel); }
   .note { color: var(--muted); font-size: 14px; }
   ul.items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
   ul.items li.device-row { padding: 14px 0; display: flex; align-items: center; gap: 14px; }

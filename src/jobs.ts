@@ -67,6 +67,36 @@ export function inputTextKey(jobId: string): string {
   return `input/${jobId}/source.txt`;
 }
 
+/**
+ * R2 key for an uploaded EPUB file (POST /jobs/epub, src/epub-upload.ts).
+ * Mirrors inputPdfKey/inputTextKey's retention story: deleted by the
+ * Workflow itself on completion (success or failure, EPUB spec §14.1.4),
+ * with R2 lifecycle only as a same-day safety net (the input/ prefix rule
+ * already covers this key too).
+ */
+export function inputEpubKey(jobId: string): string {
+  return `input/${jobId}/source.epub`;
+}
+
+/**
+ * R2 key for the self-contained HTML generated from an uploaded EPUB
+ * (prepare-epub step, EPUB spec §6.3/§14.1.1), handed to render-epub-pdf next.
+ * Shares the intermediate/ prefix with the PDF/TXT article HTML so the same
+ * 1-day R2 lifecycle rule covers it.
+ */
+export function epubHtmlKey(jobId: string): string {
+  return `intermediate/${jobId}/epub.html`;
+}
+
+/**
+ * R2 key for the inlined @font-face CSS handed from prepare-epub to
+ * render-epub-pdf next to the EPUB HTML (EPUB spec §6.3). Same
+ * intermediate/ prefix, same 1-day lifecycle.
+ */
+export function epubFontsCssKey(jobId: string): string {
+  return `intermediate/${jobId}/epub-fonts.css`;
+}
+
 export type JobApiStatus =
   | "queued"
   | "preparing"
@@ -189,6 +219,46 @@ export function mapPdfInstanceStatus(
  * present -> "converting".
  */
 export function mapTextInstanceStatus(
+  jobId: string,
+  instance: WorkflowStatusLike,
+  phase: "preparing" | "rendering" | "converting",
+): JobStatusBody {
+  switch (instance.status) {
+    case "queued":
+      return { jobId, status: "queued" };
+    case "complete": {
+      const title = titleFromOutput(instance.output);
+      return {
+        jobId,
+        status: "completed",
+        downloadUrl: `/jobs/${jobId}/download`,
+        ...(title !== undefined ? { title } : {}),
+      };
+    }
+    case "errored":
+    case "terminated":
+      return {
+        jobId,
+        status: "failed",
+        error: stripWorkflowErrorPrefix(instance.error?.message ?? "unknown error"),
+      };
+    default:
+      // running / waiting / paused / waitingForPause / unknown
+      return { jobId, status: phase };
+  }
+}
+
+/**
+ * Maps a Workflows instance status for an EPUB-source job (EPUB spec §15).
+ * Same three running-family phases as TXT (preparing/rendering/converting)
+ * — this is a deliberate duplicate of mapTextInstanceStatus's body, not a
+ * shared helper, for the same reason mapPdfInstanceStatus/mapTextInstanceStatus
+ * themselves stay separate: avoids touching the URL/TXT job code paths at
+ * all. Callers (src/index.ts#mapWithPhaseProbe) resolve `phase` from R2
+ * probes: epubHtmlKey missing -> "preparing"; epubHtmlKey present,
+ * intermediatePdfKey missing -> "rendering"; both present -> "converting".
+ */
+export function mapEpubInstanceStatus(
   jobId: string,
   instance: WorkflowStatusLike,
   phase: "preparing" | "rendering" | "converting",
@@ -342,4 +412,20 @@ export function resolveExtractMinChars(
   return Number.isFinite(configured) && configured > 0
     ? configured
     : DEFAULT_EXTRACT_MIN_CHARS;
+}
+
+const DEFAULT_MAX_EPUB_HTML_BYTES = 33_554_432; // 32 MiB (EPUB spec §5)
+
+/**
+ * Max size in bytes of the self-contained HTML generated from an uploaded
+ * EPUB (Phase 3's src/epub/html.ts, consumed by the prepare-epub Workflow
+ * step); the MAX_EPUB_HTML_BYTES var overrides the 32 MiB default. Lives
+ * here rather than src/epub/ since it mirrors resolveMaxPdfBytes above
+ * (both bound a downstream-generated artifact, not an upload).
+ */
+export function resolveMaxEpubHtmlBytes(env: Pick<Env, "MAX_EPUB_HTML_BYTES">): number {
+  const configured = Number(env.MAX_EPUB_HTML_BYTES);
+  return Number.isFinite(configured) && configured > 0
+    ? configured
+    : DEFAULT_MAX_EPUB_HTML_BYTES;
 }

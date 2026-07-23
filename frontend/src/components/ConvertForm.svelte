@@ -2,9 +2,12 @@
 <script lang="ts">
   import { aozora } from "../lib/aozora.svelte";
   import { submitUrl, submitting } from "../lib/convert.svelte";
+  import { EpubFileValidationError, validateEpubFile } from "../lib/epub-file-validate";
   import { t } from "../lib/i18n.svelte";
+  import { detectInputFileKind } from "../lib/input-file-kind";
   import { PdfFileValidationError, validatePdfFile } from "../lib/pdf-file-validate";
   import { TextFileValidationError, validateTextFile } from "../lib/text-file-validate";
+  import EpubInputPanel from "./EpubInputPanel.svelte";
   import FileDropZone from "./FileDropZone.svelte";
   import PdfInputPanel from "./PdfInputPanel.svelte";
   import TextInputPanel from "./TextInputPanel.svelte";
@@ -12,6 +15,7 @@
   let url = $state("");
   let pdfFile = $state<File | null>(null);
   let txtFile = $state<File | null>(null);
+  let epubFile = $state<File | null>(null);
   let fileError = $state<string | null>(null);
 
   function onsubmit(event: SubmitEvent) {
@@ -37,17 +41,32 @@
     }
   }
 
-  // 拡張子・MIMEでPDF/TXTを判別してから、それぞれの検証・パネルへ分岐する
-  // （仕様書 §10.2-10.3: ドロップゾーンはPDF/TXT共用。複数ファイルは受け付けない）。
-  function looksLikePdf(file: File): boolean {
-    if (/\.pdf$/i.test(file.name)) return true;
-    if (/\.txt$/i.test(file.name)) return false;
-    return file.type === "application/pdf" || file.type === "application/x-pdf";
+  function epubFileErrorText(kind: EpubFileValidationError["kind"]): string {
+    switch (kind) {
+      case "too_large": return t("epub_err_too_large");
+      case "empty": return t("epub_err_empty");
+      case "magic_missing": return t("epub_err_invalid_zip");
+      default: return t("epub_err_not_epub");
+    }
   }
 
+  // ファイル種別の判定（enum化、仕様書 §16.2）自体は input-file-kind.ts の純粋関数
+  // detectInputFileKind に切り出してある（ドロップゾーンはPDF/TXT/EPUB共用。複数
+  // ファイルは受け付けない）。ここではその結果に応じてクライアント検証・パネルへ
+  // 分岐するだけ。
   async function onFileSelected(file: File): Promise<void> {
     fileError = null;
-    if (looksLikePdf(file)) {
+    const kind = detectInputFileKind(file);
+    if (kind === "epub") {
+      try {
+        await validateEpubFile(file);
+        epubFile = file;
+      } catch (e) {
+        fileError = e instanceof EpubFileValidationError ? epubFileErrorText(e.kind) : t("epub_err_not_epub");
+      }
+      return;
+    }
+    if (kind === "pdf") {
       try {
         await validatePdfFile(file);
         pdfFile = file;
@@ -56,17 +75,22 @@
       }
       return;
     }
-    try {
-      await validateTextFile(file);
-      txtFile = file;
-    } catch (e) {
-      fileError = e instanceof TextFileValidationError ? textFileErrorText(e.kind) : t("text_err_not_txt");
+    if (kind === "text") {
+      try {
+        await validateTextFile(file);
+        txtFile = file;
+      } catch (e) {
+        fileError = e instanceof TextFileValidationError ? textFileErrorText(e.kind) : t("text_err_not_txt");
+      }
+      return;
     }
+    fileError = t("file_err_unsupported_type");
   }
 
   function onRemoveFile(): void {
     pdfFile = null;
     txtFile = null;
+    epubFile = null;
     fileError = null;
   }
 </script>
@@ -77,6 +101,8 @@
     <PdfInputPanel file={pdfFile} onRemove={onRemoveFile} />
   {:else if txtFile}
     <TextInputPanel file={txtFile} onRemove={onRemoveFile} />
+  {:else if epubFile}
+    <EpubInputPanel file={epubFile} onRemove={onRemoveFile} />
   {:else}
     <div class="form-note"><span>{t("agree_before")}</span><a href="/about#terms">{t("agree_link")}</a><span>{t("agree_after")}</span></div>
     <FileDropZone onFileSelected={(f) => void onFileSelected(f)}>

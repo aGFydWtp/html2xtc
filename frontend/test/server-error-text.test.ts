@@ -90,4 +90,19 @@ describe("resolveServerErrorKey", () => {
   it("TXT jobs' final XTC-conversion failure reuses the shared generic key (identical string across all sources)", () => {
     expect(resolveServerErrorKey("XTC conversion failed")).toBe("pdf_err_convert_failed");
   });
+
+  // review-phase45.md M2: the upload-time 413 (src/index.ts#handleCreateEpubJob)
+  // and prepare-epub's defensive re-check (src/workflow.ts) both throw this
+  // byte-count message — distinct from "EPUB is too large to convert" (the
+  // EpubError thrown for the generated-HTML size cap), but the same
+  // user-facing key as PDF's analogous pdf_err_too_large mapping.
+  it("maps the upload-time EPUB size limit message (src/index.ts#handleCreateEpubJob, src/workflow.ts prepare-epub re-check)", () => {
+    expect(resolveServerErrorKey("uploaded EPUB exceeds the 50331648 byte limit")).toBe(
+      "epub_err_too_large",
+    );
+  });
+
+  it("still maps the structural EPUB-too-large EpubError string to the same key", () => {
+    expect(resolveServerErrorKey("EPUB is too large to convert")).toBe("epub_err_too_large");
+  });
 });

@@ -10,15 +10,27 @@ import {
 import { convertInContainer } from "./container";
 import { cleanupAppDb } from "./db/cleanup";
 import { registerDeviceRoutes } from "./devices/routes";
+import { decodeEpubOptionsHeader } from "./epub-options";
+import {
+  decodeEpubFilenameHeader,
+  hasEpubZipMagic,
+  isAllowedEpubContentType,
+  peekLeadingBytes,
+  resolveMaxUploadEpubBytes,
+  saveUploadedEpub,
+} from "./epub-upload";
 import { prepareRenderInput } from "./extract";
 import { resolveConversionMode } from "./feature-flags";
 import { registerInternalRoutes } from "./internal/routes";
 import {
   articleHtmlKey,
   decideMissingDownload,
+  epubHtmlKey,
+  inputEpubKey,
   inputPdfKey,
   inputTextKey,
   intermediatePdfKey,
+  mapEpubInstanceStatus,
   mapInstanceStatus,
   mapPdfInstanceStatus,
   mapTextInstanceStatus,
@@ -203,6 +215,21 @@ async function route(request: Request, env: Env): Promise<Response> {
       return disabled;
     }
     return handleCreateTextJob(request, env);
+  }
+
+  // Same reasoning as /jobs/pdf and /jobs/text above: must come before
+  // /jobs/:jobId, and the rate limit is applied inside handleCreateEpubJob
+  // (after its own cheap Content-Type/Content-Length checks) rather than at
+  // dispatch here (EPUB spec §4.1).
+  if (pathname === "/jobs/epub") {
+    if (request.method !== "POST") {
+      return methodNotAllowed("POST");
+    }
+    const disabled = conversionModeGate(env);
+    if (disabled) {
+      return disabled;
+    }
+    return handleCreateEpubJob(request, env);
   }
 
   // Must come before the /jobs/:jobId matcher below, same reasoning as
@@ -581,6 +608,104 @@ async function handleCreateTextJob(request: Request, env: Env): Promise<Response
   return Response.json({ jobId, statusUrl: `/jobs/${jobId}` }, { status: 202 });
 }
 
+/**
+ * POST /jobs/epub handler (EPUB spec §4.1/§7 order). Unlike PDF/TXT, X-File-
+ * Name is decoded BEFORE the Content-Type gate: application/octet-stream is
+ * only accepted with a ".epub" filename (spec §7.1), so isAllowedEpubContentType
+ * needs the decoded filename to make that call. This reordering can't shift
+ * any error's precedence — decodeEpubFilenameHeader can never itself produce
+ * an error (a missing/undecodable header just degrades to the default
+ * filename, same as the PDF/TXT paths). Order: X-File-Name -> Content-Type
+ * -> Content-Length -> rate limit -> X-Epub-Options -> jobId -> ZIP magic
+ * sniff -> stream request.body into R2 (never request.arrayBuffer(), spec
+ * §7.3/§18, via saveUploadedEpub) -> create the Workflow -> 202. Deep EPUB
+ * structure validation (container.xml/OPF/spine/encryption/Fixed Layout,
+ * src/epub/*) happens in the Workflow's prepare-epub step (Phase 4), not
+ * here — this handler only confirms the upload looks like *some* ZIP file.
+ */
+async function handleCreateEpubJob(request: Request, env: Env): Promise<Response> {
+  const filename = decodeEpubFilenameHeader(request.headers.get("X-File-Name"));
+
+  if (!isAllowedEpubContentType(request.headers.get("Content-Type"), filename)) {
+    return Response.json(
+      {
+        error:
+          "Content-Type must be application/epub+zip, or application/octet-stream with a .epub filename",
+      },
+      { status: 415 },
+    );
+  }
+
+  const maxUploadBytes = resolveMaxUploadEpubBytes(env);
+  const lengthCheck = checkContentLength(request.headers.get("Content-Length"), maxUploadBytes);
+  if (lengthCheck.kind === "missing") {
+    return Response.json({ error: "Content-Length is required" }, { status: 411 });
+  }
+  if (lengthCheck.kind === "invalid") {
+    return Response.json(
+      { error: "Content-Length must be a positive integer" },
+      { status: 400 },
+    );
+  }
+  if (lengthCheck.kind === "too-large") {
+    return Response.json(
+      { error: `uploaded EPUB exceeds the ${maxUploadBytes} byte limit` },
+      { status: 413 },
+    );
+  }
+
+  const limited = await enforceRateLimit(request, env);
+  if (limited) {
+    return limited;
+  }
+
+  const optionsResult = decodeEpubOptionsHeader(request.headers.get("X-Epub-Options"));
+  if (!optionsResult.ok) {
+    return Response.json({ error: optionsResult.error }, { status: 400 });
+  }
+  const epubOptions = optionsResult.options;
+
+  if (request.body === null) {
+    return Response.json({ error: "request body is required" }, { status: 400 });
+  }
+
+  const { leading, body } = await peekLeadingBytes(request.body, 4);
+  if (!hasEpubZipMagic(leading)) {
+    return Response.json({ error: "invalid EPUB file" }, { status: 400 });
+  }
+
+  const jobId = crypto.randomUUID();
+  const key = inputEpubKey(jobId);
+  const declaredSize = lengthCheck.length;
+
+  const saveResult = await saveUploadedEpub(env, key, body, declaredSize, filename);
+  if (!saveResult.ok) {
+    return Response.json({ error: saveResult.error }, { status: saveResult.status });
+  }
+
+  const params: ConvertJobParams = {
+    source: { kind: "epub", key, filename, size: declaredSize },
+    epubOptions,
+  };
+
+  try {
+    await env.CONVERT_WORKFLOW.create({
+      id: jobId,
+      params,
+      retention: {
+        successRetention: "1 day",
+        errorRetention: "1 day",
+      },
+    });
+  } catch (error) {
+    console.error(`[${jobId}] workflow create failed`, error);
+    await deleteBestEffort(env, key);
+    return Response.json({ error: "failed to create job" }, { status: 500 });
+  }
+
+  return Response.json({ jobId, statusUrl: `/jobs/${jobId}` }, { status: 202 });
+}
+
 async function handleJobStatus(jobId: string, env: Env): Promise<Response> {
   if (!UUID_PATTERN.test(jobId)) {
     return Response.json({ error: "jobId must be a UUID" }, { status: 400 });
@@ -638,28 +763,34 @@ async function handleJobDownload(jobId: string, env: Env): Promise<Response> {
  * Maps an instance status to the API body. For the running family this
  * probes R2: first for the uploaded-PDF input (PDF jobs — no rendering
  * phase, see mapPdfInstanceStatus), then for the uploaded-TXT input (TXT
- * jobs — three phases, see mapTextInstanceStatus), then, only if both are
- * absent, for the intermediate PDF that tells a URL job's rendering from
- * converting. A PDF/TXT job whose input was already deleted (the brief
- * window between the Workflow's delete step and its status turning
- * "complete") falls through to the same intermediate-PDF probe as a URL job;
- * since no PDF exists yet at that point it reports "rendering" for that
- * instant — an accepted, self-correcting edge case (see
- * claudedocs/pdf-upload-investigation.md §5.5, which applies identically
- * here).
+ * jobs — three phases, see mapTextInstanceStatus), then for the uploaded-
+ * EPUB input (EPUB jobs — three phases, see mapEpubInstanceStatus,
+ * EPUB spec §15), then, only if all three are absent, for the intermediate
+ * PDF that tells a URL job's rendering from converting. A PDF/TXT/EPUB job
+ * whose input was already deleted (the brief window between the Workflow's
+ * delete step and its status turning "complete") falls through to the same
+ * intermediate-PDF probe as a URL job; since no PDF exists yet at that point
+ * it reports "rendering" for that instant — an accepted, self-correcting
+ * edge case (see claudedocs/pdf-upload-investigation.md §5.5, which applies
+ * identically here).
  *
- * All four R2 heads (input PDF, input TXT, article HTML, intermediate PDF)
- * are fired concurrently via Promise.all rather than awaited one at a time:
- * the decision logic below still applies them in the same PDF -> TXT -> URL
- * priority order and only *uses* the article/intermediate results when a TXT
- * (or URL) job actually needs them, but paying for up to 4 sequential R2
- * round-trips per status poll (see claudedocs/text-upload-investigation.md
- * §1.4) was an avoidable latency cost once none of the probes actually
- * depend on each other's result.
+ * All five R2 heads (input PDF, input TXT, input EPUB, EPUB HTML,
+ * intermediate PDF) — plus the pre-existing article HTML head, still needed
+ * for the TXT phase split — are fired concurrently via Promise.all rather
+ * than awaited one at a time: the decision logic below still applies them in
+ * the same PDF -> TXT -> EPUB -> URL priority order and only *uses* each
+ * result when a job of that kind actually needs it, but paying for several
+ * sequential R2 round-trips per status poll (see
+ * claudedocs/text-upload-investigation.md §1.4) was an avoidable latency
+ * cost once none of the probes actually depend on each other's result.
  *
- * TODO: before adding another input format (which would mean a 5th+ R2 head
- * fired on every poll), replace this per-key R2 fan-out with an explicit
- * job-kind metadata read instead of growing this probe set further.
+ * This function's TODO from before EPUB existed ("replace this per-key R2
+ * fan-out with an explicit job-kind metadata read instead of growing this
+ * probe set further") was deliberately not acted on here: EPUB reuses the
+ * exact same pattern PDF/TXT already established, so following the TODO now
+ * would mean refactoring the URL/PDF/TXT code paths too — out of scope for
+ * this feature (spec §22 "既存 URL / PDF / TXT API の互換性を壊さない"). Still
+ * worth doing before a 6th input format arrives.
  */
 async function mapWithPhaseProbe(
   jobId: string,
@@ -669,12 +800,15 @@ async function mapWithPhaseProbe(
   if (!needsPhaseProbe(status.status)) {
     return mapInstanceStatus(jobId, status, false);
   }
-  const [hasInputPdf, hasInputText, hasArticle, hasIntermediatePdf] = await Promise.all([
-    env.XTC_BUCKET.head(inputPdfKey(jobId)).then((object) => object !== null),
-    env.XTC_BUCKET.head(inputTextKey(jobId)).then((object) => object !== null),
-    env.XTC_BUCKET.head(articleHtmlKey(jobId)).then((object) => object !== null),
-    env.XTC_BUCKET.head(intermediatePdfKey(jobId)).then((object) => object !== null),
-  ]);
+  const [hasInputPdf, hasInputText, hasInputEpub, hasArticle, hasEpubHtml, hasIntermediatePdf] =
+    await Promise.all([
+      env.XTC_BUCKET.head(inputPdfKey(jobId)).then((object) => object !== null),
+      env.XTC_BUCKET.head(inputTextKey(jobId)).then((object) => object !== null),
+      env.XTC_BUCKET.head(inputEpubKey(jobId)).then((object) => object !== null),
+      env.XTC_BUCKET.head(articleHtmlKey(jobId)).then((object) => object !== null),
+      env.XTC_BUCKET.head(epubHtmlKey(jobId)).then((object) => object !== null),
+      env.XTC_BUCKET.head(intermediatePdfKey(jobId)).then((object) => object !== null),
+    ]);
   if (hasInputPdf) {
     return mapPdfInstanceStatus(jobId, status);
   }
@@ -683,6 +817,13 @@ async function mapWithPhaseProbe(
       jobId,
       status,
       !hasArticle ? "preparing" : hasIntermediatePdf ? "converting" : "rendering",
+    );
+  }
+  if (hasInputEpub) {
+    return mapEpubInstanceStatus(
+      jobId,
+      status,
+      !hasEpubHtml ? "preparing" : hasIntermediatePdf ? "converting" : "rendering",
     );
   }
   return mapInstanceStatus(jobId, status, hasIntermediatePdf);

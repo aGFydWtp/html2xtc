@@ -53,6 +53,12 @@ export type ServerErrorKey = keyof Pick<
   | "text_err_too_many_lines"
   | "text_err_line_too_long"
   | "text_err_pdf_too_large"
+  | "epub_err_too_large"
+  | "epub_err_invalid_zip"
+  | "epub_err_missing_package"
+  | "epub_err_empty_spine"
+  | "epub_err_encrypted"
+  | "epub_err_fixed_layout"
 >;
 
 /** サーバーのエラー文字列から対応する i18n キーを解決する。未知のものは null。 */
@@ -98,6 +104,25 @@ export function resolveServerErrorKey(err: string): ServerErrorKey | null {
   if (err === "text is too long to convert") return "text_err_too_many_chars";
   if (err === "line count exceeds the limit") return "text_err_too_many_lines";
   if (err === "a line exceeds the maximum line length") return "text_err_line_too_long";
+
+  // --- EPUBアップロード系（実装仕様書 §17.1 の「クライアント向けメッセージ例」を ---
+  //     正として照合。バックエンド実装（src/、別エージェント担当）が実際に投げる
+  //     文字列と未突き合わせのため、一致しない場合は resolveServerErrorKey が null を
+  //     返し、serverErrorText() が err をそのまま表示するフォールバックへ落ちる
+  //     （壊れた表示にはならない）。
+  // アップロード時の413応答（src/index.ts の Content-Length事前チェック）および
+  // prepare-epubステップの防御的再検証（src/workflow.ts）が投げる、バイト数を
+  // 埋め込んだ文言。「EPUB is too large to convert」（EpubErrorの構造的サイズ
+  // 超過用、変換後の生成HTMLが大きすぎる場合）とは別の文言だが、ユーザー向けの
+  // 意味は同じ（アップロードされたEPUBが大きすぎる）なのでPDF側（pdf_err_too_large）
+  // と同様に既存の epub_err_too_large キーへ合流させる。
+  if (/uploaded EPUB exceeds the \d+ byte limit/.test(err)) return "epub_err_too_large";
+  if (err === "EPUB is too large to convert") return "epub_err_too_large";
+  if (err === "invalid EPUB file") return "epub_err_invalid_zip";
+  if (err === "EPUB package information is missing") return "epub_err_missing_package";
+  if (err === "EPUB contains no readable content") return "epub_err_empty_spine";
+  if (err === "encrypted EPUB is not supported") return "epub_err_encrypted";
+  if (err === "fixed-layout EPUB is not supported") return "epub_err_fixed_layout";
 
   return null;
 }

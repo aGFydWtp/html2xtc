@@ -4,6 +4,7 @@
 // in-flight のジョブと直近の完了 / 失敗エントリ（上限あり）をまとめて表示する。
 
 import { authStore } from "./auth.svelte";
+import { encodeEpubOptionsHeader, type EpubConvertOptions } from "./epub-options";
 import type { Note } from "./i18n.svelte";
 import { IN_FLIGHT, jobsStore, type JobEntry } from "./jobs.svelte";
 import { libraryStore } from "./library.svelte";
@@ -314,6 +315,83 @@ export function submitText(
 
     xhr.onerror = () => {
       submissionError({ sourceType: "txt", sourceLabel: file.name, jobId: "", status: "failed" }, "no_server");
+      resolve({ ok: false, aborted: false });
+    };
+
+    xhr.onabort = () => resolve({ ok: false, aborted: true }); // ユーザーによる中断: ジョブは作られない
+  });
+
+  xhr.send(file);
+  return { handle: { abort: () => xhr.abort() }, done };
+}
+
+// EPUBアップロードの進捗コールバック・型（submitPdf/submitText と同じ構造。仕様書 §16.5）。
+export type EpubUploadProgress = (percent: number | null) => void;
+
+export interface EpubUploadHandle {
+  abort(): void;
+}
+
+export interface EpubUploadResult {
+  ok: boolean;
+  aborted: boolean;
+}
+
+export interface EpubUploadSession {
+  handle: EpubUploadHandle;
+  done: Promise<EpubUploadResult>;
+}
+
+// EPUBファイルをアップロードしてジョブを投入する（仕様書 §16.5）。submitPdf/submitText
+// と同じ XMLHttpRequest ベースの実装（fetch では安定した進捗取得が難しいため）。
+export function submitEpub(
+  file: File,
+  options: EpubConvertOptions,
+  onProgress: EpubUploadProgress,
+  displayTitle?: string,
+): EpubUploadSession {
+  const xhr = new XMLHttpRequest();
+  xhr.open("POST", "/jobs/epub");
+  xhr.setRequestHeader("Content-Type", "application/epub+zip");
+  xhr.setRequestHeader("X-File-Name", encodeFileNameHeader(file.name));
+  xhr.setRequestHeader("X-Epub-Options", encodeEpubOptionsHeader(options));
+
+  xhr.upload.onprogress = (event) => {
+    onProgress(event.lengthComputable ? Math.round((event.loaded / event.total) * 100) : null);
+  };
+
+  const done = new Promise<EpubUploadResult>((resolve) => {
+    xhr.onload = () => {
+      let body: JobsPostResponse | null = null;
+      try {
+        body = xhr.responseText ? JSON.parse(xhr.responseText) as JobsPostResponse : null;
+      } catch { /* JSON でないレスポンスは body=null のまま扱う */ }
+
+      if (xhr.status < 200 || xhr.status >= 300 || !body || typeof body.jobId !== "string") {
+        submissionError(
+          { sourceType: "epub", sourceLabel: file.name, jobId: "", status: "failed", error: body?.error },
+          body?.error ? null : { key: "http_error", args: [xhr.status] },
+        );
+        resolve({ ok: false, aborted: false });
+        return;
+      }
+
+      const job: JobEntry = {
+        jobId: body.jobId,
+        sourceType: "epub",
+        sourceLabel: file.name,
+        createdAt: new Date().toISOString(),
+        status: "queued",
+        ...(displayTitle ? { title: displayTitle } : {}),
+      };
+      jobsStore.upsert({ ...job });
+      sessionJobIds.add(job.jobId);
+      startPolling(job);
+      resolve({ ok: true, aborted: false });
+    };
+
+    xhr.onerror = () => {
+      submissionError({ sourceType: "epub", sourceLabel: file.name, jobId: "", status: "failed" }, "no_server");
       resolve({ ok: false, aborted: false });
     };
 

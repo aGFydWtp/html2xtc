@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // i18n。LANG_KEY は about.html（静的ページ）と共通で、言語選択が両ページ間で引き継がれる。
 
+import type { JobSourceType } from "./job-entry";
 import { resolveServerErrorKey } from "./server-error-text";
 
 export type Lang = "ja" | "en";
 
-// "preparing"（本文を組版中）は TXT ジョブのみが経由するフェーズ（仕様書 §19）。
+// "preparing"（本文を組版中）は TXT / EPUB ジョブが経由するフェーズ（仕様書 §15, §19）。
 export type JobStatus = "queued" | "preparing" | "rendering" | "converting" | "completed" | "failed" | "expired";
 
 export interface Messages {
@@ -159,6 +160,43 @@ export interface Messages {
   text_err_font_fallback: string;
   text_err_pdf_too_large: string;
   text_err_upload_failed: string;
+
+  // --- EPUBアップロード入力（実装仕様書 §16） -----------------------------
+  epub_remove_file: string;
+  epub_meta_line: (size: string) => string;
+  epub_layout_label: string;
+  epub_layout_auto: string;
+  epub_layout_horizontal: string;
+  epub_layout_vertical: string;
+  epub_font_label: string;
+  epub_font_size_label: string;
+  epub_margin_label: string;
+  epub_chapter_page_break_label: string;
+  epub_chapter_page_break_on: string;
+  epub_chapter_page_break_off: string;
+  epub_include_cover_label: string;
+  epub_include_cover_on: string;
+  epub_include_cover_off: string;
+  epub_include_toc_label: string;
+  epub_include_toc_on: string;
+  epub_include_toc_off: string;
+  epub_uploading: (percent: number) => string;
+  epub_uploading_indeterminate: string;
+  epub_options_invalid: string;
+  epub_err_not_epub: string;
+  epub_err_too_large: string;
+  epub_err_empty: string;
+  epub_err_invalid_zip: string;
+  epub_err_upload_failed: string;
+  epub_err_missing_package: string;
+  epub_err_empty_spine: string;
+  epub_err_encrypted: string;
+  epub_err_fixed_layout: string;
+  /** ジョブ状態 "preparing" の EPUB 版表示（実装仕様書 §15「EPUB解析中」）。 */
+  epub_status_preparing: string;
+
+  // --- ファイル種別不明（実装仕様書 §16.2、PDF/TXT/EPUBのいずれにも該当しない場合） ---
+  file_err_unsupported_type: string;
 
   // --- X3実機(XTC)プレビュー（POST /preview/text、実装仕様書 §18） -----------------
   text_x3_preview_regenerate_button: string;
@@ -431,7 +469,7 @@ export const I18N: Record<Lang, Messages> = {
     http_error: (s) => `エラー (HTTP ${s})`,
     pdf_too_large: "生成された PDF がサイズ上限を超えました。「レイアウトを保持して変換する」を有効にすると変換できる場合があります。",
 
-    pdf_or_drop: "または PDF / TXT をここにドラッグ＆ドロップ ／ ",
+    pdf_or_drop: "または PDF / TXT / EPUB をここにドラッグ＆ドロップ ／ ",
     pdf_pick_file: "ファイルを選択",
     pdf_drop_active: "ここにドロップ",
     pdf_file_label: "ファイル",
@@ -545,6 +583,40 @@ export const I18N: Record<Lang, Messages> = {
     text_err_font_fallback: "指定フォントを取得できなかったため、代替フォントで変換します。",
     text_err_pdf_too_large: "組版後のPDFが大きすぎます。文字サイズや余白を調整してください。",
     text_err_upload_failed: "テキストファイルのアップロードに失敗しました。",
+
+    epub_remove_file: "ファイルを解除",
+    epub_meta_line: (size) => size,
+    epub_layout_label: "レイアウト",
+    epub_layout_auto: "EPUBに従う",
+    epub_layout_horizontal: "横書き",
+    epub_layout_vertical: "縦書き",
+    epub_font_label: "フォント",
+    epub_font_size_label: "文字サイズ",
+    epub_margin_label: "余白",
+    epub_chapter_page_break_label: "章ごとに改ページ",
+    epub_chapter_page_break_on: "する",
+    epub_chapter_page_break_off: "しない",
+    epub_include_cover_label: "表紙を含める",
+    epub_include_cover_on: "含める",
+    epub_include_cover_off: "含めない",
+    epub_include_toc_label: "目次を含める",
+    epub_include_toc_on: "含める",
+    epub_include_toc_off: "含めない",
+    epub_uploading: (percent) => `アップロード中 ${percent}%`,
+    epub_uploading_indeterminate: "アップロード中…",
+    epub_options_invalid: "設定値を確認してください。",
+    epub_err_not_epub: "EPUBファイルを選択してください。",
+    epub_err_too_large: "ファイルサイズが上限を超えています。",
+    epub_err_empty: "空のEPUBファイルは変換できません。",
+    epub_err_invalid_zip: "EPUBファイルとして読み込めませんでした。ファイルが壊れている可能性があります。",
+    epub_err_upload_failed: "EPUBのアップロードに失敗しました。",
+    epub_err_missing_package: "EPUBのパッケージ情報が見つかりません。",
+    epub_err_empty_spine: "EPUBに読み込めるコンテンツがありません。",
+    epub_err_encrypted: "暗号化されたEPUBには対応していません。",
+    epub_err_fixed_layout: "固定レイアウトのEPUBには対応していません。",
+    epub_status_preparing: "EPUB解析中",
+
+    file_err_unsupported_type: "対応していないファイル形式です。PDF・TXT・EPUB のいずれかを選択してください。",
 
     text_x3_preview_regenerate_button: "X3実機プレビューを再生成",
     text_x3_preview_generating: "実機プレビューを生成しています…",
@@ -808,7 +880,7 @@ export const I18N: Record<Lang, Messages> = {
     http_error: (s) => `Error (HTTP ${s})`,
     pdf_too_large: "The rendered PDF exceeds the size limit. Enabling “Keep the page layout” may allow the conversion to succeed.",
 
-    pdf_or_drop: "or drag & drop a PDF or TXT file here / ",
+    pdf_or_drop: "or drag & drop a PDF, TXT, or EPUB file here / ",
     pdf_pick_file: "Choose file",
     pdf_drop_active: "Drop here",
     pdf_file_label: "File",
@@ -922,6 +994,40 @@ export const I18N: Record<Lang, Messages> = {
     text_err_font_fallback: "The selected font could not be retrieved; converting with a fallback font instead.",
     text_err_pdf_too_large: "The typeset PDF is too large. Try adjusting the font size or margins.",
     text_err_upload_failed: "Failed to upload the text file.",
+
+    epub_remove_file: "Remove file",
+    epub_meta_line: (size) => size,
+    epub_layout_label: "Layout",
+    epub_layout_auto: "Follow EPUB",
+    epub_layout_horizontal: "Horizontal",
+    epub_layout_vertical: "Vertical",
+    epub_font_label: "Font",
+    epub_font_size_label: "Font size",
+    epub_margin_label: "Margin",
+    epub_chapter_page_break_label: "Page break per chapter",
+    epub_chapter_page_break_on: "On",
+    epub_chapter_page_break_off: "Off",
+    epub_include_cover_label: "Include cover",
+    epub_include_cover_on: "Include",
+    epub_include_cover_off: "Exclude",
+    epub_include_toc_label: "Include table of contents",
+    epub_include_toc_on: "Include",
+    epub_include_toc_off: "Exclude",
+    epub_uploading: (percent) => `Uploading ${percent}%`,
+    epub_uploading_indeterminate: "Uploading…",
+    epub_options_invalid: "Please check the conversion settings.",
+    epub_err_not_epub: "Please select an EPUB file.",
+    epub_err_too_large: "The file size exceeds the limit.",
+    epub_err_empty: "An empty EPUB file cannot be converted.",
+    epub_err_invalid_zip: "Could not read the file as an EPUB. It may be corrupted.",
+    epub_err_upload_failed: "Failed to upload the EPUB.",
+    epub_err_missing_package: "EPUB package information is missing.",
+    epub_err_empty_spine: "EPUB contains no readable content.",
+    epub_err_encrypted: "Encrypted EPUB files are not supported.",
+    epub_err_fixed_layout: "Fixed-layout EPUB files are not supported.",
+    epub_status_preparing: "Parsing EPUB",
+
+    file_err_unsupported_type: "Unsupported file type. Please select a PDF, TXT, or EPUB file.",
 
     text_x3_preview_regenerate_button: "Regenerate X3 device preview",
     text_x3_preview_generating: "Generating the device preview…",
@@ -1200,8 +1306,12 @@ export function serverErrorText(err: string): string {
   return key ? t(key) : err;
 }
 
-// 未知のステータス値はそのまま表示する（サーバー側が先行して新ステータスを返した場合の保険）
-export function statusLabel(status: string): string {
+// 未知のステータス値はそのまま表示する（サーバー側が先行して新ステータスを返した場合の保険）。
+// sourceType を渡すと、EPUB ジョブの "preparing"（本文組版中に相当）だけ
+// 「EPUB解析中」（実装仕様書 §15）へ差し替える — status テーブルはソース非依存の
+// 1 レコードのため、この 1 状態だけソース別に文言を分ける特別扱いをここで行う。
+export function statusLabel(status: string, sourceType?: JobSourceType): string {
+  if (sourceType === "epub" && status === "preparing") return t("epub_status_preparing");
   const table = t("status");
   return Object.hasOwn(table, status) ? table[status as JobStatus] : String(status);
 }

@@ -85,6 +85,29 @@ describe("migrateJobEntry", () => {
     expect(migrateJobEntry({ jobId: "job-txt-2", sourceType: "txt", status: "failed" })).toBeNull();
   });
 
+  it("passes through a current-format EPUB entry (no url field)", () => {
+    const epubEntry = {
+      jobId: "job-epub-1",
+      sourceType: "epub",
+      sourceLabel: "book.epub",
+      status: "preparing",
+    };
+    expect(migrateJobEntry(epubEntry)).toEqual({
+      jobId: "job-epub-1",
+      sourceType: "epub",
+      sourceLabel: "book.epub",
+      url: undefined,
+      status: "preparing",
+      createdAt: undefined,
+      title: undefined,
+      error: undefined,
+    });
+  });
+
+  it("drops an epub-shaped entry missing sourceLabel", () => {
+    expect(migrateJobEntry({ jobId: "job-epub-2", sourceType: "epub", status: "failed" })).toBeNull();
+  });
+
   it("drops entries missing both url and sourceType/sourceLabel", () => {
     expect(migrateJobEntry({ jobId: "job-4", status: "failed" })).toBeNull();
   });

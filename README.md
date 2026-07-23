@@ -31,6 +31,8 @@ Worker
 
 `frontend/`（Vite + Svelte 5 の SPA、スマホファースト）をビルドした `frontend/dist` を Workers static assets として `/` で配信する。URL を入力すると `POST /jobs` → 数秒間隔のポーリングで進捗（待機中 → PDF 生成中 → XTC 変換中）を表示し、完了するとダウンロードリンクとプレビューボタンが出る。変換モードは「レイアウトを保持して変換する」チェックボックスで選び、**未チェック（既定）が本文抽出（extract）、チェックありがページ丸ごと（full）**。WebUI は常に `mode` を明示送信する（API 自体の `mode` 省略時既定は full のまま）。履歴はブラウザの localStorage に保存（最大 50 件。履歴が空の間は履歴エリア自体を表示しない。サーバー上のファイルは約 24 時間で自動削除される旨を表示）。変換中の表示はジョブごとの並行ポーリングで複数件を同時に追跡する（in-flight ＋直近の完了/失敗を上限 10 件で表示）。
 
+**EPUB アップロード**: `.epub` ファイルを選択すると添付パネル（`EpubInputPanel.svelte`）が開き、レイアウト（自動 / 横書き / 縦書き）・フォント・文字サイズ・余白・章ごとの改ページ・表紙の有無・目次の有無を設定してから `POST /jobs/epub` へ送信する。PDF/TXT と異なりクライアント側で ZIP を解凍・解析するプレビューは持たず、ファイルを選んだ時点で常に変換可能な状態になる。アップロード中は進捗バーとキャンセルボタンを表示する。
+
 **青空文庫から選択**: フォーム下のボタンからダイアログを開き、タイトル・作者名で書誌を検索（`GET /api/books`、350ms デバウンス）して最大 5 件を選択し、まとめて変換ジョブへ投入できる（各作品の XHTML 版 URL を `POST /jobs` へ送る。青空文庫 URL は自動で縦書き・明朝の専用パスに載る）。
 
 **XTC プレビュー**: 生成済み XTC をブラウザ内でデコードしてモーダルダイアログ（ネイティブ `<dialog>`）の canvas に描画する。XTC コンテナ（48B ヘッダー + 16B/ページのインデックス）と 1-bit XTG フレーム（22B ヘッダー、行方向 MSB 詰め）のパーサーを WebUI 内に持ち、fetch した ArrayBuffer はジョブ ID キーでキャッシュ（上限 5 件）してページ送りで再取得しない。マジック・version・colorMode・compression が想定外のファイルはプレビューのみ無効化してダウンロードリンクは維持する（将来 xtctool の出力形式が変わった場合のフォールバック）。履歴の各行には ⋮ ボタンがあり、ポップオーバーメニュー（Popover API、非対応ブラウザはクラス切替にフォールバック）から XTC ダウンロード / プレビューを選べる。サービス概要・利用規約・クローラー情報・連絡先は `/about`（`frontend/public/about.html`、ビルドで dist へそのままコピーされる静的ページ）に掲示し、フッターからリンクする。
@@ -39,11 +41,11 @@ Worker
 
 ## 認証
 
-認証は設けていない（一般公開）。API（`/convert` `/jobs` `/jobs/pdf` `/jobs/text` `/download`）・WebUI とも誰でも利用できる。悪用対策はレート制限（次節）と URL 検証（SSRF 対策）で行う。
+認証は設けていない（一般公開）。API（`/convert` `/jobs` `/jobs/pdf` `/jobs/text` `/jobs/epub` `/download`）・WebUI とも誰でも利用できる。悪用対策はレート制限（次節）と URL 検証（SSRF 対策）で行う。
 
 ## レート制限
 
-変換を起動するエンドポイント（`POST /convert`・`POST /jobs`・`POST /jobs/pdf`・`POST /jobs/text`）は IP ごとに **1 時間あたり 50 件**（固定窓、Worker の var `RATE_LIMIT_PER_HOUR` で変更可）に制限する（`src/ratelimit.ts` / `src/ratelimiter.ts`）。IP は Cloudflare エッジが設定する `CF-Connecting-IP` から取り、IPv6 は /64 プレフィックス単位で数える（プレフィックス内でアドレスを回すすり抜け対策）。超過時は 429 + `Retry-After`（窓リセットまでの秒数）を返す。カウントは IP キーごとの Durable Object が保持し、DO 呼び出しが失敗した場合はブロックせず通す（validate.ts の DoH 障害時と同じ可用性優先）。GET 系（状態確認・ダウンロード）は対象外。
+変換を起動するエンドポイント（`POST /convert`・`POST /jobs`・`POST /jobs/pdf`・`POST /jobs/text`・`POST /jobs/epub`）は IP ごとに **1 時間あたり 50 件**（固定窓、Worker の var `RATE_LIMIT_PER_HOUR` で変更可）に制限する（`src/ratelimit.ts` / `src/ratelimiter.ts`）。IP は Cloudflare エッジが設定する `CF-Connecting-IP` から取り、IPv6 は /64 プレフィックス単位で数える（プレフィックス内でアドレスを回すすり抜け対策）。超過時は 429 + `Retry-After`（窓リセットまでの秒数）を返す。カウントは IP キーごとの Durable Object が保持し、DO 呼び出しが失敗した場合はブロックせず通す（validate.ts の DoH 障害時と同じ可用性優先）。GET 系（状態確認・ダウンロード）は対象外。
 
 ## API
 
@@ -85,7 +87,7 @@ Worker
 { "jobId": "<uuid>", "status": "converting" }
 ```
 
-- `status`: URL ジョブは `queued` → `rendering` → `converting` → `completed` | `failed`。PDF ジョブ（下記 `POST /jobs/pdf`）には Browser Run による PDF 生成（rendering）が無いため `queued` → `converting` → `completed` | `failed` のみを取る。TXT ジョブ（下記 `POST /jobs/text`）は本文組版フェーズが独立してあるため `queued` → `preparing` → `rendering` → `converting` → `completed` | `failed` を取る。
+- `status`: URL ジョブは `queued` → `rendering` → `converting` → `completed` | `failed`。PDF ジョブ（下記 `POST /jobs/pdf`）には Browser Run による PDF 生成（rendering）が無いため `queued` → `converting` → `completed` | `failed` のみを取る。TXT ジョブ（下記 `POST /jobs/text`）と EPUB ジョブ（下記 `POST /jobs/epub`）は本文組版フェーズが独立してあるため `queued` → `preparing` → `rendering` → `converting` → `completed` | `failed` を取る（`src/jobs.ts` の `mapEpubInstanceStatus`。R2 上の中間 HTML（`intermediate/{jobId}/epub.html`）の有無で `preparing`/以降を判定する）。
 - `completed` 時は `downloadUrl`（`/jobs/{jobId}/download`）付き、`failed` 時は `error`（メッセージ）付き。PDF ジョブの失敗は原因を問わず一般化した文言（例: `"invalid or unsupported PDF"`, `"XTC conversion failed"`）のみを返し、PyMuPDF/xtctool 側の詳細はログにのみ記録する。
 - `rendering`/`converting` の区別は R2 上の中間 PDF（`intermediate/{jobId}/source.pdf`）の有無から導出する（Workflows の status() は実行中ステップ名を返さないため）。同じ仕組みで、まず入力アップロード PDF（`input/{jobId}/source.pdf`）の有無を見て PDF ジョブかどうかを判定し、PDF ジョブなら常に `converting` を返す（`src/jobs.ts` の `mapPdfInstanceStatus`）。
 - jobId が UUID 形式でなければ 400、不明・Workflows インスタンスの保持期限切れ（`retention` 指定により成功・失敗とも約 1 日）なら 404。なお成果物 XTC 自体は R2 lifecycle により約 24 時間で削除される（ダウンロード側で 404）。
@@ -179,6 +181,47 @@ X-Text-Options: <TextConvertOptions の JSON を base64url エンコード>
 **`inputFormat: "aozora"` で対応しないもの（MVP、仕様書 §16）**: 青空文庫注記仕様の完全準拠・旧形式や暫定形式との完全互換・挿絵/外字画像の取得・ZIP 内 TXT と画像の同時アップロード・外部画像 URL 参照・左ルビ・ルビの複雑な重なり・複雑な注記範囲の交差・割り注・罫囲みや複雑な表・訓点/返り点の厳密組版・改丁/改見開きの左右ページ厳密制御・目次ページの自動生成・注記からの任意 CSS/HTML 生成・青空文庫以外の独自拡張記法・Markdown との混在解釈・入力内容のサーバー保存期間の延長・パーサー診断内容の永続保存。`inputFormat: "plain"`（既定）は引き続き Markdown/HTML の解釈・青空文庫注記・ルビ/傍点/脚注/目次を一切行わない。
 
 **対応しないもの（MVP、共通）**: OCR・外部 CSS/外部 JavaScript の参照・複数 TXT の結合・ページ単位の個別書式・変換開始後のジョブキャンセル。
+
+### POST /jobs/epub
+
+手元の EPUB（`.epub`）ファイルをアップロードし、章を `<section>` で分離した自己完結 HTML へ変換したうえで非同期変換ジョブを作成する（`frontend/` の EPUB アップロード UI から使用）。既存の URL/PDF/TXT パイプラインと同じく最終的には Browser Run で PDF 化してから Container で XTC へ変換するが、EPUB そのものは Container へは渡らない（ZIP 展開・XHTML サニタイズ・CSS サニタイズはすべて Worker/Workflow 側の `src/epub/*` で行う）。
+
+```http
+POST /jobs/epub
+Content-Type: application/epub+zip
+Content-Length: <bytes>
+X-File-Name: <UTF-8 ファイル名を base64url エンコード>
+X-Epub-Options: <EpubConvertOptions の JSON を base64url エンコード>
+
+<EPUB (ZIP) バイト列>
+```
+
+- `Content-Type`: `application/epub+zip` は常に許可。`application/octet-stream` は `X-File-Name` のデコード後ファイル名が `.epub`（大小文字を区別しない）で終わる場合のみ許可（PDF/TXT にはないこの追加条件は仕様書 §7.1 の指定）。それ以外は 415。
+- `Content-Length`: 必須（未指定は 411）。0 以下・非数値は 400。上限（既定 48 MiB = 50331648 バイト、`MAX_UPLOAD_EPUB_BYTES` で変更可）超過は 413。
+- `X-File-Name`（任意）: `POST /jobs/pdf` と同じ規則（制御文字・パス区切り除去、NFC 正規化、255 文字まで切り詰め、空なら `document.epub`、拡張子が無ければ `.epub` を付与）。デコード失敗時も 400 にはせず既定ファイル名へフォールバックする。表示・XTC タイトル候補にのみ使う。
+- `X-Epub-Options`（任意）: `EpubConvertOptions`（レイアウト `layout`: `"auto"`（既定）/ `"horizontal"` / `"vertical"`・フォント `font`（Google Fonts ファミリー名、既定 `BIZ UDMincho`）・文字サイズ `fontSizePx`（12〜40px の整数、既定 22）・余白 `marginPx`（0〜120px の整数、既定 48）・章ごとの改ページ `chapterPageBreak`（既定 true）・表紙を含めるか `includeCover`（既定 true）・目次を含めるか `includeTableOfContents`（既定 false）。既定値・各項目の制約は `src/epub-options.ts` の `DEFAULT_EPUB_OPTIONS`/`validateEpubConvertOptions` を参照）を JSON 化して base64url エンコードした値。省略時は既定値を使う。PDF アップロード系オプションと同じく値の暗黙補正はせず、デコード失敗・JSON 不正・スキーマ違反はいずれも 400。
+- リクエストボディの先頭 4 バイトを読み取り ZIP ローカルファイルヘッダー / 空アーカイブ / 分割アーカイブのマジックナンバーを確認する（一致しなければ 400 「invalid EPUB file」）。これは「何らかの ZIP であること」の確認に過ぎず、有効な EPUB であることの検証は Workflow の `prepare-epub` ステップ（`src/epub/archive.ts` の中央ディレクトリ解析以降）が行う。リクエストボディは Worker 側で `ArrayBuffer` へ全量展開せず、確認用に読んだ先頭チャンクを含めてストリームのまま R2（`input/{jobId}/source.epub`）へ保存する。保存後に R2 オブジェクトサイズと申告 `Content-Length` を比較し、不一致なら入力を削除して 400（Workflow は開始しない）。
+
+成功時 202:
+
+```json
+{ "jobId": "<uuid>", "statusUrl": "/jobs/<uuid>" }
+```
+
+| ステータス | 意味 |
+|---:|---|
+| 400 | `Content-Length` が 0 以下/非数値、`X-Epub-Options` のデコード・JSON・スキーマ検証失敗、リクエストボディ欠落、ZIP マジック不一致、保存後サイズ不一致 |
+| 411 | `Content-Length` 未指定 |
+| 413 | 申告サイズが上限超過 |
+| 415 | `Content-Type` が `application/epub+zip`、または `.epub` ファイル名付き `application/octet-stream` 以外 |
+| 429 | IP ごとのレート制限超過（`POST /convert`・`POST /jobs`・`POST /jobs/pdf`・`POST /jobs/text` と共通の窓。`Retry-After` ヘッダ付き） |
+| 500 | R2 保存失敗、または Workflow インスタンス作成失敗（いずれの場合も保存済み入力 EPUB は best-effort で削除する） |
+
+裏側は `POST /jobs` と同じ Cloudflare Workflow（`ConvertWorkflow`）の EPUB 用分岐（`source.kind === "epub"`）。`prepare-epub`（1 回まで再試行、タイムアウト 3 分。R2 から EPUB を読み戻し、`src/epub/archive.ts`（ZIP 中央ディレクトリ解析・展開後サイズ検証）→ `container.ts`（`META-INF/container.xml`）→ `opf.ts`（パッケージ文書のタイトル・著者・manifest・spine・Fixed Layout 判定・表紙画像パス）→ `sanitize.ts`（spine 各章の XHTML サニタイズ・章間 ID の名前空間化・リンク書き換え）→ `css.ts`（CSS サニタイズ）→ `html.ts`（章を `<section id="chapter-0001" class="epub-spine-item">` で分離した自己完結 HTML への組み立て、表紙・目次セクションの生成）の順に処理し、章ごとの改ページ・レイアウト・フォント・余白は `EpubConvertOptions` を反映する。OPF の `dc:creator` から抽出した著者名は `resolvedAuthor` として後段の `convert-xtc` へ引き継がれる）→ `render-epub-pdf`（2 回まで再試行、タイムアウト 7 分。TXT と同じ 528×792 固定ページで PDF 生成する専用レンダラーを使用し、URL/PDF 経路の `buildPrintRules` は注入しない）→ `convert-xtc`（2 回まで再試行、タイムアウト 12 分。既存の trusted `/convert` 経路をそのまま利用し、著者名は TXT 経路と同じ `X-Xtc-Author` ヘッダで Container へ伝える）の順に実行する。入力 EPUB・中間 HTML（`intermediate/{jobId}/epub.html`）・フォント CSS（`intermediate/{jobId}/epub-fonts.css`）・中間 PDF はいずれも成功・失敗を問わず最後に best-effort で削除する（削除に失敗しても `input/`・`intermediate/` の R2 lifecycle により約 1 日で自動削除される）。
+
+暗号化 EPUB・Fixed Layout EPUB・壊れた ZIP/container.xml/OPF・空 spine・エントリ数/エントリサイズ/展開後合計サイズ/生成 HTML サイズの上限超過は `src/epub/errors.ts` の `EpubError`（決定的エラーとして再試行なしで即 `failed` — 同じ入力を再試行しても結果が変わらないため）。R2 の一時的な読み書き失敗やフォント取得のタイムアウトなど、入力そのものに起因しない失敗は上記の再試行回数の範囲でリトライされる。エラーメッセージは EPUB の原文・HTML・アーカイブ内パスを一切含まない固定文言（例: `"encrypted EPUB is not supported"`, `"fixed-layout EPUB is not supported"`, `"EPUB is too large to convert"`）。構造的な警告（スキップした spine アイテム・パース不能な章など）はジョブを失敗させずログにのみ記録する。
+
+**対応しないもの（MVP、仕様書 §2.2 + 実装上の既知の制限）**: DRM 付き EPUB（Adobe DRM 等の解除を含む）・Fixed Layout EPUB・Scripted EPUB・JavaScript 実行・動画・音声・外部 Web コンテンツの埋め込み・iframe・フォーム・MathML の完全再現・SMIL Media Overlays・EPUB 内の対話要素・埋め込みフォントの完全対応（`@font-face` は CSS サニタイズ時に無条件で除去し、`EpubConvertOptions.font` で選んだ Google Fonts のフォントを代わりに使う）・EPUB を XTC に直接変換する独自レンダラー・ページ単位の個別書式・変換開始後のジョブキャンセル・48 MiB を超えるアップロード。加えて実装上の既知の制限として、章をまたぐ ID の衝突を避けるため本文中の `id` 属性は章ごとに名前空間化するが、EPUB 側の CSS が持つ ID セレクタ（`#foo { ... }` 等）はこの名前空間化に追従して書き換えられないため、ID セレクタに依存するスタイルは章分離後には一致しない場合がある。表紙画像の決定は仕様書の優先順位 1〜3（`properties="cover-image"` の manifest アイテム／`<meta name="cover">`／`guide` 内の `type="cover"` 参照）のみに対応し、優先順位 4（`cover.xhtml` 内の最初の画像）は未実装（該当ケースでは表紙なしとして扱われる）。
 
 ### POST /preview/text
 
@@ -286,9 +329,14 @@ R2 上の XTC を `application/octet-stream` + `Content-Length` + `Content-Dispo
 | アップロード TXT の上限（`POST /jobs/text`） | 5 MiB（固定） | `src/text-normalize.ts` の `MAX_TEXT_FILE_BYTES`（コード定数、env var 化はしていない） |
 | TXT の文字数・行数・行長上限 | 2,000,000 文字・200,000 行・1 行 100,000 文字 | `src/text-normalize.ts` の `MAX_TEXT_CHARS`/`MAX_TEXT_LINES`/`MAX_LINE_CHARS` |
 | TXT から生成する HTML の上限 | 12 MiB | `src/text-normalize.ts` の `MAX_GENERATED_HTML_BYTES` |
+| アップロード EPUB の上限（`POST /jobs/epub`） | 48 MiB（コード上の既定 50331648 バイト） | Worker の var `MAX_UPLOAD_EPUB_BYTES`（バイト数。`src/epub-upload.ts` の `resolveMaxUploadEpubBytes`） |
+| EPUB 展開後の合計サイズ上限 | 192 MiB（コード上の既定 201326592 バイト） | Worker の var `MAX_EPUB_UNCOMPRESSED_BYTES`（`src/epub/archive.ts` の `resolveMaxEpubUncompressedBytes`） |
+| EPUB 内 1 エントリあたりの展開後サイズ上限 | 32 MiB（コード上の既定 33554432 バイト） | Worker の var `MAX_EPUB_ENTRY_BYTES`（`src/epub/archive.ts` の `resolveMaxEpubEntryBytes`） |
+| EPUB の ZIP エントリ数上限 | 5,000 | Worker の var `MAX_EPUB_ENTRIES`（`src/epub/archive.ts` の `resolveMaxEpubEntries`） |
+| EPUB から生成する HTML の上限 | 32 MiB（コード上の既定 33554432 バイト） | Worker の var `MAX_EPUB_HTML_BYTES`（`src/jobs.ts` の `resolveMaxEpubHtmlBytes`） |
 | xtctool タイムアウト | 600 秒 | Container の env `XTC_TIMEOUT_SECONDS`（`src/container.ts` の `envVars` で設定） |
 | 同時変換数（Container 内） | 2 | Container の env `MAX_CONCURRENT_CONVERSIONS`（Semaphore で制限） |
-| 変換リクエストのレート制限（IP ごと・1 時間固定窓） | 50 件 | Worker の var `RATE_LIMIT_PER_HOUR`（「レート制限」参照。`POST /convert`・`POST /jobs`・`POST /jobs/pdf`・`POST /jobs/text` 共通） |
+| 変換リクエストのレート制限（IP ごと・1 時間固定窓） | 50 件 | Worker の var `RATE_LIMIT_PER_HOUR`（「レート制限」参照。`POST /convert`・`POST /jobs`・`POST /jobs/pdf`・`POST /jobs/text`・`POST /jobs/epub` 共通） |
 
 ## 青空文庫カタログ同期（D1）
 

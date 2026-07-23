@@ -3,13 +3,13 @@
   import type { Snippet } from "svelte";
   import { t } from "../lib/i18n.svelte";
 
-  // PDF/TXT共用のドロップゾーン（仕様書 §10.2-10.3）。ファイル種別の判定
-  // （PDFパネル/TXTパネルどちらへ分岐するか）は呼び出し元の onFileSelected が行う。
+  // PDF/TXT/EPUB共用のドロップゾーン（仕様書 §10.2-10.3, §16.1）。ファイル種別の判定
+  // （どのパネルへ分岐するか）は呼び出し元の onFileSelected が行う。
   let {
     onFileSelected,
     children,
     below,
-    accept = "text/plain,.txt,application/pdf,.pdf",
+    accept = "text/plain,.txt,application/pdf,.pdf,application/epub+zip,.epub",
   }: { onFileSelected: (file: File) => void; children: Snippet; below?: Snippet; accept?: string } = $props();
 
   let dragActive = $state(false);

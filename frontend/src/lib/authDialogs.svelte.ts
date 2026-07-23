@@ -82,3 +82,13 @@ export function openAccountDialog(): void {
 export function closeAccountDialog(): void {
   accountDialog.open = false;
 }
+
+// 端末の登録方法の案内（devices タブのアクションボタンから開く情報ダイアログ）。
+export const devicesHowtoDialog = $state({ open: false });
+
+export function openDevicesHowtoDialog(): void {
+  devicesHowtoDialog.open = true;
+}
+export function closeDevicesHowtoDialog(): void {
+  devicesHowtoDialog.open = false;
+}

@@ -16,7 +16,7 @@ import {
   sanitizeSvgMarkup,
   svgMarkupToDataUrl,
 } from "./assets";
-import { sanitizeCss } from "./css";
+import { sanitizeCss, stripComments } from "./css";
 import type { CssUrlResolver } from "./css";
 import { locatePackageDocument } from "./container";
 import { EpubError } from "./errors";
@@ -228,10 +228,15 @@ function readPageProgressionDirection(
  * "日本語だから自動的に縦書きにはしない" — dc:language alone is never
  * sufficient.
  *
- * `cssTexts` is the RAW (pre-sanitizeCss) stylesheet/inline-style text, not
- * the sanitized copy that ends up in the generated document — sanitizeCss
- * now drops `writing-mode` outright (css.ts's ALLOWED_PROPERTIES doc
- * comment), so scanning the sanitized text would blind this exact signal.
+ * `cssTexts` is comment-stripped (css.ts's stripComments) but NOT run
+ * through sanitizeCss's property allowlist — not the sanitized copy that
+ * ends up in the generated document. sanitizeCss now drops `writing-mode`
+ * outright (css.ts's ALLOWED_PROPERTIES doc comment), so scanning the
+ * sanitized text would blind this exact signal; comments are still
+ * stripped so a commented-out `writing-mode: vertical-rl` can't produce a
+ * false-positive "vertical" detection (see stripComments's own doc comment
+ * for what this does and doesn't cover — `@supports` conditions are an
+ * accepted gap).
  */
 function detectLayout(
   pkg: EpubPackageDocument,
@@ -382,9 +387,12 @@ function buildFinalCss(options: EpubConvertOptions, layout: "horizontal" | "vert
 }
 `;
   // The cover page has no text to fragment across pages, so it can simply
-  // be sized to fill its one page's content box (page height minus the
-  // @page margin applied top+bottom) and centered — no separate padding
-  // needed, @page's margin already insets it like every other page.
+  // be sized to fill its one page's content box (page width/height minus
+  // the @page margin on every side) and centered — no separate padding
+  // needed, @page's margin already insets it like every other page. Both
+  // dimensions are needed, not just height — see .epub-cover's own doc
+  // comment below for why.
+  const coverContentWidthPx = Math.max(0, 528 - options.marginPx * 2);
   const coverContentHeightPx = Math.max(0, 792 - options.marginPx * 2);
   return `@page {
   size: 528px 792px;
@@ -413,23 +421,19 @@ img, svg {
   max-height: 100%;
   object-fit: contain;
   break-inside: avoid;
-  /* Unconditional !important on float and margin, unlike this function's
-     other rules (which only add !important when layoutIsExplicit):
-     float:left/right on img is never something a "keep the EPUB's own
-     presentation" auto choice should honor — it makes body text wrap into
-     the image's margin instead of flowing normally, which is a
-     text-legibility regression this converter must always prevent (per
-     this repo's text-first CSS stance), not a layout preference to defer
-     to. margin rides along for a second, sharper reason, empirically
-     reproduced against 熊野奈智山.epub's own img margin rule (15px, 0 on
-     the left): a non-zero img margin left in place inside .epub-cover's
-     flex box (below) made the image's fragment box exceed one page's
-     content box in an actual Chromium print render, which pushed
-     .epub-cover's content onto page 2 and left page 1 fully blank — not
-     just a cosmetic misalignment, so this is corrected unconditionally
-     too. */
+  /* Unconditional !important, unlike this function's other rules (which
+     only add !important when layoutIsExplicit): float:left/right on img is
+     never something a "keep the EPUB's own presentation" auto choice
+     should honor — it makes body text wrap into the image's margin instead
+     of flowing normally, which is a text-legibility regression this
+     converter must always prevent (per this repo's text-first CSS
+     stance), not a layout preference to defer to. Deliberately NOT paired
+     with a global zeroed-out margin here (see .epub-cover img below for why a
+     margin reset is still needed, just scoped): a body illustration's own
+     margin is cosmetic, not the text-wrap hazard float is, so leaving it
+     alone avoids gratuitously flattening every in-chapter image against
+     its surrounding paragraph. */
   float: none !important;
-  margin: 0 !important;
 }
 
 figure {
@@ -437,12 +441,46 @@ figure {
 }
 
 .epub-cover {
-  min-height: ${coverContentHeightPx}px;
+  /* Both width and height must be explicit (not e.g. min-height alone):
+     max-width/max-height:100% on the <img> below only resolves against a
+     containing block whose size in that axis is definite — CSS spec's rule
+     for percentage sizes, not this codebase's assumption. With only
+     min-height set (the prior version of this rule), the box's HEIGHT
+     still counted as indefinite for that purpose, so max-height:100%
+     computed to "none" and the <img> rendered at its raw intrinsic pixel
+     size instead. Empirically reproduced against 熊野奈智山.epub's real
+     600x800 cover in an actual Chromium print render: the oversized image
+     fragment spilled onto page 2, which pushed .epub-cover's content off
+     page 1 entirely and left it fully blank. width has the same
+     requirement even though it was never observed failing on its own here
+     (a definite height alone happened to be enough for this specific
+     nearly-page-sized image) — giving both is the actually-correct fix,
+     not a guess. overflow:hidden is a backstop only, not the fix itself:
+     with both dimensions definite, max-width/max-height:100% plus
+     object-fit:contain (above) already guarantee the whole image fits and
+     is never cropped — overflow:hidden just guarantees a future regression
+     clips invisibly instead of silently pushing content onto the next
+     page's fragment the way this bug did. */
+  width: ${coverContentWidthPx}px;
+  height: ${coverContentHeightPx}px;
+  overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
   break-after: page;
   page-break-after: always;
+}
+
+.epub-cover img, .epub-cover svg {
+  /* Scoped, not global (unlike float above): re-tested after the
+     width/height fix above — with both dimensions definite the overflow
+     bug is already fully fixed without this, so this rule exists purely
+     for centering polish (熊野奈智山.epub's own img rule sets an
+     asymmetric margin: 15px, 0 on the left, which would otherwise nudge
+     the cover image slightly off-center within the frame). Kept off the
+     global img/svg rule so an EPUB-authored margin around an in-chapter
+     illustration is left alone. */
+  margin: 0 !important;
 }
 
 ${pageBreakRule}`;
@@ -534,16 +572,24 @@ export function prepareEpubDocument(
 
   const chapterSections: string[] = [];
   const sanitizedCssTexts: string[] = [];
-  // Raw (pre-sanitize) copies of every stylesheet/inline-<style> text the
-  // loop below reads — collected purely for detectLayout's own-CSS signal.
-  // sanitizeCss now drops `writing-mode` outright (css.ts's ALLOWED_PROPERTIES
-  // doc comment), so sanitizedCssTexts itself can never contain it; detecting
-  // "this EPUB's own CSS declares vertical-rl" has to read the un-sanitized
-  // text instead, same as readPageProgressionDirection above reads the raw
-  // OPF bytes rather than a parsed/filtered structure — a boolean regex
-  // presence-check never risks emitting or executing anything from this raw
-  // text, so reading it unsanitized here is safe.
-  const rawCssTextsForLayoutDetection: string[] = [];
+  // Comment-stripped, but otherwise NOT run through sanitizeCss's property
+  // allowlist — copies of every stylesheet/inline-<style> text the loop
+  // below reads, collected purely for detectLayout's own-CSS signal.
+  // sanitizeCss now drops `writing-mode` outright (css.ts's
+  // ALLOWED_PROPERTIES doc comment), so sanitizedCssTexts itself can never
+  // contain it; detecting "this EPUB's own CSS declares vertical-rl" has to
+  // read text sanitizeCss never filtered instead. Comments are still
+  // stripped (via css.ts's own stripComments, exported for exactly this)
+  // so a commented-out `/* writing-mode: vertical-rl; */` can't cause a
+  // false-positive detection — see stripComments's own doc comment for the
+  // one remaining gap (`@supports` conditions) this does NOT close. This is
+  // a narrower, less careful read than readPageProgressionDirection's above
+  // (which fully parses the OPF as XML and reads a specific attribute) —
+  // it's a plain regex presence-check over comment-stripped-but-otherwise-
+  // unsanitized text, not the "same technique". Still safe: a boolean
+  // presence-check never risks emitting or executing anything from this
+  // text.
+  const cssTextsForLayoutDetection: string[] = [];
   const seenCssAbsPaths = new Set<string>();
 
   renderedSpine.forEach((item, idx) => {
@@ -586,7 +632,7 @@ export function prepareEpubDocument(
         continue;
       }
       const cssText = new TextDecoder("utf-8", { fatal: false, ignoreBOM: false }).decode(cssBytes);
-      rawCssTextsForLayoutDetection.push(cssText);
+      cssTextsForLayoutDetection.push(stripComments(cssText));
       const resolver: CssUrlResolver = (rawUrl) => resolveRelative(rawUrl, absPath);
       const sanitizedCss = sanitizeCss(cssText, resolver);
       if (sanitizedCss.trim().length > 0) {
@@ -594,7 +640,7 @@ export function prepareEpubDocument(
       }
     }
     for (const styleText of sanitized.inlineStyleTexts) {
-      rawCssTextsForLayoutDetection.push(styleText);
+      cssTextsForLayoutDetection.push(stripComments(styleText));
       const resolver: CssUrlResolver = (rawUrl) => resolveRelative(rawUrl, path);
       const sanitizedCss = sanitizeCss(styleText, resolver);
       if (sanitizedCss.trim().length > 0) {
@@ -613,7 +659,7 @@ export function prepareEpubDocument(
     throw new EpubError("EMPTY_SPINE", "every spine item failed to sanitize");
   }
 
-  const layout = detectLayout(pkg, entries, rawCssTextsForLayoutDetection, options.layout);
+  const layout = detectLayout(pkg, entries, cssTextsForLayoutDetection, options.layout);
   const coverSection = coverDataUrl !== undefined ? buildCoverSection(coverDataUrl) : undefined;
   const tocSection = options.includeTableOfContents ? buildTocSection(nav, spineIndexByPath) : undefined;
   const finalCss = buildFinalCss(options, layout, options.layout !== "auto");

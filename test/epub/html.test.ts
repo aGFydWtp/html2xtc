@@ -7,7 +7,7 @@ import { prepareEpubDocument, resolveMaxEpubHtmlBytes } from "../../src/epub/htm
 import type { PrepareEpubDocumentContext } from "../../src/epub/html";
 import { DEFAULT_EPUB_OPTIONS } from "../../src/epub-options";
 import type { EpubConvertOptions } from "../../src/epub-options";
-import { buildEpubZip, minimalEpub2Files, minimalEpub3Files } from "../fixtures/epub/build-epub";
+import { buildEpubZip, makeMinimalPng, minimalEpub2Files, minimalEpub3Files } from "../fixtures/epub/build-epub";
 
 const GENEROUS_LIMITS = {
   maxEntries: 5000,
@@ -172,15 +172,15 @@ describe("prepareEpubDocument: image float reset (画像のfloatをEPUB側CSSか
     expect(result.html).toMatch(/img,\s*svg\s*{[^}]*float:\s*none\s*!important/);
   });
 
-  it("also zeroes img/svg margin (real-Chromium regression: a non-zero EPUB-supplied img margin inside .epub-cover's flex box pushed the cover onto page 2 and left page 1 blank)", () => {
+  it("does NOT zero margin on the global img/svg rule (scoped to .epub-cover instead — see the next describe block)", () => {
     const zip = buildEpubZip(minimalEpub3Files());
     const result = prepareEpubDocument(zip, options(), context());
-    expect(result.html).toMatch(/img,\s*svg\s*{[^}]*margin:\s*0\s*!important/);
+    expect(result.html).not.toMatch(/img,\s*svg\s*{[^}]*margin:\s*0\s*(!important)?\s*;/);
   });
 });
 
 describe("prepareEpubDocument: cover section sizing (紙面いっぱい・中央配置・改ページ)", () => {
-  function coverOnlyFiles() {
+  function coverOnlyFiles(coverBytes: Uint8Array = new Uint8Array([1, 2, 3, 4])) {
     const files = minimalEpub3Files();
     return {
       ...files,
@@ -188,15 +188,57 @@ describe("prepareEpubDocument: cover section sizing (紙面いっぱい・中央
         "<manifest>",
         '<manifest><item id="cover-img" href="cover.png" media-type="image/png" properties="cover-image"/>',
       ),
-      "OEBPS/cover.png": new Uint8Array([1, 2, 3, 4]),
+      "OEBPS/cover.png": coverBytes,
     };
   }
 
-  it("sizes .epub-cover to the page's content box and forces a page break after it", () => {
+  it("gives .epub-cover a definite width AND height (not just min-height) so max-width/max-height:100% on its img can resolve, plus overflow:hidden as a backstop, plus a page break after it", () => {
     const zip = buildEpubZip(coverOnlyFiles());
     const result = prepareEpubDocument(zip, options({ marginPx: 48 }), context());
-    expect(result.html).toMatch(/\.epub-cover\s*{[^}]*min-height:\s*696px/);
+    expect(result.html).toMatch(/\.epub-cover\s*{[^}]*width:\s*432px/);
+    expect(result.html).toMatch(/\.epub-cover\s*{[^}]*height:\s*696px/);
+    // Actual CSS declaration only ("min-height:", with the colon) — the
+    // .epub-cover rule's own doc comment (also inside this `{ }` block)
+    // discusses the old min-height-only version in prose, which a bare
+    // substring check would false-positive on.
+    expect(result.html).not.toMatch(/\.epub-cover\s*{[^}]*min-height\s*:/);
+    expect(result.html).toMatch(/\.epub-cover\s*{[^}]*overflow:\s*hidden/);
     expect(result.html).toMatch(/\.epub-cover\s*{[^}]*break-after:\s*page/);
+  });
+
+  it("zeroes margin on .epub-cover's own img/svg (scoped, not the global rule)", () => {
+    const zip = buildEpubZip(coverOnlyFiles());
+    const result = prepareEpubDocument(zip, options({ marginPx: 48 }), context());
+    expect(result.html).toMatch(/\.epub-cover img,\s*\.epub-cover svg\s*{[^}]*margin:\s*0\s*!important/);
+  });
+
+  // .epub-cover's fix is a fixed-size CSS box (width/height computed from
+  // marginPx only) plus object-fit:contain on the img — deliberately never
+  // measures the cover image itself, so it can't special-case any aspect
+  // ratio. These two fixtures (landscape: wider than tall; near-square:
+  // width and height almost equal) exist to pin that the SAME .epub-cover
+  // CSS structure — and only that structure — is what makes both fit,
+  // rather than some dimension-dependent branch this test would otherwise
+  // never exercise. A real Chromium print render (done manually against
+  // 熊野奈智山.epub's own 600x800 portrait cover for this fix, see the PR
+  // description) is still the only thing that can confirm actual pixel-level
+  // fit; vitest has no renderer, so these two only pin the CSS structure.
+  it("emits the identical definite-size .epub-cover box for a landscape (wider-than-tall) cover", () => {
+    const zip = buildEpubZip(coverOnlyFiles(makeMinimalPng(1600, 900)));
+    const result = prepareEpubDocument(zip, options({ marginPx: 48 }), context());
+    expect(result.html).toMatch(/\.epub-cover\s*{[^}]*width:\s*432px/);
+    expect(result.html).toMatch(/\.epub-cover\s*{[^}]*height:\s*696px/);
+    expect(result.html).toMatch(/\.epub-cover\s*{[^}]*overflow:\s*hidden/);
+    expect(result.html).toContain('class="epub-cover"');
+  });
+
+  it("emits the identical definite-size .epub-cover box for a near-square cover", () => {
+    const zip = buildEpubZip(coverOnlyFiles(makeMinimalPng(1000, 1024)));
+    const result = prepareEpubDocument(zip, options({ marginPx: 48 }), context());
+    expect(result.html).toMatch(/\.epub-cover\s*{[^}]*width:\s*432px/);
+    expect(result.html).toMatch(/\.epub-cover\s*{[^}]*height:\s*696px/);
+    expect(result.html).toMatch(/\.epub-cover\s*{[^}]*overflow:\s*hidden/);
+    expect(result.html).toContain('class="epub-cover"');
   });
 });
 
@@ -333,6 +375,16 @@ describe("prepareEpubDocument: auto layout (spec §19.1 auto layout)", () => {
     });
     const result = prepareEpubDocument(zip, options({ layout: "auto" }), context());
     expect(result.layout).toBe("vertical");
+  });
+
+  it("does NOT mis-detect vertical from a commented-out writing-mode declaration (detectLayout scans comment-stripped text)", () => {
+    const files = minimalEpub3Files();
+    const zip = buildEpubZip({
+      ...files,
+      "OEBPS/chapter1.xhtml": `<html><head><style>/* old design: writing-mode: vertical-rl; */ body { color: red; }</style></head><body><p>x</p></body></html>`,
+    });
+    const result = prepareEpubDocument(zip, options({ layout: "auto" }), context());
+    expect(result.layout).toBe("horizontal");
   });
 });
 

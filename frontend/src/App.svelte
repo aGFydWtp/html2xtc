@@ -6,6 +6,7 @@
   import ConvertForm from "./components/ConvertForm.svelte";
   import CurrentJob from "./components/CurrentJob.svelte";
   import Devices from "./components/Devices.svelte";
+  import Flasher from "./components/Flasher.svelte";
   import Header from "./components/Header.svelte";
   import History from "./components/History.svelte";
   import Library from "./components/Library.svelte";
@@ -20,11 +21,25 @@
   import { t } from "./lib/i18n.svelte";
   import { publicConfigStore } from "./lib/publicConfig.svelte";
 
-  type Tab = "convert" | "library" | "devices";
+  type Tab = "convert" | "library" | "devices" | "flasher";
 
   // パス⇔タブ対応表（History API ベースのルーティング）。
-  const PATH_TO_TAB: Record<string, Tab> = { "/": "convert", "/library": "library", "/devices": "devices" };
-  const TAB_TO_PATH: Record<Tab, string> = { convert: "/", library: "/library", devices: "/devices" };
+  const PATH_TO_TAB: Record<string, Tab> = {
+    "/": "convert",
+    "/library": "library",
+    "/devices": "devices",
+    "/flasher": "flasher",
+  };
+  const TAB_TO_PATH: Record<Tab, string> = {
+    convert: "/",
+    library: "/library",
+    devices: "/devices",
+    flasher: "/flasher",
+  };
+
+  // ログイン必須のタブ（実装仕様書 §12.4）。ファームウェア機能はログイン不要のため
+  // ここには含めない — 未ログインで /flasher を直接開いても変換タブへ戻さない。
+  const AUTH_REQUIRED_TABS = new Set<Tab>(["library", "devices"]);
 
   function tabFromPath(pathname: string): Tab {
     const p = pathname.replace(/\/+$/, "") || "/";
@@ -33,12 +48,14 @@
 
   let tab = $state<Tab>(tabFromPath(location.pathname));
 
-  // 未ログイン時はタブを表示しない。ライブラリ/端末タブを開いたままログアウト
+  // 未ログイン時、ログイン必須タブ（ライブラリ・端末）を開いたままログアウト
   // した場合（未ログインで /library 等を直接開いた場合も含む）はアクティブタブを
   // 「変換」へ戻し、URL も揃える。ready を待つのは、セッション復元中（/api/me
   // 応答前）にログイン済みユーザーの深いリンクを / へ書き換えないため。
+  // ファームウェア機能（AUTH_REQUIRED_TABS に含まれない）は未ログインでも
+  // そのまま表示する（実装仕様書 §4.3, §12.4）。
   $effect(() => {
-    if (authStore.ready && !authStore.account && tab !== "convert") {
+    if (authStore.ready && !authStore.account && AUTH_REQUIRED_TABS.has(tab)) {
       tab = "convert";
       history.replaceState(null, "", TAB_TO_PATH.convert + location.search + location.hash);
     }
@@ -94,23 +111,24 @@
 
 <main>
   <Header />
-  {#if authStore.account}
-    <div class="tabs" role="tablist">
-      <button type="button" role="tab" aria-selected={tab === "convert"} onclick={() => selectTab("convert")}>{t("tab_convert")}</button>
+  <div class="tabs" role="tablist">
+    <button type="button" role="tab" aria-selected={tab === "convert"} onclick={() => selectTab("convert")}>{t("tab_convert")}</button>
+    {#if authStore.account}
       <button type="button" role="tab" aria-selected={tab === "library"} onclick={() => selectTab("library")}>{t("tab_library")}</button>
       <button type="button" role="tab" aria-selected={tab === "devices"} onclick={() => selectTab("devices")}>{t("tab_devices")}</button>
-    </div>
-  {:else}
-    <div class="tabs-spacer"></div>
-  {/if}
+    {/if}
+    <button type="button" role="tab" aria-selected={tab === "flasher"} onclick={() => selectTab("flasher")}>{t("tab_flasher")}</button>
+  </div>
   {#if tab === "convert"}
     <ConvertForm />
     <CurrentJob />
     <History />
   {:else if tab === "library"}
     <Library />
-  {:else}
+  {:else if tab === "devices"}
     <Devices />
+  {:else if tab === "flasher"}
+    <Flasher />
   {/if}
 </main>
 <AozoraDialog />
@@ -123,11 +141,10 @@
 
 <style>
   main { max-width: 44rem; margin: 0 auto; padding: 28px 20px 48px; }
-  .tabs { display: flex; gap: 4px; margin: 18px 0 4px; border-bottom: 1px solid var(--line); }
-  /* タブ非表示時もコンテンツ開始位置が不自然に詰まらないよう、タブバーの
-     上マージン相当の余白を確保する（空 div のマージン相殺を避け高さで指定）。 */
-  .tabs-spacer { height: 18px; }
+  /* モバイル幅で全タブが収まらない場合は横スクロールを許可する（実装仕様書 §5.2, §12.7）。 */
+  .tabs { display: flex; gap: 4px; margin: 18px 0 4px; border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: thin; }
   .tabs button {
+    flex: 0 0 auto; white-space: nowrap;
     padding: 10px 16px; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
     border: 0; border-bottom: 2px solid transparent; background: none; color: var(--muted);
   }

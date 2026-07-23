@@ -24,6 +24,12 @@
   "dependencies": {
     "@simplewebauthn/browser": "^13.3.0",
     "encoding-japanese": "2.2.0",
+    "esp-web-tools": "^10.4.0",
     "pdfjs-dist": "^6.1.200"
+  },
+  "overrides": {
+    "esp-web-tools": {
+      "@material/web": "2.4.1"
+    }
   }
 }

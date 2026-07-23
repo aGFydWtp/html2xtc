@@ -194,6 +194,35 @@ export interface Messages {
   tab_convert: string;
   tab_library: string;
   tab_devices: string;
+  tab_flasher: string;
+
+  // --- CrossPoint JP ファームウェア更新（実装仕様書 §13） ---------------------
+  flasher_title: string;
+  flasher_intro: string;
+  flasher_channel_heading: string;
+  flasher_dev: string;
+  flasher_dev_description: string;
+  flasher_stable: string;
+  flasher_stable_description: string;
+  flasher_version: (version: string) => string;
+  flasher_loading: string;
+  flasher_not_released: string;
+  flasher_manifest_failed: string;
+  flasher_manifest_invalid: string;
+  flasher_install: string;
+  flasher_unsupported: string;
+  flasher_https_required: string;
+  flasher_instructions_heading: string;
+  flasher_instruction_connect: string;
+  flasher_instruction_select: string;
+  flasher_instruction_install: string;
+  flasher_instruction_port: string;
+  flasher_instruction_wait: string;
+  flasher_warning_heading: string;
+  flasher_warning_browser: string;
+  flasher_warning_erase: string;
+  flasher_warning_disconnect: string;
+  flasher_warning_restart: string;
 
   account_login: string;
   account_logout: string;
@@ -515,6 +544,34 @@ export const I18N: Record<Lang, Messages> = {
     tab_convert: "変換",
     tab_library: "ライブラリ",
     tab_devices: "端末",
+    tab_flasher: "ファームウェア",
+
+    flasher_title: "CrossPoint JP",
+    flasher_intro: "ブラウザからXteink X3へファームウェアをインストールできます。",
+    flasher_channel_heading: "ファームウェアの選択",
+    flasher_dev: "開発版",
+    flasher_dev_description: "最新の変更を含む開発ビルドです。",
+    flasher_stable: "安定版",
+    flasher_stable_description: "テスト済みの安定リリースです。",
+    flasher_version: (version) => `バージョン: ${version}`,
+    flasher_loading: "バージョンを確認しています…",
+    flasher_not_released: "まだリリースされていません。",
+    flasher_manifest_failed: "ファームウェア情報を取得できませんでした。",
+    flasher_manifest_invalid: "ファームウェア情報の形式が正しくありません。",
+    flasher_install: "Xteinkへインストール",
+    flasher_unsupported: "Web Serial APIに対応したChromeまたはEdgeをご利用ください。",
+    flasher_https_required: "ファームウェアの書き込みにはHTTPS接続が必要です。",
+    flasher_instructions_heading: "使い方",
+    flasher_instruction_connect: "Xteink X3をUSB-Cケーブルでパソコンに接続します。",
+    flasher_instruction_select: "開発版または安定版を選択します。",
+    flasher_instruction_install: "「Xteinkへインストール」を押します。",
+    flasher_instruction_port: "シリアルポート選択画面でXteinkを選択します。",
+    flasher_instruction_wait: "完了するまでケーブルを抜かずに待ちます。",
+    flasher_warning_heading: "注意事項",
+    flasher_warning_browser: "ChromeまたはEdgeを使用してください。",
+    flasher_warning_erase: "初回書き込みでは既存データが消去される可能性があります。",
+    flasher_warning_disconnect: "書き込み中はUSBケーブルを抜かないでください。",
+    flasher_warning_restart: "書き込み後、端末は自動的に再起動します。",
 
     account_login: "ログイン",
     account_logout: "ログアウト",
@@ -831,6 +888,34 @@ export const I18N: Record<Lang, Messages> = {
     tab_convert: "Convert",
     tab_library: "Library",
     tab_devices: "Devices",
+    tab_flasher: "Firmware",
+
+    flasher_title: "CrossPoint JP",
+    flasher_intro: "Install firmware on an Xteink X3 directly from your browser.",
+    flasher_channel_heading: "Choose firmware",
+    flasher_dev: "Development",
+    flasher_dev_description: "The latest development build with recent changes.",
+    flasher_stable: "Stable",
+    flasher_stable_description: "A tested stable release.",
+    flasher_version: (version) => `Version: ${version}`,
+    flasher_loading: "Checking the firmware version…",
+    flasher_not_released: "No release is available yet.",
+    flasher_manifest_failed: "Could not load firmware information.",
+    flasher_manifest_invalid: "The firmware information is invalid.",
+    flasher_install: "Install on Xteink",
+    flasher_unsupported: "Use a version of Chrome or Edge that supports the Web Serial API.",
+    flasher_https_required: "Firmware installation requires a secure HTTPS connection.",
+    flasher_instructions_heading: "Instructions",
+    flasher_instruction_connect: "Connect the Xteink X3 to your computer with a USB-C cable.",
+    flasher_instruction_select: "Choose the development or stable firmware.",
+    flasher_instruction_install: "Select “Install on Xteink”.",
+    flasher_instruction_port: "Choose the Xteink device in the serial port dialog.",
+    flasher_instruction_wait: "Keep the cable connected until installation completes.",
+    flasher_warning_heading: "Important",
+    flasher_warning_browser: "Use Chrome or Edge.",
+    flasher_warning_erase: "The first installation may erase existing data.",
+    flasher_warning_disconnect: "Do not disconnect the USB cable during installation.",
+    flasher_warning_restart: "The device restarts automatically after installation.",
 
     account_login: "Log in",
     account_logout: "Log out",

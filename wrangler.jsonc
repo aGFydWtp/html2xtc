@@ -27,10 +27,16 @@
 		// REGISTRATION_INVITE_SECRET stay Wrangler secrets, never vars.
 		"WEBAUTHN_RP_ID": "xtc.hr20k.com",
 		"WEBAUTHN_ORIGIN": "https://xtc.hr20k.com",
-		// 登録モード仕様 Phase 1 (src/auth/registration-mode.ts): "invite" |
+		// 登録モード仕様 (src/auth/registration-mode.ts): "invite" |
 		// "open" | "closed". 不正値/未設定は "invite" にフォールバックするので
-		// このキー自体が省略されても動作は変わらない。
-		"REGISTRATION_MODE": "invite",
+		// このキー自体が省略されても安全側に倒れる。
+		// 2026-07-23: 一般公開（公開ベータ）を開始したため "open" へ切替。
+		// 新規登録には Turnstile 検証と利用規約・プライバシーへの同意
+		// (TERMS_VERSION) を必須とし、総アカウント数 (MAX_TOTAL_ACCOUNTS)・
+		// 日次/IP 別登録数・サービス全体の容量で受付を絞る。
+		// 登録を止めたいときは "closed"（既存ユーザーの利用は継続）、
+		// 招待制へ戻すときは "invite" にする。いずれも DB 移行は不要。
+		"REGISTRATION_MODE": "open",
 		// アカウント単位クォータ既定値（src/quotas.ts）。文字列で入る点に注意
 		// — resolver側でparseInt+NaNフォールバックする。
 		"MAX_LIBRARY_ITEMS_PER_ACCOUNT": "100",

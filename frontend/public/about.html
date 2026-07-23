@@ -121,9 +121,12 @@
       <li data-i18n="terms_5">違法に公開されたコンテンツであることを知りながら変換すること、その他第三者の著作権その他の権利を侵害する利用を禁止します。</li>
       <li data-i18n="terms_6">第三者サイトに過度な負荷を与える利用、大量または自動的な変換、本サービスの動作を妨害する行為を禁止します。</li>
       <li data-i18n="terms_7">送信された URL および変換処理に関するジョブ情報は、サーバー上に約 24 時間保存された後、自動的に削除されます。生成された XTC ファイルも約 24 時間後に削除対象となり、削除処理に時間を要する場合があります。中間 PDF は変換処理後速やかに削除され、利用者には提供されません。</li>
-      <li data-i18n="terms_8">本サービスは現状有姿かつ無保証で提供され、予告なく内容の変更、利用制限または提供停止を行うことがあります。</li>
-      <li data-i18n="terms_9">本規約に違反する利用が確認された場合、成果物の削除や利用制限を行うことがあります。</li>
+      <li data-i18n="terms_8">本サービスは現状有姿かつ無保証で提供されるベータ版であり、予告なく内容の変更、保存されたデータの削除、利用制限またはアカウント機能を含む提供の停止を行うことがあります。</li>
+      <li data-i18n="terms_9">本規約に違反する利用が確認された場合、生成物の削除や利用制限に加え、アカウントの利用停止または削除を行うことがあります。</li>
       <li data-i18n="terms_10">アップロードされた PDF ファイルおよびその変換設定は、変換処理の完了後に速やかに削除され、利用者には提供されません。生成された XTC ファイルの保存期間は他の変換と同じく約 24 時間です。</li>
+      <li data-i18n="terms_11">本サービスはパスキーのみでログインします。メールアドレスなど他の手段によるログインはできないため、登録したパスキーをすべて紛失すると、アカウントおよびライブラリに二度とアクセスできなくなり、運営者側でも復旧できません。登録後は、必ずもう1本のパスキーを別の端末にも追加登録してください。</li>
+      <li data-i18n="terms_12">アカウント機能には次の上限があります。ライブラリに保存できる項目数は1アカウントあたり最大100件、ライブラリの合計サイズは1アカウントあたり最大1GB（1,073,741,824バイト）、ペアリングできる Xteink 端末数は1アカウントあたり最大5台、登録できるパスキー数は1アカウントあたり最大5本、同時に有効なセッション数は1アカウントあたり最大10件です。上限に達した場合、それ以上の保存や登録はできません。</li>
+      <li data-i18n="terms_13">新規アカウント登録の受付数には上限があります（公開ベータ期間中の受け入れ枠は500アカウントです）。上限に達した場合、新規登録を一時的に停止することがあります。</li>
     </ul>
   </section>
 
@@ -134,7 +137,21 @@
 
   <section id="privacy">
     <h2 data-i18n="privacy_h">プライバシー</h2>
-    <p data-i18n="privacy_p">本サービス独自のアカウント登録や、広告・マーケティング目的のアクセス解析は行っていません。変換履歴は利用者のブラウザ内にのみ保存されます。ただし、セキュリティ、障害調査および変換処理のため、Cloudflare Workers、Workflows、R2 等にアクセス情報や処理情報が一時的に記録される場合があります。また、フォントの配信に Google Fonts を利用しているため、ページ表示時にブラウザから Google のサーバーへフォント取得のリクエストが送信されます。</p>
+    <p data-i18n="privacy_p">アカウント登録は任意です。登録しなくても URL や PDF・TXT ファイルの変換は利用できます。本サービスは広告・マーケティング目的のアクセス解析を行っていません。アカウントを作成していない場合、変換履歴は利用者のブラウザ内にのみ保存されます。</p>
+    <p data-i18n="privacy_account_h">パスキー（WebAuthn）でアカウント登録をすると、変換したページを『ライブラリ』に保存し、複数の Xteink X3 端末で共有できます。アカウント登録にメールアドレスやパスワードは必要とせず、保存する情報は次のとおりです。</p>
+    <ul>
+      <li data-i18n="privacy_account_1">表示名（アカウント作成時に入力した名前。メールアドレスやパスワードは保存しません）</li>
+      <li data-i18n="privacy_account_2">パスキーの公開鍵情報（署名検証に使う公開鍵のみを保存します。秘密鍵は常に利用者の端末内にとどまり、本サービスに送信されることはありません）</li>
+      <li data-i18n="privacy_account_3">セッション情報（ログイン状態を保持する Cookie。有効期限は既定で30日、同時に有効なセッション数は1アカウントあたり最大10件です）</li>
+      <li data-i18n="privacy_account_4">ペアリングした Xteink 端末の情報（端末名、ペアリング状態、その端末に配信するライブラリ項目の一覧）</li>
+      <li data-i18n="privacy_account_5">ライブラリのメタデータ（タイトル・著者名などの書誌情報）</li>
+      <li data-i18n="privacy_account_6">変換済みの XTC ファイル本体</li>
+    </ul>
+    <p data-i18n="privacy_retention_p">セッションは有効期限が切れると自動的に削除され、ログアウトなどで無効化されたセッションも一定期間後に削除されます。ライブラリのメタデータおよび XTC ファイル本体は、利用者が個別に削除するか、アカウントを削除するまで保持されます。新規登録時の不正防止のために一時的に記録する送信元 IP アドレスは、平文では保存されず復元できない形にハッシュ化したうえで保存され、7日以内に自動的に削除されます。</p>
+    <p data-i18n="privacy_deletion_p">アカウントは、アカウント画面から確認のため「DELETE」と入力することでいつでも削除できます。削除すると、保存されていたライブラリのメタデータ（データベース）と XTC ファイル本体（ストレージ）を含め、アカウントに関する情報が削除されます。この操作は取り消せません。</p>
+    <p data-i18n="privacy_infra_p">また、セキュリティ、障害調査および変換処理のため、Cloudflare Workers、Workflows、R2、D1 等にアクセス情報や処理情報が一時的に記録される場合があります。</p>
+    <p data-i18n="privacy_turnstile_p">新規アカウント登録には Cloudflare Turnstile（ボット対策）を利用しています。登録操作を行うと、ボット判定のためにブラウザから Cloudflare のサーバーへ通信が送信され、Cloudflare 側での処理を経ます。</p>
+    <p data-i18n="privacy_fonts_p">フォントの配信に Google Fonts を利用しているため、ページ表示時にブラウザから Google のサーバーへフォント取得のリクエストが送信されます。</p>
   </section>
 
   <section>
@@ -187,14 +204,29 @@ const I18N = {
     terms_5: "違法に公開されたコンテンツであることを知りながら変換すること、その他第三者の著作権その他の権利を侵害する利用を禁止します。",
     terms_6: "第三者サイトに過度な負荷を与える利用、大量または自動的な変換、本サービスの動作を妨害する行為を禁止します。",
     terms_7: "送信された URL および変換処理に関するジョブ情報は、サーバー上に約 24 時間保存された後、自動的に削除されます。生成された XTC ファイルも約 24 時間後に削除対象となり、削除処理に時間を要する場合があります。中間 PDF は変換処理後速やかに削除され、利用者には提供されません。",
-    terms_8: "本サービスは現状有姿かつ無保証で提供され、予告なく内容の変更、利用制限または提供停止を行うことがあります。",
-    terms_9: "本規約に違反する利用が確認された場合、成果物の削除や利用制限を行うことがあります。",
+    terms_8: "本サービスは現状有姿かつ無保証で提供されるベータ版であり、予告なく内容の変更、保存されたデータの削除、利用制限またはアカウント機能を含む提供の停止を行うことがあります。",
+    terms_9: "本規約に違反する利用が確認された場合、生成物の削除や利用制限に加え、アカウントの利用停止または削除を行うことがあります。",
     terms_10: "アップロードされた PDF ファイルおよびその変換設定は、変換処理の完了後に速やかに削除され、利用者には提供されません。生成された XTC ファイルの保存期間は他の変換と同じく約 24 時間です。",
+    terms_11: "本サービスはパスキーのみでログインします。メールアドレスなど他の手段によるログインはできないため、登録したパスキーをすべて紛失すると、アカウントおよびライブラリに二度とアクセスできなくなり、運営者側でも復旧できません。登録後は、必ずもう1本のパスキーを別の端末にも追加登録してください。",
+    terms_12: "アカウント機能には次の上限があります。ライブラリに保存できる項目数は1アカウントあたり最大100件、ライブラリの合計サイズは1アカウントあたり最大1GB（1,073,741,824バイト）、ペアリングできる Xteink 端末数は1アカウントあたり最大5台、登録できるパスキー数は1アカウントあたり最大5本、同時に有効なセッション数は1アカウントあたり最大10件です。上限に達した場合、それ以上の保存や登録はできません。",
+    terms_13: "新規アカウント登録の受付数には上限があります（公開ベータ期間中の受け入れ枠は500アカウントです）。上限に達した場合、新規登録を一時的に停止することがあります。",
     crawler_h: "クローラー情報",
     crawler_p1: "本サービスは変換時に、対象ページを User-Agent ",
     crawler_p2: " として取得します。アクセスされたくないサイト管理者の方は、この UA を拒否することでブロックできます。",
     privacy_h: "プライバシー",
-    privacy_p: "本サービス独自のアカウント登録や、広告・マーケティング目的のアクセス解析は行っていません。変換履歴は利用者のブラウザ内にのみ保存されます。ただし、セキュリティ、障害調査および変換処理のため、Cloudflare Workers、Workflows、R2 等にアクセス情報や処理情報が一時的に記録される場合があります。また、フォントの配信に Google Fonts を利用しているため、ページ表示時にブラウザから Google のサーバーへフォント取得のリクエストが送信されます。",
+    privacy_p: "アカウント登録は任意です。登録しなくても URL や PDF・TXT ファイルの変換は利用できます。本サービスは広告・マーケティング目的のアクセス解析を行っていません。アカウントを作成していない場合、変換履歴は利用者のブラウザ内にのみ保存されます。",
+    privacy_account_h: "パスキー（WebAuthn）でアカウント登録をすると、変換したページを『ライブラリ』に保存し、複数の Xteink X3 端末で共有できます。アカウント登録にメールアドレスやパスワードは必要とせず、保存する情報は次のとおりです。",
+    privacy_account_1: "表示名（アカウント作成時に入力した名前。メールアドレスやパスワードは保存しません）",
+    privacy_account_2: "パスキーの公開鍵情報（署名検証に使う公開鍵のみを保存します。秘密鍵は常に利用者の端末内にとどまり、本サービスに送信されることはありません）",
+    privacy_account_3: "セッション情報（ログイン状態を保持する Cookie。有効期限は既定で30日、同時に有効なセッション数は1アカウントあたり最大10件です）",
+    privacy_account_4: "ペアリングした Xteink 端末の情報（端末名、ペアリング状態、その端末に配信するライブラリ項目の一覧）",
+    privacy_account_5: "ライブラリのメタデータ（タイトル・著者名などの書誌情報）",
+    privacy_account_6: "変換済みの XTC ファイル本体",
+    privacy_retention_p: "セッションは有効期限が切れると自動的に削除され、ログアウトなどで無効化されたセッションも一定期間後に削除されます。ライブラリのメタデータおよび XTC ファイル本体は、利用者が個別に削除するか、アカウントを削除するまで保持されます。新規登録時の不正防止のために一時的に記録する送信元 IP アドレスは、平文では保存されず復元できない形にハッシュ化したうえで保存され、7日以内に自動的に削除されます。",
+    privacy_deletion_p: "アカウントは、アカウント画面から確認のため「DELETE」と入力することでいつでも削除できます。削除すると、保存されていたライブラリのメタデータ（データベース）と XTC ファイル本体（ストレージ）を含め、アカウントに関する情報が削除されます。この操作は取り消せません。",
+    privacy_infra_p: "また、セキュリティ、障害調査および変換処理のため、Cloudflare Workers、Workflows、R2、D1 等にアクセス情報や処理情報が一時的に記録される場合があります。",
+    privacy_turnstile_p: "新規アカウント登録には Cloudflare Turnstile（ボット対策）を利用しています。登録操作を行うと、ボット判定のためにブラウザから Cloudflare のサーバーへ通信が送信され、Cloudflare 側での処理を経ます。",
+    privacy_fonts_p: "フォントの配信に Google Fonts を利用しているため、ページ表示時にブラウザから Google のサーバーへフォント取得のリクエストが送信されます。",
     contact_h: "連絡先",
     contact_p1: "ご意見・削除依頼などは ",
     contact_p2: " までご連絡ください。",
@@ -235,14 +267,29 @@ const I18N = {
     terms_5: "Converting content you know to have been published unlawfully, and any other use that infringes third-party copyrights or other rights, is prohibited.",
     terms_6: "Placing excessive load on third-party sites, bulk or automated conversion, and interfering with the operation of this service are prohibited.",
     terms_7: "Submitted URLs and job data for the conversion are kept on the server for about 24 hours and then deleted automatically. Generated XTC files also become subject to deletion after about 24 hours (the deletion itself may take additional time). Intermediate PDFs are deleted promptly after conversion and are not provided to users.",
-    terms_8: "This service is provided as-is and without warranty; its content may be changed, restricted or discontinued without notice.",
-    terms_9: "If use in violation of these terms is found, generated files may be deleted and use may be restricted.",
+    terms_8: "This service is a beta offering provided as-is and without warranty; its content may be changed, stored data may be deleted, and the service — including the account features — may be restricted or discontinued, all without notice.",
+    terms_9: "If use in violation of these terms is found, in addition to deleting generated files and restricting use, an account may be suspended or deleted.",
     terms_10: "Uploaded PDF files and their conversion settings are deleted promptly after conversion finishes and are not provided to users. Generated XTC files are kept for about 24 hours, the same as other conversions.",
+    terms_11: "This service signs you in with passkeys only. Since there is no alternative sign-in method such as email, if you lose every passkey you have registered, you permanently lose access to your account and library, and the operator cannot restore it either. After signing up, please register a second passkey on another device as well.",
+    terms_12: "The account features have the following limits. Up to 100 items may be saved in the library per account; the library's total size is capped at 1GB (1,073,741,824 bytes) per account; up to 5 Xteink devices may be paired per account; up to 5 passkeys may be registered per account; and up to 10 sessions may be active at the same time per account. Once a limit is reached, no further saving or registration is possible.",
+    terms_13: "There is a limit on the number of new accounts accepted (the public beta capacity is 500 accounts). Once this limit is reached, new registrations may be temporarily suspended.",
     crawler_h: "Crawler info",
     crawler_p1: "When converting, this service fetches the target page with the User-Agent ",
     crawler_p2: ". Site administrators who do not want to be accessed can block it by denying this UA.",
     privacy_h: "Privacy",
-    privacy_p: "This service has no accounts of its own and does no advertising or marketing analytics. Conversion history is stored only in your browser. However, for security, troubleshooting and conversion processing, access and processing information may be temporarily recorded by Cloudflare Workers, Workflows, R2 and related services. Also, fonts are served from Google Fonts, so your browser sends font requests to Google's servers when the page loads.",
+    privacy_p: "Account registration is optional. You can use URL, PDF and TXT conversion without registering. This service does not perform advertising or marketing analytics. If you have not created an account, your conversion history is stored only in your browser.",
+    privacy_account_h: "If you register an account using a passkey (WebAuthn), you can save converted pages to your “library” and share them across multiple Xteink X3 devices. Account registration does not require an email address or password. The information stored is as follows.",
+    privacy_account_1: "Display name (the name you enter when creating the account; email addresses and passwords are not stored)",
+    privacy_account_2: "Passkey public key information (only the public key used for signature verification is stored; the private key always stays on your device and is never sent to this service)",
+    privacy_account_3: "Session information (a cookie that keeps you signed in; the default expiry is 30 days, and up to 10 sessions may be active at the same time per account)",
+    privacy_account_4: "Information about paired Xteink devices (device name, pairing status, and the list of library items queued for delivery to that device)",
+    privacy_account_5: "Library metadata (bibliographic information such as title and author)",
+    privacy_account_6: "The converted XTC file itself",
+    privacy_retention_p: "Sessions are deleted automatically once they expire, and sessions invalidated by sign-out or similar are deleted after a retention period. Library metadata and the XTC files themselves are kept until you delete them individually or delete your account. The source IP address temporarily recorded to prevent abuse during new registrations is never stored in plain text — it is stored only in an irreversibly hashed form, and is automatically deleted within 7 days.",
+    privacy_deletion_p: "You can delete your account at any time from the account screen by typing “DELETE” to confirm. Deleting your account removes all information associated with it, including the stored library metadata (database) and the XTC files themselves (storage). This action cannot be undone.",
+    privacy_infra_p: "In addition, for security, troubleshooting and conversion processing, access and processing information may be temporarily recorded by Cloudflare Workers, Workflows, R2, D1 and related services.",
+    privacy_turnstile_p: "New account registration uses Cloudflare Turnstile (bot protection). When you perform a registration action, your browser sends a request to Cloudflare's servers for bot verification, which is processed by Cloudflare.",
+    privacy_fonts_p: "Fonts are served from Google Fonts, so your browser sends font requests to Google's servers when the page loads.",
     contact_h: "Contact",
     contact_p1: "For feedback, removal requests and other inquiries, contact ",
     contact_p2: ".",

@@ -52,7 +52,7 @@
 		"MAX_TOTAL_LIBRARY_BYTES": "53687091200",
 		"TOTAL_STORAGE_WARNING_PERCENT": "80",
 		"TOTAL_STORAGE_STOP_PERCENT": "95",
-		"TERMS_VERSION": "2026-07-01"
+		"TERMS_VERSION": "2026-07-23"
 		// 登録モード仕様 Phase 3 (src/auth/registration-mode.ts の
 		// resolveRegistrationClosedReason, src/feature-flags.ts): 以下は
 		// 意図的にキー自体を追加しない — 未設定は常に許可側(現行動作)へ

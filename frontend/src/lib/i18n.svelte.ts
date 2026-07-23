@@ -339,6 +339,8 @@ export interface Messages {
 
   devices_load_failed: string;
   devices_empty: string;
+  devices_empty_hint: string;
+  devices_empty_flash: string;
   devices_rename: string;
   devices_edit_library: string;
   devices_revoke: string;
@@ -685,6 +687,8 @@ export const I18N: Record<Lang, Messages> = {
 
     devices_load_failed: "端末一覧の取得に失敗しました。",
     devices_empty: "ペアリング済みの端末はまだありません。",
+    devices_empty_hint: "端末をペアリングするには、専用ファームウェア（CrossPoint JP）のインストールが必要です。",
+    devices_empty_flash: "ファームウェアをインストール",
     devices_rename: "名前を変更",
     devices_edit_library: "配信リストを編集",
     devices_revoke: "解除",
@@ -1031,6 +1035,8 @@ export const I18N: Record<Lang, Messages> = {
 
     devices_load_failed: "Failed to load your devices.",
     devices_empty: "No paired devices yet.",
+    devices_empty_hint: "Pairing a device requires installing the dedicated CrossPoint JP firmware first.",
+    devices_empty_flash: "Install firmware",
     devices_rename: "Rename",
     devices_edit_library: "Edit reading list",
     devices_revoke: "Unpair",

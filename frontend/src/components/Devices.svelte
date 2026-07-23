@@ -44,6 +44,14 @@
   function lastSeenText(device: Device): string {
     return device.lastSeenAt ? formatDate(device.lastSeenAt) : t("devices_last_seen_never");
   }
+
+  // App.svelte はタブ状態を自身の onMount 内 popstate リスナーで管理しており、
+  // Devices.svelte から直接参照する手段がないため、既存のルーティング規約
+  // （history.pushState + popstate）に沿って /flasher への遷移を発火する。
+  function goToFlasher(): void {
+    history.pushState(null, "", "/flasher" + location.search + location.hash);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }
 </script>
 
 <section class="devices">
@@ -57,7 +65,11 @@
   {:else if devicesStore.loadState === "fail"}
     <p class="error-text">{t("devices_load_failed")}</p>
   {:else if devicesStore.devices.length === 0}
-    <p class="note">{t("devices_empty")}</p>
+    <div class="devices-empty">
+      <p class="note">{t("devices_empty")}</p>
+      <p class="note">{t("devices_empty_hint")}</p>
+      <button type="button" class="secondary" onclick={goToFlasher}>{t("devices_empty_flash")}</button>
+    </div>
   {:else}
     <ul class="items">
       {#each devicesStore.devices as device (device.id)}
@@ -107,7 +119,7 @@
 
 <style>
   section.devices { padding: 0 0 24px; }
-  .login-gate { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; }
+  .login-gate, .devices-empty { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; }
   .note { color: var(--muted); font-size: 14px; }
   ul.items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
   ul.items li.device-row { padding: 14px 0; display: flex; align-items: center; gap: 14px; }

@@ -56,7 +56,7 @@ import type { WorkflowEvent, WorkflowStep } from "cloudflare:workers";
 import { convertInContainer } from "../src/container";
 import { prepareRenderInput } from "../src/extract";
 import type { ExtractedArticle } from "../src/extract";
-import { intermediatePdfKey, outputXtcKey } from "../src/jobs";
+import { articleHtmlKey, intermediatePdfKey, outputXtcKey } from "../src/jobs";
 import { renderPdf, renderPdfFromHtml } from "../src/pdf";
 import { buildPrintHtml } from "../src/printhtml";
 import { AOZORA_DOCUMENT_CSS } from "../src/aozora";
@@ -107,9 +107,16 @@ async function toBytes(
 class FakeR2Bucket {
   objects = new Map<string, Uint8Array>();
   deletedKeys: string[] = [];
+  /** Keys whose put() is accepted but never actually stored — simulates an
+   * R2 object expiring mid-job (extract-content wrote it, but by the time
+   * render-pdf reads it back, it's gone). */
+  neverPersist = new Set<string>();
 
   async put(key: string, value: string | Uint8Array | ArrayBuffer | ReadableStream<Uint8Array>): Promise<void> {
-    this.objects.set(key, await toBytes(value));
+    const bytes = await toBytes(value);
+    if (!this.neverPersist.has(key)) {
+      this.objects.set(key, bytes);
+    }
   }
 
   async get(key: string) {
@@ -343,6 +350,31 @@ describe("Aozora timeout fallback: ineligible cases fall through to existing beh
     expect(result.xtcKey).toBe(outputXtcKey(JOB_ID));
     expect(mockedPrepareRenderInput).not.toHaveBeenCalled();
     expect(step.callCounts["prepare-aozora-fallback"]).toBeUndefined();
+  });
+
+  it("does not trigger when the article HTML expired mid-job — this attempt degrades to a full-page render, not extract mode", async () => {
+    const bucket = new FakeR2Bucket();
+    // extract-content still marks the job as isAozoraOrigin=true (the
+    // dedicated extractor DID succeed) and writes articleHtmlKey — but the
+    // object is gone by the time render-pdf tries to read it back, so this
+    // attempt's own `mode` degrades to "full" (renderPdf, not
+    // renderPdfFromHtml) and there is no article HTML to split.
+    bucket.neverPersist.add(articleHtmlKey(JOB_ID));
+    const step = new FakeWorkflowStep();
+    mockedPrepareRenderInput.mockResolvedValue({
+      kind: "html",
+      html: aozoraArticleHtml(),
+      fontCss: null,
+      origin: "aozora",
+    });
+    mockedRenderPdf.mockImplementation(async () => browserRunErrorResponse(6002));
+
+    await expect(
+      runUrl(fakeEnv(bucket, { AOZORA_TIMEOUT_FALLBACK_ENABLED: "true" }), step, AOZORA_URL),
+    ).rejects.toThrow("PDF generation timed out; retrying may succeed");
+    expect(step.callCounts["render-pdf"]).toBe(3); // limit 2 => 3 attempts, unchanged
+    expect(step.callCounts["prepare-aozora-fallback"]).toBeUndefined();
+    expect(mockedRenderPdfFromHtml).not.toHaveBeenCalled();
   });
 });
 

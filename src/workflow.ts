@@ -441,16 +441,22 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
         });
         // Aozora timeout-fallback eligibility (spec §8/§9): only a document
         // whose article HTML came from the DEDICATED Aozora extractor
-        // (isAozoraOrigin), only on this exact machine-readable code, only
-        // when the flag is on. Every other failure (network/5xx, non-6002,
-        // 6002 on a non-Aozora-origin document, or 6002 with the flag off)
-        // falls through to the unchanged throw below and keeps using
-        // render-pdf's own retry budget exactly as before this feature
+        // (isAozoraOrigin), only when THIS attempt actually rendered that
+        // article HTML (mode === "extract" — isAozoraOrigin alone is not
+        // enough: if the R2 object expired mid-job, the `article === null`
+        // branch above degrades this specific attempt to mode "full",
+        // rendering the plain URL instead, and there is no article HTML left
+        // to split), only on this exact machine-readable code, only when the
+        // flag is on. Every other failure (network/5xx, non-6002, 6002 on a
+        // non-Aozora-origin or degraded-to-full-render attempt, or 6002 with
+        // the flag off) falls through to the unchanged throw below and keeps
+        // using render-pdf's own retry budget exactly as before this feature
         // existed.
         const aozoraFallbackEnabled = resolveAozoraTimeoutFallbackEnabled(this.env);
         const isFallbackTimeout =
           !response.ok &&
           isAozoraOrigin &&
+          mode === "extract" &&
           aozoraFallbackEnabled &&
           browserRunErrorCode === BROWSER_RUN_TIMEOUT_CODE;
         if (articleHtmlForAozoraLog !== null) {
@@ -861,18 +867,21 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
           // Deterministic for this exact set of chunk PDFs.
           throw new NonRetryableError(MERGE_ERROR_TOO_LARGE);
         }
-        // For the merge log only (spec §21's "inputPages") — mergeChunkPdfs
-        // below re-validates every chunk's own page count internally as
-        // part of its own page-mismatch check.
-        const inputPageCounts = await Promise.all(
-          chunkBytes.map((bytes) => countPdfPages(bytes).catch(() => 0)),
-        );
-        const inputPages = inputPageCounts.reduce((sum, n) => sum + n, 0);
 
         const mergeStart = Date.now();
+        // mergeChunkPdfs parses every chunk (and its own merged output)
+        // exactly once and returns every page count this step needs —
+        // deliberately NOT re-parsed here via countPdfPages: an unreadable
+        // merged output already fails INSIDE mergeChunkPdfs (thrown as
+        // MERGE_ERROR_FAILED/MERGE_ERROR_PAGE_MISMATCH below), so there is
+        // no "outputPages couldn't be determined" case left to paper over
+        // with a `.catch(() => -1)` that would silently defeat the
+        // MAX_FALLBACK_MERGE_PAGES gate below.
         let merged: Uint8Array;
+        let inputPageCounts: number[];
+        let outputPages: number;
         try {
-          merged = await mergeChunkPdfs(chunkBytes);
+          ({ bytes: merged, inputPageCounts, outputPages } = await mergeChunkPdfs(chunkBytes));
         } catch (error) {
           // mergeChunkPdfs only ever throws one of the fixed spec §19
           // messages (MERGE_ERROR_FAILED / MERGE_ERROR_PAGE_MISMATCH) —
@@ -881,8 +890,8 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
           throw new NonRetryableError(message);
         }
         const elapsedMs = Date.now() - mergeStart;
+        const inputPages = inputPageCounts.reduce((sum, n) => sum + n, 0);
 
-        const outputPages = await countPdfPages(merged).catch(() => -1);
         if (outputPages > MAX_FALLBACK_MERGE_PAGES) {
           throw new NonRetryableError(MERGE_ERROR_TOO_LARGE);
         }

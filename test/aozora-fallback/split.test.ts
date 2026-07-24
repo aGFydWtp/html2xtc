@@ -3,7 +3,8 @@
 
 import { parseHTML } from "linkedom";
 import { describe, expect, it } from "vitest";
-import { splitContentIntoChunks } from "../../src/aozora-fallback/split";
+import { repairHeadingOrphans, splitContentIntoChunks } from "../../src/aozora-fallback/split";
+import type { Segment } from "../../src/aozora-fallback/split";
 
 /**
  * Synthetic Aozora-shaped fixture (no external fetch — spec §23/§27 "外部
@@ -140,5 +141,98 @@ describe("splitContentIntoChunks", () => {
     expect(() => splitContentIntoChunks("   \n\t  ")).toThrow(
       "the document could not be split safely",
     );
+  });
+});
+
+describe("repairHeadingOrphans", () => {
+  function textSegment(textLen: number): Segment {
+    return {
+      html: "x".repeat(textLen),
+      textLen,
+      isHeading: false,
+      isBr: false,
+      isBlock: false,
+      isPageBreak: false,
+      endsSentence: false,
+    };
+  }
+
+  function headingSegment(id: string): Segment {
+    return {
+      html: `<h4>${id}</h4>`,
+      textLen: 2,
+      isHeading: true,
+      isBr: false,
+      isBlock: false,
+      isPageBreak: false,
+      endsSentence: false,
+    };
+  }
+
+  // Regression test for a bug where the lower bound used while walking a
+  // later boundary back past an orphaned heading referenced the RAW
+  // (pre-repair) value of the boundary before it, instead of that
+  // boundary's own already-repaired result — so a second (or third)
+  // consecutive orphaned heading right after the first boundary's original
+  // position could never be walked back far enough, even though there was
+  // room to do so once the first boundary had already moved.
+  it("cascades the walk-back through consecutive headings that span more than one boundary", () => {
+    // index: 0=text 1=H1 2=H2 3=H3 4=text 5=text
+    const segments: Segment[] = [
+      textSegment(20),
+      headingSegment("H1"),
+      headingSegment("H2"),
+      headingSegment("H3"),
+      textSegment(30),
+      textSegment(10),
+    ];
+    // Raw boundaries as chosen (hypothetically) before repair: each one
+    // initially lands right after one of the three consecutive headings.
+    const rawBoundaries = [2, 3, 4];
+
+    const repaired = repairHeadingOrphans(segments, rawBoundaries);
+
+    // Correct (cascading) result: each boundary is walked back as far as
+    // the ALREADY-REPAIRED previous boundary allows, not just one step off
+    // its own raw position.
+    expect(repaired).toEqual([1, 2, 3]);
+
+    // The bug this guards against: with the stale (raw) lower bound, the
+    // second and third boundaries could never move at all, because
+    // `rawBoundaries[idx-1] + 1` already equalled their own raw value —
+    // this is exactly what the buggy `boundaries[idx - 1]` reference
+    // computed, so pin it down explicitly as the wrong answer.
+    const buggyLowerBoundResult = rawBoundaries.map((boundary, idx) => {
+      let cut = boundary;
+      const lowerBound = idx === 0 ? 1 : rawBoundaries[idx - 1] + 1;
+      while (cut > lowerBound && segments[cut - 1]?.isHeading === true) {
+        cut -= 1;
+      }
+      return cut;
+    });
+    expect(buggyLowerBoundResult).toEqual([1, 3, 4]);
+    expect(repaired).not.toEqual(buggyLowerBoundResult);
+
+    // No boundary ever regresses past the one before it (monotonic,
+    // non-empty chunks guaranteed) and never moves LATER than its raw input
+    // (only ever earlier or unchanged).
+    for (let i = 1; i < repaired.length; i++) {
+      expect(repaired[i]).toBeGreaterThan(repaired[i - 1]);
+    }
+    repaired.forEach((cut, i) => expect(cut).toBeLessThanOrEqual(rawBoundaries[i]));
+  });
+
+  it("never walks a boundary below the previous (already-repaired) boundary plus one", () => {
+    const segments: Segment[] = [
+      textSegment(5),
+      headingSegment("H1"),
+      headingSegment("H2"),
+      textSegment(40),
+    ];
+    const repaired = repairHeadingOrphans(segments, [2, 3]);
+    // segments[0] is the only non-heading content before the headings, so
+    // the first chunk can only ever contain that one segment — the second
+    // boundary must stop at 2 (right after H1), never below it.
+    expect(repaired).toEqual([1, 2]);
   });
 });

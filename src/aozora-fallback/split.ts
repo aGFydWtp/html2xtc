@@ -53,7 +53,13 @@ export interface DomChunk extends ContentMetrics {
   html: string;
 }
 
-interface Segment {
+// Exported (with repairHeadingOrphans below) solely so the cascading-repair
+// regression test can build a minimal fixture directly, without going
+// through the full text-target-driven chooseBoundaries — the scenario that
+// bug needs (several consecutive headings spanning more than one boundary)
+// is awkward to coerce reliably out of chooseBoundaries' balancing
+// heuristics, but trivial to hand-construct at the Segment level.
+export interface Segment {
   /** Serialized HTML for this segment, safe to concatenate directly into a chunk. */
   html: string;
   /** Unicode code points, whitespace stripped. */
@@ -237,15 +243,25 @@ function chooseBoundaries(segments: Segment[]): number[] {
  * heading as the very last segment of the chunk before it, push the cut
  * earlier so the heading opens the NEXT chunk instead — never later, so this
  * can never collide with a later boundary. */
-function repairHeadingOrphans(segments: Segment[], boundaries: number[]): number[] {
-  return boundaries.map((boundary, idx) => {
+export function repairHeadingOrphans(segments: Segment[], boundaries: number[]): number[] {
+  const repaired: number[] = [];
+  // previousCut tracks the ALREADY-REPAIRED boundary immediately before the
+  // one currently being adjusted (not the raw input array) — otherwise, when
+  // several consecutive headings span more than one original boundary, the
+  // lower bound for boundary[idx] would still be pinned to boundary[idx-1]'s
+  // PRE-repair value, stopping the walk-back one segment too early instead
+  // of letting it cascade across all of them.
+  let previousCut = 0;
+  for (const boundary of boundaries) {
     let cut = boundary;
-    const lowerBound = idx === 0 ? 1 : boundaries[idx - 1] + 1;
+    const lowerBound = previousCut + 1;
     while (cut > lowerBound && segments[cut - 1]?.isHeading === true) {
       cut -= 1;
     }
-    return cut;
-  });
+    repaired.push(cut);
+    previousCut = cut;
+  }
+  return repaired;
 }
 
 function assembleChunks(segments: Segment[], boundaries: number[]): DomChunk[] {

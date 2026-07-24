@@ -43,3 +43,21 @@ const DEFAULT_CONVERSION_MODE: ConversionMode = "enabled";
 export function resolveConversionMode(env: Pick<Env, "CONVERSION_MODE">): ConversionMode {
   return env.CONVERSION_MODE === "disabled" ? "disabled" : DEFAULT_CONVERSION_MODE;
 }
+
+// --- AOZORA_TIMEOUT_FALLBACK_ENABLED: "true" | 既定 false -------------------
+//
+// 極性が上の3フラグと逆であることに注意: LIBRARY_WRITE_MODE等は「未設定 = 現行
+// 動作を許可」だが、このフラグは「現行動作(=フォールバックしない)が既定」なので
+// 「未設定 = 無効(false)」が現行動作維持になる。本番で有効化するには
+// wrangler.jsonc の vars に明示的に "true" を書く必要がある(他の3フラグと違い、
+// キーを省略しても有効化されない)。
+
+/** "true" のときだけ、青空文庫URLの初回PDF生成がBrowser Runのタイムアウト
+ * (machine-readable code 6002) で失敗した場合に本文を4分割してリトライする
+ * (src/workflow.ts)。未設定・不正値は false — 4分割フォールバックなしの
+ * 現行動作を維持する。 */
+export function resolveAozoraTimeoutFallbackEnabled(
+  env: Pick<Env, "AOZORA_TIMEOUT_FALLBACK_ENABLED">,
+): boolean {
+  return env.AOZORA_TIMEOUT_FALLBACK_ENABLED === "true";
+}

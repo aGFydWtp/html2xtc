@@ -66,7 +66,12 @@
 		// acceptedTermsVersion として送信され D1 に記録される。値を変える際は
 		// frontend/public/about.html の最終改定日・適用開始日の表記も合わせて
 		// 更新すること。
-		"TERMS_VERSION": "2026-07-23"
+		"TERMS_VERSION": "2026-07-23",
+		// 青空文庫 PDF タイムアウト時の4分割フォールバック(src/workflow.ts,
+		// src/feature-flags.ts#resolveAozoraTimeoutFallbackEnabled)。他の機能
+		// フラグと違い極性が逆(未設定=無効=現行動作)なので、本番で有効化する
+		// にはキー自体を明示的に書く必要がある。
+		"AOZORA_TIMEOUT_FALLBACK_ENABLED": "true"
 		// 登録モード仕様 Phase 3 (src/auth/registration-mode.ts の
 		// resolveRegistrationClosedReason, src/feature-flags.ts): 以下は
 		// 意図的にキー自体を追加しない — 未設定は常に許可側(現行動作)へ

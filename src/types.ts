@@ -322,4 +322,17 @@ export interface Env {
   MAX_EPUB_ENTRIES?: string;
   /** Max size of the self-contained HTML generated from an EPUB (Phase 3). Default 32 MiB (33554432) — see src/jobs.ts#resolveMaxEpubHtmlBytes. */
   MAX_EPUB_HTML_BYTES?: string;
+
+  // --- 青空文庫 PDF タイムアウト時の4分割フォールバック ---
+  /**
+   * "true" のときだけ有効(既定 false — 未設定/不正値は無効)。他の機能フラグ
+   * (LIBRARY_WRITE_MODE等)と極性が逆: あちらは「未設定 = 現行動作を許可」だが、
+   * これは「現行動作(フォールバックなし)が既定」なので「未設定 = false」が現行
+   * 動作維持になる — resolveAozoraTimeoutFallbackEnabled (src/feature-flags.ts)。
+   * "true" のとき、青空文庫URL(isAozoraBunkoUrl)の専用抽出が成功した文書で
+   * 初回PDF生成がBrowser Runのタイムアウト(machine-readable code 6002)に
+   * なった場合だけ、本文を4分割してチャンクごとにPDF化し、pdf-libで結合して
+   * 1回だけXTC化する(src/workflow.ts)。
+   */
+  AOZORA_TIMEOUT_FALLBACK_ENABLED?: string;
 }

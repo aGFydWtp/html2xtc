@@ -21,7 +21,8 @@
     "encoding-japanese": "2.2.0",
     "fflate": "^0.8.3",
     "linkedom": "^0.18.13",
-    "papaparse": "^5.5.4"
+    "papaparse": "^5.5.4",
+    "pdf-lib": "^1.17.1"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.18.6",

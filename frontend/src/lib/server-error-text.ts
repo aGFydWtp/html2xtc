@@ -105,6 +105,27 @@ export function resolveServerErrorKey(err: string): ServerErrorKey | null {
   if (err === "PDF generation timed out; retrying may succeed") return "pdf_err_render_timeout";
   if (err === "PDF generation failed") return "pdf_err_render_failed";
 
+  // --- 青空文庫PDFタイムアウト時の4分割フォールバック(src/workflow.ts, --------
+  //     src/aozora-fallback/*)の固定文言。この機能はフラグ
+  //     (AOZORA_TIMEOUT_FALLBACK_ENABLED)が有効な青空文庫URLだけが対象で、
+  //     専用のi18nキーは新設せず既存キーへ合流させる — いずれも稀にしか
+  //     到達しない内部的な失敗であり、上のpdf_err_render_failed/
+  //     pdf_err_render_timeoutと利用者から見た意味は同じため。
+  // chunk側(render-aozora-fallback-*)がcode 6002で失敗し続けた場合の文言。
+  // 初回の "...retrying may succeed" とは別文字列だが、同じ「タイムアウト」
+  // カテゴリなのでi18nキーは共用する。
+  if (err === "PDF generation timed out after fallback splitting") return "pdf_err_render_timeout";
+  // pdf-lib結合(merge-aozora-fallback-pdf)の失敗。ページ数不一致・parse失敗
+  // はどちらも汎用のレンダリング失敗として扱う。
+  if (err === "PDF merge failed") return "pdf_err_render_failed";
+  if (err === "merged PDF page count mismatch") return "pdf_err_render_failed";
+  // 結合対象PDFの入力合計・結合後ページ数/サイズが上限超過。サイズ超過という
+  // 意味では既存のpdf_too_large(生成PDFのサイズ超過)に最も近い。
+  if (err === "generated PDF is too large to merge") return "pdf_too_large";
+  // DOM分割(prepare-aozora-fallback)自体が失敗した場合(空本文・構造復元
+  // 不能など)。決定的だが稀にしか起きない内部エラーなので汎用文言へ。
+  if (err === "the document could not be split safely") return "pdf_err_render_failed";
+
   // --- TXTアップロード系（src/text-upload.ts#textPrepareErrorMessage / ------------
   //     src/workflow.ts#runTextSource と突き合わせ済みの実文字列） -----------------
   if (err === "text file is empty") return "text_err_empty";

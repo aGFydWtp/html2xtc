@@ -57,6 +57,20 @@ describe("resolveServerErrorKey", () => {
     );
   });
 
+  // 青空文庫PDFタイムアウト時の4分割フォールバック(src/workflow.ts,
+  // src/aozora-fallback/*)の固定文言。専用のi18nキーは新設せず既存キーへ合流。
+  it("maps the Aozora timeout-fallback's fixed messages (src/workflow.ts / src/aozora-fallback/*)", () => {
+    expect(resolveServerErrorKey("PDF generation timed out after fallback splitting")).toBe(
+      "pdf_err_render_timeout",
+    );
+    expect(resolveServerErrorKey("PDF merge failed")).toBe("pdf_err_render_failed");
+    expect(resolveServerErrorKey("merged PDF page count mismatch")).toBe("pdf_err_render_failed");
+    expect(resolveServerErrorKey("generated PDF is too large to merge")).toBe("pdf_too_large");
+    expect(resolveServerErrorKey("the document could not be split safely")).toBe(
+      "pdf_err_render_failed",
+    );
+  });
+
   // TXTアップロード系の対応表は src/text-upload.ts#textPrepareErrorMessage と
   // src/workflow.ts#runTextSource の実装（バックエンド確定後）に対して突き合わせ
   // 済み。ここでの文字列は実際に投げられる安定文字列そのもの。

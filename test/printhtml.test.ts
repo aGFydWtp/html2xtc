@@ -271,6 +271,46 @@ describe("buildPrintHtml", () => {
     expect(html).not.toContain("@font-face");
     expect(html).not.toContain("<link");
   });
+
+  // 青空文庫PDFタイムアウト時の4分割フォールバック仕様 §15: PrintDocumentOptions
+  // (back-compat 5th argument). Every field defaults to true, so every call
+  // site above (no 5th argument) keeps producing an unchanged document.
+  it("omits the header when includeDocumentHeader is false, but keeps <title>", () => {
+    const html = buildPrintHtml(article(), BASE, CONVERTED_AT, undefined, {
+      includeDocumentHeader: false,
+    });
+    expect(html).not.toContain("<h1>");
+    // <title> is unaffected — it is not part of the "header" toggle.
+    expect(html).toContain("<title>記事タイトル</title>");
+    // The colophon (default true) is unaffected by this option.
+    expect(html).toContain('id="xtc-colophon"');
+  });
+
+  it("omits the colophon when includeColophon is false", () => {
+    const html = buildPrintHtml(article(), BASE, CONVERTED_AT, undefined, {
+      includeColophon: false,
+    });
+    expect(html).not.toContain('id="xtc-colophon"');
+    expect(html).not.toContain("break-before:page");
+    // The header (default true) is unaffected by this option.
+    expect(html).toContain("<h1>記事タイトル</h1>");
+  });
+
+  it("can omit both header and colophon, leaving only the content", () => {
+    const html = buildPrintHtml(article(), BASE, CONVERTED_AT, undefined, {
+      includeDocumentHeader: false,
+      includeColophon: false,
+    });
+    expect(html).not.toContain("<h1>");
+    expect(html).not.toContain('id="xtc-colophon"');
+    expect(html).toContain("本文です。");
+  });
+
+  it("defaults every option to true when options is omitted or partially specified", () => {
+    const withoutOptions = buildPrintHtml(article(), BASE, CONVERTED_AT);
+    const withEmptyOptions = buildPrintHtml(article(), BASE, CONVERTED_AT, undefined, {});
+    expect(withEmptyOptions).toBe(withoutOptions);
+  });
 });
 
 describe("printableText", () => {

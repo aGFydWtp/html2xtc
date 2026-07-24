@@ -416,13 +416,23 @@ export function printableText(
  * src/aozora.ts). Static, trusted CSS only; never page-derived text — and
  * angle brackets are stripped anyway as defense in depth (see below), so
  * the CSS must not rely on the child combinator ">".
+ *
+ * `options` (back-compat 5th argument, all fields default true — see
+ * PrintDocumentOptions) lets a caller omit the header (h1 + source line)
+ * and/or the generated colophon box; used by the Aozora 4-chunk fallback
+ * (src/aozora-fallback/html.ts) so only chunk 0 carries the title/byline and
+ * only chunk 3 carries the colophon. The `<title>` element is always
+ * present regardless of `options` — the Container reads the PDF title
+ * metadata into X-Xtc-Title for every chunk PDF, not just one.
  */
 export function buildPrintHtml(
   article: ExtractedArticle,
   sourceUrl: string,
   convertedAt: string,
   documentCss?: string,
+  options?: PrintDocumentOptions,
 ): string {
+  const opts = { ...DEFAULT_PRINT_DOCUMENT_OPTIONS, ...options };
   const { document } = parseHTML(
     "<!doctype html><html><head></head><body></body></html>",
   );
@@ -463,21 +473,23 @@ export function buildPrintHtml(
     document.head.appendChild(style);
   }
 
-  const heading = document.createElement("h1");
-  heading.textContent = title;
-  document.body.appendChild(heading);
+  if (opts.includeDocumentHeader) {
+    const heading = document.createElement("h1");
+    heading.textContent = title;
+    document.body.appendChild(heading);
 
-  const sourceParts = [article.siteName, article.byline].filter(
-    (part): part is string => part !== undefined,
-  );
-  if (sourceParts.length > 0) {
-    const sourceLine = document.createElement("div");
-    sourceLine.textContent = sourceParts.join(" · ");
-    sourceLine.setAttribute(
-      "style",
-      `${COLOPHON_LINE_STYLE};margin-bottom:6pt !important`,
+    const sourceParts = [article.siteName, article.byline].filter(
+      (part): part is string => part !== undefined,
     );
-    document.body.appendChild(sourceLine);
+    if (sourceParts.length > 0) {
+      const sourceLine = document.createElement("div");
+      sourceLine.textContent = sourceParts.join(" · ");
+      sourceLine.setAttribute(
+        "style",
+        `${COLOPHON_LINE_STYLE};margin-bottom:6pt !important`,
+      );
+      document.body.appendChild(sourceLine);
+    }
   }
 
   const content = document.createElement("div");
@@ -485,41 +497,75 @@ export function buildPrintHtml(
   content.innerHTML = sanitizeContent(article.contentHtml, sourceUrl, article.title);
   document.body.appendChild(content);
 
-  // Static colophon: same lines and constraints as buildColophonScript
-  // (pdf.ts), but built server-side — a page CSP cannot block it here.
-  const box = document.createElement("div");
-  box.id = "xtc-colophon";
-  box.setAttribute(
-    "style",
-    // break-before: page puts the colophon on its own final page.
-    `break-before:page !important;line-height:1.6 !important;${COLOPHON_LINE_STYLE}`,
-  );
-  const addLine = (text: string, extraStyle?: string): void => {
-    const line = document.createElement("div");
-    line.textContent = text;
-    line.setAttribute(
+  if (opts.includeColophon) {
+    // Static colophon: same lines and constraints as buildColophonScript
+    // (pdf.ts), but built server-side — a page CSP cannot block it here.
+    const box = document.createElement("div");
+    box.id = "xtc-colophon";
+    box.setAttribute(
       "style",
-      extraStyle === undefined
-        ? COLOPHON_LINE_STYLE
-        : `${COLOPHON_LINE_STYLE};${extraStyle}`,
+      // break-before: page puts the colophon on its own final page.
+      `break-before:page !important;line-height:1.6 !important;${COLOPHON_LINE_STYLE}`,
     );
-    box.appendChild(line);
-  };
-  addLine(`タイトル: ${title}`);
-  addLine(`サイト名: ${article.siteName ?? hostnameOf(sourceUrl)}`);
-  if (article.byline !== undefined) {
-    addLine(`著者: ${article.byline}`);
+    const addLine = (text: string, extraStyle?: string): void => {
+      const line = document.createElement("div");
+      line.textContent = text;
+      line.setAttribute(
+        "style",
+        extraStyle === undefined
+          ? COLOPHON_LINE_STYLE
+          : `${COLOPHON_LINE_STYLE};${extraStyle}`,
+      );
+      box.appendChild(line);
+    };
+    addLine(`タイトル: ${title}`);
+    addLine(`サイト名: ${article.siteName ?? hostnameOf(sourceUrl)}`);
+    if (article.byline !== undefined) {
+      addLine(`著者: ${article.byline}`);
+    }
+    addLine(`URL: ${sourceUrl}`);
+    addLine(`変換日時: ${convertedAt}`);
+    addLine("個人的利用のために作成。再配布禁止。",
+      "border-top:1px solid black !important;margin-top:6pt !important;padding-top:4pt !important",
+    );
+    addLine("Created for personal use. Redistribution prohibited.");
+    document.body.appendChild(box);
   }
-  addLine(`URL: ${sourceUrl}`);
-  addLine(`変換日時: ${convertedAt}`);
-  addLine("個人的利用のために作成。再配布禁止。",
-    "border-top:1px solid black !important;margin-top:6pt !important;padding-top:4pt !important",
-  );
-  addLine("Created for personal use. Redistribution prohibited.");
-  document.body.appendChild(box);
 
   return document.toString();
 }
+
+/**
+ * Structural toggles for buildPrintHtml (青空文庫4分割フォールバック仕様 §15).
+ * Added as a back-compat 5th argument — every field defaults to true, so
+ * every existing call site (extract mode, the plain Aozora render) is
+ * unaffected. Introduced for the fallback's per-chunk documents: chunk 0
+ * keeps the title/byline header, only chunk 3 keeps the generated colophon.
+ *
+ * `includeBibliographicalInformation` is deliberately a no-op here: the 底本
+ * (source-edition) block is not a separate structural piece buildPrintHtml
+ * assembles — extractAozoraArticle (src/aozora.ts) already appends it to the
+ * END of `article.contentHtml` itself. Splitting that contentHtml in original
+ * DOM order (src/aozora-fallback/split.ts) naturally puts it in the last
+ * chunk without buildPrintHtml needing to do anything. The field is kept
+ * (rather than omitted) so callers can express the intent from the spec, and
+ * to leave room for a future caller that DOES pass biblio as its own piece —
+ * but nothing here currently reads it.
+ */
+export interface PrintDocumentOptions {
+  /** h1 title + optional site/byline source line. Default true. */
+  includeDocumentHeader?: boolean;
+  /** No-op here — see the doc comment above. Default true. */
+  includeBibliographicalInformation?: boolean;
+  /** The generated title/site/URL/timestamp colophon box. Default true. */
+  includeColophon?: boolean;
+}
+
+const DEFAULT_PRINT_DOCUMENT_OPTIONS: Required<PrintDocumentOptions> = {
+  includeDocumentHeader: true,
+  includeBibliographicalInformation: true,
+  includeColophon: true,
+};
 
 function hostnameOf(url: string): string {
   try {

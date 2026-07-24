@@ -126,6 +126,57 @@ function isNonRetryableUploadedPdfStatus(status: number): boolean {
 const BROWSER_RUN_TIMEOUT_CODE = 6002;
 
 /**
+ * Browser Run's machine-readable code for a printToPDF failure that is NOT a
+ * timeout: `{"code":6003,"message":"Failed to capture screenshot or
+ * generate PDF. The page may be too large or in an invalid state.",
+ * "detail":"Protocol error (Page.printToPDF): Printing failed"}` (measured
+ * in prod on the same 淨火 document AOZORA_FALLBACK_ERROR_CODES' other
+ * member was measured on — elapsedMs 69-97s, well under the 120s
+ * actionTimeout, so this is Chrome's printToPDF itself giving up, not the
+ * action budget expiring).
+ *
+ * Added to the fallback trigger (see AOZORA_FALLBACK_ERROR_CODES) after
+ * code 6002 alone left this exact document failing every job in production:
+ * the same URL that succeeded via the 6002 path during pre-deploy testing
+ * later failed 3/3 attempts with 6003 instead, burning render-pdf's full
+ * retry budget (~4 minutes) before terminally failing. The 6003 message
+ * explicitly names the same root cause as 6002 ("the page may be too
+ * large") — a single PDF capture of the whole document, not a rendering
+ * bug — so the correct response is identical: split into 4 chunks. The
+ * original spec (青空文庫PDFタイムアウト時の4分割フォールバック仕様書
+ * §8) named only 6002, written before this code was observed in
+ * production; do not narrow the fallback trigger back to 6002-only on the
+ * strength of that document alone without re-checking prod logs first.
+ */
+const BROWSER_RUN_PDF_TOO_LARGE_CODE = 6003;
+
+/**
+ * Every Browser Run error code that gates the Aozora 4-chunk fallback (spec
+ * §8, extended per BROWSER_RUN_PDF_TOO_LARGE_CODE's doc comment above). Both
+ * codes share the same production root cause on the documents observed so
+ * far — "this document cannot be captured as a single PDF" — even though
+ * only 6002 is literally a timeout; membership here, not the codes'
+ * individual semantics, is what decides fallback eligibility.
+ */
+const AOZORA_FALLBACK_ERROR_CODES: ReadonlySet<number> = new Set([
+  BROWSER_RUN_TIMEOUT_CODE,
+  BROWSER_RUN_PDF_TOO_LARGE_CODE,
+]);
+
+/**
+ * Type guard for AOZORA_FALLBACK_ERROR_CODES membership — also narrows
+ * `code` to the exact literal union InitialAozoraRenderResult's
+ * "split-required" variant declares, so that variant's `code` field is never
+ * widened to a bare `number` (nor hardcoded to a single literal) at its one
+ * call site below.
+ */
+function isAozoraFallbackErrorCode(
+  code: number | null,
+): code is typeof BROWSER_RUN_TIMEOUT_CODE | typeof BROWSER_RUN_PDF_TOO_LARGE_CODE {
+  return code !== null && AOZORA_FALLBACK_ERROR_CODES.has(code);
+}
+
+/**
  * Best-effort extraction of `errors[0].code` from a failed Browser Run
  * quickAction response body. Never throws: a body that isn't JSON, or JSON
  * without the expected shape, degrades to `null` — same fail-safe stance as
@@ -145,9 +196,14 @@ function parseBrowserRunErrorCode(bodyText: string): number | null {
 /**
  * Client-facing message for a failed render-pdf/render-text-pdf/
  * render-epub-pdf step. Deliberately NOT keyed off `response.status === 422`
- * (see BROWSER_RUN_TIMEOUT_CODE's comment) — only this code selects the
- * timeout-specific message; every other code (or an unparseable body) keeps
- * the existing generic message.
+ * (see BROWSER_RUN_TIMEOUT_CODE's comment) — only 6002 (a genuine timeout)
+ * selects the timeout-specific message; every other code, including 6003
+ * (not a timeout — see BROWSER_RUN_PDF_TOO_LARGE_CODE's doc comment) or an
+ * unparseable body, keeps the existing generic message. This is deliberately
+ * NOT the same set as AOZORA_FALLBACK_ERROR_CODES: that set decides whether
+ * to split an Aozora document instead of failing, this function only picks
+ * client-facing wording for whichever failure (of any code, on any source)
+ * actually reaches the client.
  * frontend/src/lib/server-error-text.ts maps both exact strings to i18n
  * keys — keep the two in sync.
  */
@@ -159,14 +215,15 @@ function browserRunPdfErrorMessage(code: number | null): string {
 
 /**
  * Client-facing message for a failed render-aozora-fallback-* chunk step
- * (Aozora timeout-fallback spec §19). Deliberately a DIFFERENT string from
- * browserRunPdfErrorMessage's timeout case ("...retrying may succeed") even
- * though both key off the same BROWSER_RUN_TIMEOUT_CODE: this one only ever
- * fires once a 4-chunk split already happened, so telling it apart in logs/
- * error text matters. Per spec §16.3/§19 "MVPではretry後failed" — a chunk
- * hitting 6002 is NOT retried more aggressively or split further, it just
- * uses the render-*-fallback step's existing retry budget like every other
- * render step, then fails the whole job on exhaustion.
+ * (Aozora fallback spec §19). Deliberately a DIFFERENT string from
+ * browserRunPdfErrorMessage's timeout case ("...retrying may succeed") for
+ * code 6002 — this one only ever fires once a 4-chunk split already
+ * happened, so telling it apart in logs/error text matters. Every other
+ * code (including 6003, not a timeout) keeps the generic message, same as
+ * browserRunPdfErrorMessage. Per spec §16.3/§19 "MVPではretry後failed" — a
+ * chunk hitting 6002 or 6003 is NOT retried more aggressively or split
+ * further, it just uses the render-*-fallback step's existing retry budget
+ * like every other render step, then fails the whole job on exhaustion.
  */
 function browserRunFallbackChunkErrorMessage(code: number | null): string {
   return code === BROWSER_RUN_TIMEOUT_CODE
@@ -175,18 +232,30 @@ function browserRunFallbackChunkErrorMessage(code: number | null): string {
 }
 
 /**
- * render-pdf's outcome for an Aozora Bunko job (spec §8): "success" is the
- * existing single-document result; "fallback-timeout" means Browser Run
- * reported code 6002 for this exact input and the step deliberately did NOT
- * throw (see the call site) — the same document is never retried through
- * render-pdf's own retry budget for this outcome (spec §27 "初回6002を複数回
- * retryしない"), it goes straight to the 4-chunk split instead. Every other
- * failure (network/5xx, or 6002 with the fallback flag off or on a
- * non-Aozora-origin document) still throws exactly as before.
+ * render-pdf's outcome for an Aozora Bunko job (spec §8, extended per
+ * AOZORA_FALLBACK_ERROR_CODES above): "success" is the existing
+ * single-document result; "split-required" means Browser Run reported one
+ * of AOZORA_FALLBACK_ERROR_CODES (6002 timeout, or 6003 "page may be too
+ * large" — see that constant's doc comment) for this exact input and the
+ * step deliberately did NOT throw (see the call site) — the same document is
+ * never retried through render-pdf's own retry budget for this outcome
+ * (spec §27 "初回6002を複数回retryしない", extended to 6003 for the same
+ * reason), it goes straight to the 4-chunk split instead. `code` carries
+ * whichever of the two error codes actually triggered this outcome — never
+ * hardcoded to 6002 — purely for the diagnostic log below; the split
+ * pipeline itself does not branch on which one it was. Every other failure
+ * (network/5xx, any code not in AOZORA_FALLBACK_ERROR_CODES, or a
+ * fallback-eligible code with the flag off or on a non-Aozora-origin
+ * document) still throws exactly as before.
  */
 type InitialAozoraRenderResult =
   | { outcome: "success"; pdfKey: string; elapsedMs: number; browserMs: number | null }
-  | { outcome: "fallback-timeout"; code: 6002; elapsedMs: number; browserMs: number | null };
+  | {
+      outcome: "split-required";
+      code: typeof BROWSER_RUN_TIMEOUT_CODE | typeof BROWSER_RUN_PDF_TOO_LARGE_CODE;
+      elapsedMs: number;
+      browserMs: number | null;
+    };
 
 /**
  * Conversion pipeline behind POST /jobs (extract mode and Aozora Bunko URLs
@@ -439,30 +508,32 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
           fontCssBytes,
           code: browserRunErrorCode,
         });
-        // Aozora timeout-fallback eligibility (spec §8/§9): only a document
-        // whose article HTML came from the DEDICATED Aozora extractor
-        // (isAozoraOrigin), only when THIS attempt actually rendered that
-        // article HTML (mode === "extract" — isAozoraOrigin alone is not
-        // enough: if the R2 object expired mid-job, the `article === null`
-        // branch above degrades this specific attempt to mode "full",
-        // rendering the plain URL instead, and there is no article HTML left
-        // to split), only on this exact machine-readable code, only when the
-        // flag is on. Every other failure (network/5xx, non-6002, 6002 on a
-        // non-Aozora-origin or degraded-to-full-render attempt, or 6002 with
-        // the flag off) falls through to the unchanged throw below and keeps
-        // using render-pdf's own retry budget exactly as before this feature
-        // existed.
+        // Aozora fallback eligibility (spec §8/§9, extended per
+        // AOZORA_FALLBACK_ERROR_CODES's doc comment to also cover 6003):
+        // only a document whose article HTML came from the DEDICATED Aozora
+        // extractor (isAozoraOrigin), only when THIS attempt actually
+        // rendered that article HTML (mode === "extract" — isAozoraOrigin
+        // alone is not enough: if the R2 object expired mid-job, the
+        // `article === null` branch above degrades this specific attempt to
+        // mode "full", rendering the plain URL instead, and there is no
+        // article HTML left to split), only on one of
+        // AOZORA_FALLBACK_ERROR_CODES, only when the flag is on. Every other
+        // failure (network/5xx, a code not in AOZORA_FALLBACK_ERROR_CODES, or
+        // an eligible code on a non-Aozora-origin or degraded-to-full-render
+        // attempt, or with the flag off) falls through to the unchanged
+        // throw below and keeps using render-pdf's own retry budget exactly
+        // as before this feature existed.
         const aozoraFallbackEnabled = resolveAozoraTimeoutFallbackEnabled(this.env);
-        const isFallbackTimeout =
+        const isAozoraFallbackEligible =
           !response.ok &&
           isAozoraOrigin &&
           mode === "extract" &&
           aozoraFallbackEnabled &&
-          browserRunErrorCode === BROWSER_RUN_TIMEOUT_CODE;
+          isAozoraFallbackErrorCode(browserRunErrorCode);
         if (articleHtmlForAozoraLog !== null) {
           const metrics = computeDocumentMetrics(articleHtmlForAozoraLog);
           console.log(`[${jobId}] aozora initial render`, {
-            outcome: response.ok ? "success" : isFallbackTimeout ? "fallback-timeout" : "failed",
+            outcome: response.ok ? "success" : isAozoraFallbackEligible ? "split-required" : "failed",
             status: response.status,
             code: browserRunErrorCode,
             elapsedMs,
@@ -482,16 +553,21 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
           console.error(
             `[${jobId}] Browser Run returned ${response.status}: ${browserRunErrorBody}`,
           );
-          if (isFallbackTimeout) {
+          // The isAozoraFallbackErrorCode(...) call here is redundant with
+          // isAozoraFallbackEligible at runtime (both already evaluated it),
+          // but repeated so TypeScript narrows browserRunErrorCode to the
+          // exact 6002|6003 literal union the "split-required" variant's
+          // `code` field declares below — never widened to a bare `number`.
+          if (isAozoraFallbackEligible && isAozoraFallbackErrorCode(browserRunErrorCode)) {
             // Deliberately NOT thrown (spec §8/§27 "初回6002を複数回retry
-            // しない"): a plain return here means step.do() sees this as a
-            // successful attempt, so render-pdf's own retry budget is never
-            // spent replaying the exact same 120s-timeout capture. The
-            // caller below routes this outcome into the 4-chunk split
-            // instead of convert-xtc.
+            // しない", extended to 6003 for the same reason): a plain return
+            // here means step.do() sees this as a successful attempt, so
+            // render-pdf's own retry budget is never spent replaying the
+            // exact same failing capture. The caller below routes this
+            // outcome into the 4-chunk split instead of convert-xtc.
             return {
-              outcome: "fallback-timeout",
-              code: BROWSER_RUN_TIMEOUT_CODE,
+              outcome: "split-required",
+              code: browserRunErrorCode,
               elapsedMs,
               browserMs,
             };
@@ -525,7 +601,7 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
     // below) only needs to know these keys when they exist. Declared outside
     // the try below (along with pdfKey) so a THROW from either branch —
     // including runAozoraTimeoutFallback itself, e.g. a chunk that never
-    // recovers from code 6002 — still reaches the finally's cleanup with
+    // recovers from a fallback-eligible code (6002/6003) — still reaches the finally's cleanup with
     // whatever keys were already written (spec §16.6 "成功・失敗にかかわらず
     // 削除する" / §5's "中間成果物を成功・失敗にかかわらず削除する").
     let aozoraFallbackKeys: string[] = [];
@@ -534,7 +610,7 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
       if (initialRender.outcome === "success") {
         pdfKey = initialRender.pdfKey;
       } else {
-        // initialRender.outcome === "fallback-timeout": split the Aozora
+        // initialRender.outcome === "split-required": split the Aozora
         // article into 4 balanced chunks, render each individually, merge
         // the resulting PDFs with pdf-lib, and write the result to the SAME
         // intermediatePdfKey(jobId) ("source.pdf") the normal path uses —
@@ -633,10 +709,11 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
   }
 
   /**
-   * The Aozora Bunko timeout fallback (spec §14/§16.2-§16.4): only invoked
-   * when render-pdf's own step.do already returned "fallback-timeout"
-   * (isAozoraOrigin && the flag on && Browser Run code 6002), so
-   * `articleKey` is guaranteed non-null here.
+   * The Aozora Bunko fallback (spec §14/§16.2-§16.4): only invoked when
+   * render-pdf's own step.do already returned "split-required"
+   * (isAozoraOrigin && the flag on && Browser Run code 6002 or 6003 — see
+   * AOZORA_FALLBACK_ERROR_CODES), so `articleKey` is guaranteed non-null
+   * here.
    *
    * 1. prepare-aozora-fallback: DOM-splits the article into 4 balanced
    *    pieces (src/aozora-fallback/split.ts) and writes 4 chunk HTML
@@ -803,8 +880,8 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
             console.error(
               `[${jobId}] aozora fallback chunk ${chunkIndex} Browser Run returned ${response.status}: ${bodyText}`,
             );
-            // Spec §16.3/§19 "MVPではretry後failed": a chunk hitting 6002
-            // just uses this step's own (already-configured) retry budget,
+            // Spec §16.3/§19 "MVPではretry後failed": a chunk hitting 6002 or
+            // 6003 just uses this step's own (already-configured) retry budget,
             // same as every other render step — never a further split, never
             // extra retries beyond what render-aozora-fallback-* is already
             // configured with above.

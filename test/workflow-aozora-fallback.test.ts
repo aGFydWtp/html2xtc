@@ -232,54 +232,63 @@ beforeEach(() => {
   mockedConvertInContainer.mockResolvedValue(new Response(new Uint8Array([1, 2, 3, 4]), { status: 200 }));
 });
 
-describe("Aozora timeout fallback: eligible job (flag on, aozora-origin, code 6002)", () => {
-  it("splits into 4 chunks, merges, converts once, and never retries the initial 6002", async () => {
-    const bucket = new FakeR2Bucket();
-    const step = new FakeWorkflowStep();
-    mockedPrepareRenderInput.mockResolvedValue({
-      kind: "html",
-      html: aozoraArticleHtml(),
-      fontCss: null,
-      origin: "aozora",
+// Both 6002 (a genuine Browser Run timeout) and 6003 ("Failed to capture
+// screenshot or generate PDF. The page may be too large...") trigger the
+// SAME 4-chunk fallback — added per a production observation (see
+// AOZORA_FALLBACK_ERROR_CODES's doc comment in src/workflow.ts): the exact
+// same document ("神曲・淨火") failed with 6002 during pre-deploy testing
+// and with 6003 in a later production run, both citing the same root cause.
+describe.each([6002, 6003] as const)(
+  "Aozora fallback: eligible job (flag on, aozora-origin, code %i)",
+  (errorCode) => {
+    it(`splits into 4 chunks, merges, converts once, and never retries the initial ${errorCode}`, async () => {
+      const bucket = new FakeR2Bucket();
+      const step = new FakeWorkflowStep();
+      mockedPrepareRenderInput.mockResolvedValue({
+        kind: "html",
+        html: aozoraArticleHtml(),
+        fontCss: null,
+        origin: "aozora",
+      });
+      const chunkPdf = await onePagePdfBytes();
+      mockedRenderPdfFromHtml
+        .mockResolvedValueOnce(browserRunErrorResponse(errorCode)) // initial single-document attempt
+        // A fresh Response object per call — a Response body can only be
+        // read once, and each of the 4 chunk renders reads its own.
+        .mockImplementation(async () => new Response(chunkPdf.slice(), { status: 200 }));
+
+      const result = await runUrl(fakeEnv(bucket, { AOZORA_TIMEOUT_FALLBACK_ENABLED: "true" }), step, AOZORA_URL);
+
+      expect(result.xtcKey).toBe(outputXtcKey(JOB_ID));
+      // The initial render-pdf step succeeded (returned a discriminated
+      // result) on its FIRST attempt — a fallback-eligible code must never
+      // spend render-pdf's own retry budget (spec §8/§27).
+      expect(step.callCounts["render-pdf"]).toBe(1);
+      expect(step.callCounts["prepare-aozora-fallback"]).toBe(1);
+      expect(step.callCounts["render-aozora-fallback-0000"]).toBe(1);
+      expect(step.callCounts["render-aozora-fallback-0001"]).toBe(1);
+      expect(step.callCounts["render-aozora-fallback-0002"]).toBe(1);
+      expect(step.callCounts["render-aozora-fallback-0003"]).toBe(1);
+      expect(step.callCounts["merge-aozora-fallback-pdf"]).toBe(1);
+      expect(step.callCounts["convert-xtc"]).toBe(1);
+      // 1 initial attempt + 4 chunk renders — never 4x the same call (spec §27
+      // "チャンクを並列処理しない" is implied by this being achievable at all
+      // with a synchronous mock queue).
+      expect(mockedRenderPdfFromHtml).toHaveBeenCalledTimes(5);
+      expect(mockedConvertInContainer).toHaveBeenCalledTimes(1);
+
+      // The merged PDF landed at the SAME key the normal path uses.
+      expect(bucket.deletedKeys).toContain(intermediatePdfKey(JOB_ID));
+      // Every fallback intermediate was cleaned up (best-effort cleanup ran).
+      const fallbackKeysStillPresent = [...bucket.objects.keys()].filter((k) =>
+        k.includes("aozora-fallback"),
+      );
+      expect(fallbackKeysStillPresent).toEqual([]);
+      expect(bucket.deletedKeys.some((k) => k.endsWith("aozora-fallback/manifest.json"))).toBe(true);
+      expect(bucket.deletedKeys.some((k) => k.endsWith("aozora-fallback/chunks/0003.pdf"))).toBe(true);
     });
-    const chunkPdf = await onePagePdfBytes();
-    mockedRenderPdfFromHtml
-      .mockResolvedValueOnce(browserRunErrorResponse(6002)) // initial single-document attempt
-      // A fresh Response object per call — a Response body can only be
-      // read once, and each of the 4 chunk renders reads its own.
-      .mockImplementation(async () => new Response(chunkPdf.slice(), { status: 200 }));
-
-    const result = await runUrl(fakeEnv(bucket, { AOZORA_TIMEOUT_FALLBACK_ENABLED: "true" }), step, AOZORA_URL);
-
-    expect(result.xtcKey).toBe(outputXtcKey(JOB_ID));
-    // The initial render-pdf step succeeded (returned a discriminated
-    // result) on its FIRST attempt — code 6002 must never spend render-pdf's
-    // own retry budget (spec §8/§27).
-    expect(step.callCounts["render-pdf"]).toBe(1);
-    expect(step.callCounts["prepare-aozora-fallback"]).toBe(1);
-    expect(step.callCounts["render-aozora-fallback-0000"]).toBe(1);
-    expect(step.callCounts["render-aozora-fallback-0001"]).toBe(1);
-    expect(step.callCounts["render-aozora-fallback-0002"]).toBe(1);
-    expect(step.callCounts["render-aozora-fallback-0003"]).toBe(1);
-    expect(step.callCounts["merge-aozora-fallback-pdf"]).toBe(1);
-    expect(step.callCounts["convert-xtc"]).toBe(1);
-    // 1 initial attempt + 4 chunk renders — never 4x the same call (spec §27
-    // "チャンクを並列処理しない" is implied by this being achievable at all
-    // with a synchronous mock queue).
-    expect(mockedRenderPdfFromHtml).toHaveBeenCalledTimes(5);
-    expect(mockedConvertInContainer).toHaveBeenCalledTimes(1);
-
-    // The merged PDF landed at the SAME key the normal path uses.
-    expect(bucket.deletedKeys).toContain(intermediatePdfKey(JOB_ID));
-    // Every fallback intermediate was cleaned up (best-effort cleanup ran).
-    const fallbackKeysStillPresent = [...bucket.objects.keys()].filter((k) =>
-      k.includes("aozora-fallback"),
-    );
-    expect(fallbackKeysStillPresent).toEqual([]);
-    expect(bucket.deletedKeys.some((k) => k.endsWith("aozora-fallback/manifest.json"))).toBe(true);
-    expect(bucket.deletedKeys.some((k) => k.endsWith("aozora-fallback/chunks/0003.pdf"))).toBe(true);
-  });
-});
+  },
+);
 
 describe("Aozora timeout fallback: ineligible cases fall through to existing behavior", () => {
   it("does nothing extra when the flag is off — code 6002 still exhausts render-pdf's retry budget and fails", async () => {
@@ -318,7 +327,17 @@ describe("Aozora timeout fallback: ineligible cases fall through to existing beh
     expect(step.callCounts["prepare-aozora-fallback"]).toBeUndefined();
   });
 
-  it("does not trigger on a 422 with a different (or no) error code", async () => {
+  // Only AOZORA_FALLBACK_ERROR_CODES (6002, 6003) are eligible — every other
+  // code, including a neighboring one (6001) and no code at all (an
+  // unparseable/absent body, parseBrowserRunErrorCode -> null), must fall
+  // through to the existing throw/retry path untouched. Also guards spec
+  // §27 "422だけでfallbackしない": none of these responses trigger the
+  // fallback despite all being HTTP 422.
+  it.each([
+    { label: "a neighboring code (6001)", body: browserRunErrorResponse(6001) },
+    { label: "an unrelated code (9999)", body: browserRunErrorResponse(9999) },
+    { label: "no machine-readable code at all (unparseable body)", body: new Response("internal error", { status: 422 }) },
+  ])("does not trigger on a 422 with $label", async ({ body }) => {
     const bucket = new FakeR2Bucket();
     const step = new FakeWorkflowStep();
     mockedPrepareRenderInput.mockResolvedValue({
@@ -327,7 +346,7 @@ describe("Aozora timeout fallback: ineligible cases fall through to existing beh
       fontCss: null,
       origin: "aozora",
     });
-    mockedRenderPdfFromHtml.mockImplementation(async () => browserRunErrorResponse(9999));
+    mockedRenderPdfFromHtml.mockImplementation(async () => body.clone());
 
     await expect(
       runUrl(fakeEnv(bucket, { AOZORA_TIMEOUT_FALLBACK_ENABLED: "true" }), step, AOZORA_URL),

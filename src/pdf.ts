@@ -762,6 +762,32 @@ const PDF_OPTIONS = {
   timeout: 300_000,
 } as const;
 
+// Fact (measured in prod, see PDF_GOTO_OPTIONS above): an extract-mode render
+// hit Browser Run 422/6002 ("A timeout was reached... Request timed out")
+// deterministically at 61-63s wall-clock, even after PDF_GOTO_OPTIONS.timeout
+// was cut to 25s (ruling out goto as the culprit) and with pdfOptions.timeout
+// (above) already at 300_000 — the capture step itself is hitting some wall
+// well under either of those numbers.
+//
+// Cloudflare's Browser Run docs (reference/timeouts/) name `actionTimeout` as
+// the option to raise for exactly this symptom ("if you get a 422, the
+// action itself — not navigation — may be what's slow"), and their timeout
+// table lists its cap as 5 minutes (300_000). This codebase's own
+// @cloudflare/workers-types type definition disagrees with that public
+// table, though: BrowserRunBaseOptions.actionTimeout's JSDoc says "Maximum
+// duration in milliseconds for the browser action after page load. Max
+// 120000" (2 minutes) — followed here as authoritative since it is the
+// concrete contract this code compiles against, not the docs page. Raise
+// this constant if a future SDK version documents a higher cap.
+//
+// Effectiveness is UNVERIFIED. actionTimeout was previously unset (null,
+// i.e. no action-level cap at all) while pdfOptions.timeout was already
+// 300_000 and captures still died at ~61-63s, so it is entirely possible
+// actionTimeout hits the same unknown wall and this change fixes nothing.
+// Do not describe this as a confirmed fix elsewhere in comments/logs/docs
+// until post-deploy data says otherwise.
+const PDF_ACTION_TIMEOUT_MS = 120_000;
+
 export function renderPdf(
   env: Env,
   url: string,
@@ -787,6 +813,8 @@ export function renderPdf(
     // Japanese font is installed.
     waitForTimeout: PDF_FULL_WAIT_MS,
     pdfOptions: PDF_OPTIONS,
+    // See PDF_ACTION_TIMEOUT_MS above: effectiveness unverified.
+    actionTimeout: PDF_ACTION_TIMEOUT_MS,
   });
 }
 
@@ -837,6 +865,8 @@ export function renderPdfFromHtml(
     // this grace lets those stragglers land before capture.
     waitForTimeout: 3_000,
     pdfOptions: PDF_OPTIONS,
+    // See PDF_ACTION_TIMEOUT_MS above: effectiveness unverified.
+    actionTimeout: PDF_ACTION_TIMEOUT_MS,
   });
 }
 
@@ -874,5 +904,7 @@ export function renderSelfStyledHtmlPdf(
     // is no inlined font.
     waitForTimeout: 3_000,
     pdfOptions: PDF_OPTIONS,
+    // See PDF_ACTION_TIMEOUT_MS above: effectiveness unverified.
+    actionTimeout: PDF_ACTION_TIMEOUT_MS,
   });
 }

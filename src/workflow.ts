@@ -4,6 +4,32 @@
 import { WorkflowEntrypoint } from "cloudflare:workers";
 import type { WorkflowEvent, WorkflowStep } from "cloudflare:workers";
 import { NonRetryableError } from "cloudflare:workflows";
+import {
+  allAozoraFallbackKeys,
+  aozoraFallbackChunkHtmlKey,
+  aozoraFallbackChunkId,
+  aozoraFallbackChunkPdfKey,
+  aozoraFallbackManifestKey,
+} from "./aozora-fallback/keys";
+import type { AozoraFallbackChunkIndex } from "./aozora-fallback/keys";
+import { buildAozoraFallbackChunkHtml, parseAozoraArticleDocument } from "./aozora-fallback/html";
+import {
+  parseAozoraFallbackManifest,
+  serializeAozoraFallbackManifest,
+} from "./aozora-fallback/manifest";
+import type { AozoraFallbackManifest, AozoraFallbackManifestChunk } from "./aozora-fallback/manifest";
+import {
+  MAX_FALLBACK_MERGE_INPUT_BYTES,
+  MAX_FALLBACK_MERGE_PAGES,
+  MERGE_ERROR_FAILED,
+  MERGE_ERROR_TOO_LARGE,
+  countPdfPages,
+  mergeChunkPdfs,
+  totalBytes,
+} from "./aozora-fallback/merge-pdf";
+import { computeDocumentMetrics } from "./aozora-fallback/metrics";
+import { writeAozoraFallbackProgress } from "./aozora-fallback/progress";
+import { splitContentIntoChunks } from "./aozora-fallback/split";
 import { convertInContainer, convertUploadedPdfInContainer } from "./container";
 import { DEFAULT_EPUB_OPTIONS } from "./epub-options";
 import type { EpubConvertOptions } from "./epub-options";
@@ -16,6 +42,7 @@ import { EpubError } from "./epub/errors";
 import { prepareEpubDocument } from "./epub/html";
 import { resolveMaxUploadEpubBytes } from "./epub-upload";
 import { prepareRenderInput } from "./extract";
+import { resolveAozoraTimeoutFallbackEnabled } from "./feature-flags";
 import { buildInlineFontCss } from "./fonts";
 import {
   articleHtmlKey,
@@ -27,7 +54,7 @@ import {
   resolveMaxEpubHtmlBytes,
   resolveMaxPdfBytes,
 } from "./jobs";
-import { renderPdf, renderPdfFromHtml, renderSelfStyledHtmlPdf } from "./pdf";
+import { renderPdf, renderPdfFromHtml, renderSelfStyledHtmlPdf, formatJstTimestamp } from "./pdf";
 import {
   DEFAULT_PDF_OPTIONS,
   resolveMaxUploadPdfBytes,
@@ -46,7 +73,7 @@ import { prepareTextDocument } from "./text-prepare";
 import { DEFAULT_TEXT_OPTIONS } from "./text-options";
 import type { TextConvertOptions } from "./text-options";
 import { textPrepareErrorMessage } from "./text-upload";
-import type { ConvertJobParams, ConvertSource, Env, PdfConvertOptions } from "./types";
+import type { ConvertJobParams, ConvertSource, Env, PdfConvertOptions, RenderOptions } from "./types";
 import { AozoraAstLimitExceededError } from "../packages/aozora-text/src/index";
 
 // xtctool may run up to 600s (XTC_TIMEOUT_SECONDS in container.ts); allow a
@@ -131,6 +158,37 @@ function browserRunPdfErrorMessage(code: number | null): string {
 }
 
 /**
+ * Client-facing message for a failed render-aozora-fallback-* chunk step
+ * (Aozora timeout-fallback spec §19). Deliberately a DIFFERENT string from
+ * browserRunPdfErrorMessage's timeout case ("...retrying may succeed") even
+ * though both key off the same BROWSER_RUN_TIMEOUT_CODE: this one only ever
+ * fires once a 4-chunk split already happened, so telling it apart in logs/
+ * error text matters. Per spec §16.3/§19 "MVPではretry後failed" — a chunk
+ * hitting 6002 is NOT retried more aggressively or split further, it just
+ * uses the render-*-fallback step's existing retry budget like every other
+ * render step, then fails the whole job on exhaustion.
+ */
+function browserRunFallbackChunkErrorMessage(code: number | null): string {
+  return code === BROWSER_RUN_TIMEOUT_CODE
+    ? "PDF generation timed out after fallback splitting"
+    : "PDF generation failed";
+}
+
+/**
+ * render-pdf's outcome for an Aozora Bunko job (spec §8): "success" is the
+ * existing single-document result; "fallback-timeout" means Browser Run
+ * reported code 6002 for this exact input and the step deliberately did NOT
+ * throw (see the call site) — the same document is never retried through
+ * render-pdf's own retry budget for this outcome (spec §27 "初回6002を複数回
+ * retryしない"), it goes straight to the 4-chunk split instead. Every other
+ * failure (network/5xx, or 6002 with the fallback flag off or on a
+ * non-Aozora-origin document) still throws exactly as before.
+ */
+type InitialAozoraRenderResult =
+  | { outcome: "success"; pdfKey: string; elapsedMs: number; browserMs: number | null }
+  | { outcome: "fallback-timeout"; code: 6002; elapsedMs: number; browserMs: number | null };
+
+/**
  * Conversion pipeline behind POST /jobs (extract mode and Aozora Bunko URLs
  * run extract-content first
  * → then always render-pdf → convert-xtc → delete-intermediate-pdf). The
@@ -186,6 +244,12 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
     // step return value (step outputs are capped at 1 MiB).
     let articleKey: string | null = null;
     let fontsKey: string | null = null;
+    // True only when prepareRenderInput's dedicated Aozora extractor itself
+    // produced the article (RenderInput.origin === "aozora"), never when an
+    // Aozora URL degraded to the generic extractor — the timeout-fallback's
+    // eligibility gate (spec §9 "青空文庫専用抽出が成功") reads this, not
+    // isAozoraBunkoUrl(target) alone.
+    let isAozoraOrigin = false;
     // Render options resolved deterministically from the params (explicit
     // layout/font win; blanks fall back to per-site defaults — Aozora
     // Bunko: vertical + BIZ UDMincho). Pure derivation, so it needs no step
@@ -196,7 +260,7 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
     // their dedicated extraction lives behind prepareRenderInput, which for
     // mode "full" degrades back to the plain URL render on any problem.
     if (mode === "extract" || isAozoraBunkoUrl(target)) {
-      ({ articleKey, fontsKey } = await step.do(
+      ({ articleKey, fontsKey, isAozoraOrigin } = await step.do(
         "extract-content",
         {
           retries: { limit: 1, delay: "5 seconds", backoff: "constant" },
@@ -217,7 +281,7 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
             options,
           );
           if (input.kind === "url") {
-            return { articleKey: null, fontsKey: null };
+            return { articleKey: null, fontsKey: null, isAozoraOrigin: false };
           }
           const key = articleHtmlKey(jobId);
           try {
@@ -232,7 +296,7 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
               `[${jobId}] R2 put ${key} failed; falling back to full render`,
               error,
             );
-            return { articleKey: null, fontsKey: null };
+            return { articleKey: null, fontsKey: null, isAozoraOrigin: false };
           }
           // The inlined font CSS rides a second key: it is injected via
           // addStyleTag at render time (the docs-supported custom-font path
@@ -253,12 +317,16 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
               );
             }
           }
-          return { articleKey: key, fontsKey: storedFontsKey };
+          return {
+            articleKey: key,
+            fontsKey: storedFontsKey,
+            isAozoraOrigin: input.origin === "aozora",
+          };
         },
       ));
     }
 
-    const { pdfKey } = await step.do(
+    const initialRender: InitialAozoraRenderResult = await step.do(
       "render-pdf",
       {
         retries: { limit: 2, delay: "10 seconds", backoff: "exponential" },
@@ -268,7 +336,7 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
         // margin for R2 I/O.
         timeout: "7 minutes",
       },
-      async () => {
+      async (): Promise<InitialAozoraRenderResult> => {
         // Extract mode reads the prepared article HTML back from R2; a
         // missing object (expired mid-job) degrades to the full render
         // rather than failing — same always-produce-output stance as the
@@ -293,6 +361,11 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
         let articleBytes: number | null = null;
         let fontCssBytes: number | null = null;
         let mode: "extract" | "full";
+        // Kept only for the Aozora-specific diagnostic log below (spec
+        // §21); null whenever isAozoraOrigin is false, so the extra
+        // parse/count work in computeDocumentMetrics never runs for
+        // non-Aozora jobs.
+        let articleHtmlForAozoraLog: string | null = null;
         if (article !== null) {
           mode = "extract";
           // Missing/unreadable fonts.css only degrades the font (the render
@@ -315,6 +388,9 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
           articleBytes = new TextEncoder().encode(articleHtml).length;
           if (fontCss !== null) {
             fontCssBytes = new TextEncoder().encode(fontCss).length;
+          }
+          if (isAozoraOrigin) {
+            articleHtmlForAozoraLog = articleHtml;
           }
           // Measured from immediately before the quickAction call only: R2
           // I/O and the .text()/TextEncoder work above must stay outside
@@ -342,6 +418,7 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
         const browserMsHeader = response.headers.get("X-Browser-Ms-Used");
         const browserMsParsed =
           browserMsHeader !== null ? Number(browserMsHeader) : NaN;
+        const browserMs = Number.isFinite(browserMsParsed) ? browserMsParsed : null;
         // Read the body once, ahead of the log line, so both the code
         // classification and the (unchanged) console.error detail can use
         // it; response.text() cannot be called twice. Left null on success:
@@ -357,17 +434,68 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
           ok: response.ok,
           status: response.status,
           elapsedMs,
-          browserMs: Number.isFinite(browserMsParsed) ? browserMsParsed : null,
+          browserMs,
           articleBytes,
           fontCssBytes,
           code: browserRunErrorCode,
         });
+        // Aozora timeout-fallback eligibility (spec §8/§9): only a document
+        // whose article HTML came from the DEDICATED Aozora extractor
+        // (isAozoraOrigin), only when THIS attempt actually rendered that
+        // article HTML (mode === "extract" — isAozoraOrigin alone is not
+        // enough: if the R2 object expired mid-job, the `article === null`
+        // branch above degrades this specific attempt to mode "full",
+        // rendering the plain URL instead, and there is no article HTML left
+        // to split), only on this exact machine-readable code, only when the
+        // flag is on. Every other failure (network/5xx, non-6002, 6002 on a
+        // non-Aozora-origin or degraded-to-full-render attempt, or 6002 with
+        // the flag off) falls through to the unchanged throw below and keeps
+        // using render-pdf's own retry budget exactly as before this feature
+        // existed.
+        const aozoraFallbackEnabled = resolveAozoraTimeoutFallbackEnabled(this.env);
+        const isFallbackTimeout =
+          !response.ok &&
+          isAozoraOrigin &&
+          mode === "extract" &&
+          aozoraFallbackEnabled &&
+          browserRunErrorCode === BROWSER_RUN_TIMEOUT_CODE;
+        if (articleHtmlForAozoraLog !== null) {
+          const metrics = computeDocumentMetrics(articleHtmlForAozoraLog);
+          console.log(`[${jobId}] aozora initial render`, {
+            outcome: response.ok ? "success" : isFallbackTimeout ? "fallback-timeout" : "failed",
+            status: response.status,
+            code: browserRunErrorCode,
+            elapsedMs,
+            browserMs,
+            articleBytes,
+            fontCssBytes,
+            textLength: metrics.textLength,
+            elementCount: metrics.elementCount,
+            rubyCount: metrics.rubyCount,
+            brCount: metrics.brCount,
+            imageCount: metrics.imageCount,
+          });
+        }
         if (!response.ok) {
           // Upstream detail goes to logs only; the thrown message surfaces
           // to the client via instance.status().error on final failure.
           console.error(
             `[${jobId}] Browser Run returned ${response.status}: ${browserRunErrorBody}`,
           );
+          if (isFallbackTimeout) {
+            // Deliberately NOT thrown (spec §8/§27 "初回6002を複数回retry
+            // しない"): a plain return here means step.do() sees this as a
+            // successful attempt, so render-pdf's own retry budget is never
+            // spent replaying the exact same 120s-timeout capture. The
+            // caller below routes this outcome into the 4-chunk split
+            // instead of convert-xtc.
+            return {
+              outcome: "fallback-timeout",
+              code: BROWSER_RUN_TIMEOUT_CODE,
+              elapsedMs,
+              browserMs,
+            };
+          }
           throw new Error(browserRunPdfErrorMessage(browserRunErrorCode));
         }
         // Deliberately buffered, not streamed: the size gate needs the byte
@@ -388,11 +516,34 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
         await this.env.XTC_BUCKET.put(key, pdfBytes, {
           httpMetadata: { contentType: "application/pdf" },
         });
-        return { pdfKey: key };
+        return { outcome: "success", pdfKey: key, elapsedMs, browserMs };
       },
     );
 
+    // aozoraFallbackKeys stays empty unless the branch below actually runs
+    // the 4-chunk pipeline — delete-intermediate-pdf's cleanup (finally,
+    // below) only needs to know these keys when they exist. Declared outside
+    // the try below (along with pdfKey) so a THROW from either branch —
+    // including runAozoraTimeoutFallback itself, e.g. a chunk that never
+    // recovers from code 6002 — still reaches the finally's cleanup with
+    // whatever keys were already written (spec §16.6 "成功・失敗にかかわらず
+    // 削除する" / §5's "中間成果物を成功・失敗にかかわらず削除する").
+    let aozoraFallbackKeys: string[] = [];
+    let pdfKey: string | null = null;
     try {
+      if (initialRender.outcome === "success") {
+        pdfKey = initialRender.pdfKey;
+      } else {
+        // initialRender.outcome === "fallback-timeout": split the Aozora
+        // article into 4 balanced chunks, render each individually, merge
+        // the resulting PDFs with pdf-lib, and write the result to the SAME
+        // intermediatePdfKey(jobId) ("source.pdf") the normal path uses —
+        // convert-xtc below needs no branch of its own (spec §16.5/§20
+        // "source.pdf は通常経路とfallbackで同じ後段契約").
+        aozoraFallbackKeys = allAozoraFallbackKeys(jobId);
+        pdfKey = await this.runAozoraTimeoutFallback(jobId, url, articleKey, fontsKey, options, step);
+      }
+
       const { xtcKey, title } = await step.do(
         "convert-xtc",
         {
@@ -402,7 +553,10 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
           timeout: "12 minutes",
         },
         async () => {
-          const source = await this.env.XTC_BUCKET.get(pdfKey);
+          // pdfKey is always set by this point — both branches above assign
+          // it (or throw) before convert-xtc ever runs; TypeScript cannot
+          // narrow across this async closure boundary on its own.
+          const source = await this.env.XTC_BUCKET.get(pdfKey!);
           if (source === null) {
             // Only possible if the intermediate expired mid-job (1-day
             // lifecycle) or was deleted; re-rendering is out of scope here.
@@ -464,7 +618,7 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
       // Best-effort — if the delete itself fails, the R2 lifecycle rule on
       // intermediate/ still removes the object within ~a day.
       await step.do("delete-intermediate-pdf", async () => {
-        const keys = [pdfKey, articleKey, fontsKey].filter(
+        const keys = [pdfKey, articleKey, fontsKey, ...aozoraFallbackKeys].filter(
           (key): key is string => key !== null,
         );
         for (const key of keys) {
@@ -476,6 +630,298 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
         }
       });
     }
+  }
+
+  /**
+   * The Aozora Bunko timeout fallback (spec §14/§16.2-§16.4): only invoked
+   * when render-pdf's own step.do already returned "fallback-timeout"
+   * (isAozoraOrigin && the flag on && Browser Run code 6002), so
+   * `articleKey` is guaranteed non-null here.
+   *
+   * 1. prepare-aozora-fallback: DOM-splits the article into 4 balanced
+   *    pieces (src/aozora-fallback/split.ts) and writes 4 chunk HTML
+   *    documents + a manifest to R2.
+   * 2. render-aozora-fallback-0000..0003: 4 SEQUENTIAL step.do calls (spec
+   *    §27 "チャンクを並列処理しない") — each renders one chunk with the
+   *    SAME shared fonts.css the initial attempt already produced (spec §27
+   *    "フォントCSSを4回生成しない"; never regenerated here).
+   * 3. merge-aozora-fallback-pdf: concatenates the 4 chunk PDFs with pdf-lib
+   *    and writes the result to the EXISTING intermediatePdfKey(jobId)
+   *    ("source.pdf") — the same key/contract the normal path uses, so the
+   *    caller's convert-xtc step needs no branch of its own (spec §16.5/
+   *    §20).
+   *
+   * Returns the R2 key of the merged PDF (always intermediatePdfKey(jobId)).
+   */
+  private async runAozoraTimeoutFallback(
+    jobId: string,
+    sourceUrl: string,
+    articleKey: string | null,
+    fontsKey: string | null,
+    options: RenderOptions,
+    step: WorkflowStep,
+  ): Promise<string> {
+    const SPLIT_FAILED_MESSAGE = "the document could not be split safely";
+
+    const manifestKey = await step.do(
+      "prepare-aozora-fallback",
+      {
+        // No retry budget beyond one extra attempt: a split/parse failure
+        // here is deterministic for this exact article HTML (see the
+        // NonRetryableError throws below) — the single retry only covers a
+        // transient R2 get/put hiccup, mirroring prepare-text/prepare-epub's
+        // identical stance (src/workflow.ts's other prepare-* steps).
+        retries: { limit: 1, delay: "5 seconds", backoff: "constant" },
+        timeout: "2 minutes",
+      },
+      async () => {
+        if (articleKey === null) {
+          // Unreachable in practice — the caller only invokes this method
+          // when render-pdf's extract-mode branch (which requires a non-null
+          // articleKey) already ran — but keeps this step's input contract
+          // explicit and satisfies strict null checking.
+          throw new NonRetryableError(SPLIT_FAILED_MESSAGE);
+        }
+        const article = await this.env.XTC_BUCKET.get(articleKey);
+        if (article === null) {
+          // Only possible if the intermediate expired mid-job.
+          throw new NonRetryableError(SPLIT_FAILED_MESSAGE);
+        }
+        const parsed = parseAozoraArticleDocument(await article.text());
+        if (parsed === null) {
+          throw new NonRetryableError(SPLIT_FAILED_MESSAGE);
+        }
+        let domChunks: ReturnType<typeof splitContentIntoChunks>;
+        try {
+          domChunks = splitContentIntoChunks(parsed.contentHtml);
+        } catch (error) {
+          console.error(`[${jobId}] aozora fallback split failed`, error);
+          throw new NonRetryableError(SPLIT_FAILED_MESSAGE);
+        }
+
+        const convertedAt = formatJstTimestamp(new Date());
+        const manifestChunks: AozoraFallbackManifestChunk[] = [];
+        let totalTextLength = 0;
+        for (let index = 0; index < 4; index++) {
+          const chunkIndex = index as AozoraFallbackChunkIndex;
+          const dom = domChunks[index];
+          const chunkHtml = buildAozoraFallbackChunkHtml(dom.html, chunkIndex, {
+            title: parsed.title,
+            byline: parsed.byline,
+            sourceUrl,
+            convertedAt,
+          });
+          const htmlKey = aozoraFallbackChunkHtmlKey(jobId, chunkIndex);
+          await this.env.XTC_BUCKET.put(htmlKey, chunkHtml, {
+            httpMetadata: { contentType: "text/html; charset=utf-8" },
+          });
+          totalTextLength += dom.textLength;
+          manifestChunks.push({
+            index: chunkIndex,
+            id: aozoraFallbackChunkId(chunkIndex),
+            ...(chunkIndex === 0 ? { title: parsed.title } : {}),
+            textLength: dom.textLength,
+            elementCount: dom.elementCount,
+            rubyCount: dom.rubyCount,
+            brCount: dom.brCount,
+            imageCount: dom.imageCount,
+            htmlKey,
+            pdfKey: aozoraFallbackChunkPdfKey(jobId, chunkIndex),
+          });
+        }
+
+        const manifest: AozoraFallbackManifest = {
+          version: 1,
+          strategy: "four-balanced-dom-chunks",
+          jobId,
+          sourceUrl,
+          title: parsed.title,
+          author: parsed.byline,
+          layout: options.layout,
+          font: options.font,
+          chunkCount: 4,
+          totalTextLength,
+          createdAt: convertedAt,
+          chunks: manifestChunks,
+        };
+        const key = aozoraFallbackManifestKey(jobId);
+        await this.env.XTC_BUCKET.put(key, serializeAozoraFallbackManifest(manifest), {
+          httpMetadata: { contentType: "application/json" },
+        });
+        // Best-effort, diagnostic-only (src/aozora-fallback/progress.ts's
+        // doc comment) — never awaited for its effect on the job outcome.
+        await writeAozoraFallbackProgress(this.env, jobId, {
+          phase: "splitting",
+          completedChunks: 0,
+        });
+        return key;
+      },
+    );
+
+    for (let index = 0; index < 4; index++) {
+      const chunkIndex = index as AozoraFallbackChunkIndex;
+      await step.do(
+        `render-aozora-fallback-${aozoraFallbackChunkId(chunkIndex)}`,
+        {
+          // Same retry/timeout shape as render-pdf itself: a chunk is a
+          // fraction of the original document, so the same worst-case
+          // budget comfortably covers it.
+          retries: { limit: 2, delay: "10 seconds", backoff: "exponential" },
+          timeout: "7 minutes",
+        },
+        async () => {
+          const htmlKey = aozoraFallbackChunkHtmlKey(jobId, chunkIndex);
+          const chunkHtmlObj = await this.env.XTC_BUCKET.get(htmlKey);
+          if (chunkHtmlObj === null) {
+            // Only possible if the intermediate expired mid-job.
+            throw new NonRetryableError(SPLIT_FAILED_MESSAGE);
+          }
+          const chunkHtml = await chunkHtmlObj.text();
+          // The SAME shared fonts.css the initial (single-document) attempt
+          // already produced — never regenerated per chunk (spec §27
+          // "フォントCSSを4回生成しない"). Missing/unreadable degrades the
+          // font only, same fail-soft stance as render-pdf's own fontsKey
+          // handling above.
+          let fontCss: string | null = null;
+          if (fontsKey !== null) {
+            try {
+              const fonts = await this.env.XTC_BUCKET.get(fontsKey);
+              fontCss = fonts !== null ? await fonts.text() : null;
+            } catch (error) {
+              console.error(`[${jobId}] R2 get ${fontsKey} failed`, error);
+            }
+          }
+          const renderStart = Date.now();
+          const response = await renderPdfFromHtml(this.env, chunkHtml, fontCss, options);
+          const elapsedMs = Date.now() - renderStart;
+          const browserMsHeader = response.headers.get("X-Browser-Ms-Used");
+          const browserMsParsed = browserMsHeader !== null ? Number(browserMsHeader) : NaN;
+          const browserMs = Number.isFinite(browserMsParsed) ? browserMsParsed : null;
+          if (!response.ok) {
+            const bodyText = await response.text();
+            const code = parseBrowserRunErrorCode(bodyText);
+            console.error(
+              `[${jobId}] aozora fallback chunk ${chunkIndex} Browser Run returned ${response.status}: ${bodyText}`,
+            );
+            // Spec §16.3/§19 "MVPではretry後failed": a chunk hitting 6002
+            // just uses this step's own (already-configured) retry budget,
+            // same as every other render step — never a further split, never
+            // extra retries beyond what render-aozora-fallback-* is already
+            // configured with above.
+            throw new Error(browserRunFallbackChunkErrorMessage(code));
+          }
+          const pdfBytes = new Uint8Array(await response.arrayBuffer());
+          const maxPdfBytes = resolveMaxPdfBytes(this.env);
+          if (pdfBytes.byteLength > maxPdfBytes) {
+            throw new NonRetryableError(
+              `rendered PDF exceeds the ${maxPdfBytes} byte limit; try a shorter page or the layout-preserving (full) mode`,
+            );
+          }
+          const pageCount = await countPdfPages(pdfBytes).catch(() => null);
+          console.log(`[${jobId}] aozora fallback render`, {
+            chunkIndex,
+            elapsedMs,
+            browserMs,
+            pdfBytes: pdfBytes.byteLength,
+            pageCount,
+          });
+          await this.env.XTC_BUCKET.put(aozoraFallbackChunkPdfKey(jobId, chunkIndex), pdfBytes, {
+            httpMetadata: { contentType: "application/pdf" },
+          });
+          await writeAozoraFallbackProgress(this.env, jobId, {
+            phase: "rendering",
+            completedChunks: chunkIndex + 1,
+            currentChunkIndex: chunkIndex,
+          });
+        },
+      );
+    }
+
+    return await step.do(
+      "merge-aozora-fallback-pdf",
+      {
+        retries: { limit: 2, delay: "10 seconds", backoff: "exponential" },
+        timeout: "3 minutes",
+      },
+      async () => {
+        const manifestObj = await this.env.XTC_BUCKET.get(manifestKey);
+        if (manifestObj === null) {
+          throw new NonRetryableError(MERGE_ERROR_FAILED);
+        }
+        const manifest = parseAozoraFallbackManifest(await manifestObj.text());
+        if (manifest === null) {
+          throw new NonRetryableError(MERGE_ERROR_FAILED);
+        }
+
+        const chunkBytes: Uint8Array[] = [];
+        for (const chunk of manifest.chunks) {
+          const obj = await this.env.XTC_BUCKET.get(chunk.pdfKey);
+          if (obj === null) {
+            throw new NonRetryableError(MERGE_ERROR_FAILED);
+          }
+          chunkBytes.push(new Uint8Array(await obj.arrayBuffer()));
+        }
+
+        const inputBytes = totalBytes(chunkBytes);
+        if (inputBytes > MAX_FALLBACK_MERGE_INPUT_BYTES) {
+          // Deterministic for this exact set of chunk PDFs.
+          throw new NonRetryableError(MERGE_ERROR_TOO_LARGE);
+        }
+
+        const mergeStart = Date.now();
+        // mergeChunkPdfs parses every chunk (and its own merged output)
+        // exactly once and returns every page count this step needs —
+        // deliberately NOT re-parsed here via countPdfPages: an unreadable
+        // merged output already fails INSIDE mergeChunkPdfs (thrown as
+        // MERGE_ERROR_FAILED/MERGE_ERROR_PAGE_MISMATCH below), so there is
+        // no "outputPages couldn't be determined" case left to paper over
+        // with a `.catch(() => -1)` that would silently defeat the
+        // MAX_FALLBACK_MERGE_PAGES gate below.
+        let merged: Uint8Array;
+        let inputPageCounts: number[];
+        let outputPages: number;
+        try {
+          ({ bytes: merged, inputPageCounts, outputPages } = await mergeChunkPdfs(chunkBytes));
+        } catch (error) {
+          // mergeChunkPdfs only ever throws one of the fixed spec §19
+          // messages (MERGE_ERROR_FAILED / MERGE_ERROR_PAGE_MISMATCH) —
+          // both deterministic for this exact set of chunk PDFs.
+          const message = error instanceof Error ? error.message : MERGE_ERROR_FAILED;
+          throw new NonRetryableError(message);
+        }
+        const elapsedMs = Date.now() - mergeStart;
+        const inputPages = inputPageCounts.reduce((sum, n) => sum + n, 0);
+
+        if (outputPages > MAX_FALLBACK_MERGE_PAGES) {
+          throw new NonRetryableError(MERGE_ERROR_TOO_LARGE);
+        }
+        const maxPdfBytes = resolveMaxPdfBytes(this.env);
+        if (merged.byteLength > maxPdfBytes) {
+          throw new NonRetryableError(
+            `rendered PDF exceeds the ${maxPdfBytes} byte limit; try a shorter page or the layout-preserving (full) mode`,
+          );
+        }
+
+        console.log(`[${jobId}] aozora fallback PDF merge`, {
+          inputPages,
+          outputPages,
+          inputBytes,
+          outputBytes: merged.byteLength,
+          compressionRatio: inputBytes > 0 ? merged.byteLength / inputBytes : null,
+          elapsedMs,
+        });
+
+        const key = intermediatePdfKey(jobId);
+        await this.env.XTC_BUCKET.put(key, merged, {
+          httpMetadata: { contentType: "application/pdf" },
+        });
+        await writeAozoraFallbackProgress(this.env, jobId, {
+          phase: "merging",
+          completedChunks: 4,
+        });
+        return key;
+      },
+    );
   }
 
   /**

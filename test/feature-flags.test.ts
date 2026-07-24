@@ -2,7 +2,12 @@
 // Copyright (C) 2026 aGFydWtp
 
 import { describe, expect, it } from "vitest";
-import { resolveConversionMode, resolveLibraryWriteMode, resolvePairingMode } from "../src/feature-flags";
+import {
+  resolveAozoraTimeoutFallbackEnabled,
+  resolveConversionMode,
+  resolveLibraryWriteMode,
+  resolvePairingMode,
+} from "../src/feature-flags";
 
 /**
  * 登録モード仕様 Phase3 §7: 機能フラグ3種の resolver。「未設定・不正値は
@@ -68,5 +73,31 @@ describe("resolveConversionMode", () => {
 
   it("resolves enabled explicitly", () => {
     expect(resolveConversionMode({ CONVERSION_MODE: "enabled" })).toBe("enabled");
+  });
+});
+
+/**
+ * 青空文庫PDFタイムアウト時の4分割フォールバック仕様 §24: 極性が上の3フラグと
+ * 逆(未設定 = false = 現行動作維持)であることをピン留めする回帰ガード。
+ */
+describe("resolveAozoraTimeoutFallbackEnabled", () => {
+  it("defaults to false (disabled) when unset — opposite polarity from the other 3 flags", () => {
+    expect(resolveAozoraTimeoutFallbackEnabled({})).toBe(false);
+  });
+
+  it("falls back to false on garbage values", () => {
+    expect(resolveAozoraTimeoutFallbackEnabled({ AOZORA_TIMEOUT_FALLBACK_ENABLED: "banana" })).toBe(
+      false,
+    );
+    expect(resolveAozoraTimeoutFallbackEnabled({ AOZORA_TIMEOUT_FALLBACK_ENABLED: "" })).toBe(false);
+    expect(resolveAozoraTimeoutFallbackEnabled({ AOZORA_TIMEOUT_FALLBACK_ENABLED: "TRUE" })).toBe(
+      false,
+    );
+  });
+
+  it("resolves true only on the exact value", () => {
+    expect(resolveAozoraTimeoutFallbackEnabled({ AOZORA_TIMEOUT_FALLBACK_ENABLED: "true" })).toBe(
+      true,
+    );
   });
 });

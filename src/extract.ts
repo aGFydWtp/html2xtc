@@ -65,9 +65,17 @@ export interface SourceHtml {
  * keeping the ~300KB of base64 out of the document keeps article.html small.
  * (What makes the font actually apply is the top-level font-family rule in
  * the print rules — see pdf.ts.)
+ *
+ * `origin` on the "html" variant distinguishes the Aozora Bunko dedicated
+ * extractor (prepareAozoraRenderInput, src/aozora.ts) from the generic
+ * Readability path below — the Aozora timeout-fallback spec (§9) requires
+ * the 4-chunk split to trigger ONLY when the dedicated extraction itself
+ * succeeded, never when an Aozora URL degraded to the generic extractor
+ * (e.g. an old-format reader page with no div.main_text). Consumed by
+ * src/workflow.ts's extract-content step.
  */
 export type RenderInput =
-  | { kind: "html"; html: string; fontCss: string | null }
+  | { kind: "html"; html: string; fontCss: string | null; origin: "aozora" | "extract" }
   | { kind: "url"; url: string };
 
 /** Injection point for tests, mirroring validate.ts's DnsResolver pattern. */
@@ -444,5 +452,6 @@ async function buildPrintInput(
     kind: "html",
     html: buildPrintHtml(article, sourceUrl, convertedAt),
     fontCss,
+    origin: "extract",
   };
 }

@@ -139,6 +139,7 @@ export async function prepareAozoraRenderInput(
         AOZORA_DOCUMENT_CSS,
       ),
       fontCss,
+      origin: "aozora",
     };
   } catch (error) {
     // Fail-soft: the standard pipeline is the always-works baseline.

@@ -4,6 +4,7 @@ import {
   formatJstTimestamp,
   renderPdf,
   renderPdfFromHtml,
+  renderSelfStyledHtmlPdf,
   LAZY_IMAGE_SCRIPT,
   PRINT_FONT_CSS_URL,
   X3_PRINT_CSS,
@@ -59,6 +60,13 @@ describe("renderPdfFromHtml", () => {
     // grace lets those stragglers land before capture.
     expect(capturedOptions(quickAction).waitForTimeout).toBe(3_000);
   });
+
+  it("sets actionTimeout to the type definition's documented max (120s), not the public docs' 5min", async () => {
+    const { env, quickAction } = captureEnv();
+    await renderPdfFromHtml(env, "<html></html>", null);
+    const options = quickAction.mock.calls[0]?.[1] as { actionTimeout?: number };
+    expect(options.actionTimeout).toBe(120_000);
+  });
 });
 
 describe("renderPdf (full-page path)", () => {
@@ -86,6 +94,33 @@ describe("renderPdf (full-page path)", () => {
     // also subsumes the previous 3 s font grace. Must stay under the
     // quick-action cap (60 s) and inside the workflow step budget.
     expect(options.waitForTimeout).toBe(10_000);
+  });
+
+  it("sets actionTimeout to the type definition's documented max (120s)", async () => {
+    const { env, quickAction } = captureEnv();
+    await renderPdf(env, "https://example.com/article");
+    const options = quickAction.mock.calls[0]?.[1] as { actionTimeout?: number };
+    expect(options.actionTimeout).toBe(120_000);
+  });
+});
+
+describe("renderSelfStyledHtmlPdf (TXT-upload self-styled path)", () => {
+  const captureEnv = () => {
+    const quickAction = vi.fn(
+      async (_action: string, _options: unknown) =>
+        new Response("%PDF", { status: 200 }),
+    );
+    return {
+      env: { BROWSER: { quickAction } as unknown as BrowserRun } as Env,
+      quickAction,
+    };
+  };
+
+  it("sets actionTimeout to the type definition's documented max (120s)", async () => {
+    const { env, quickAction } = captureEnv();
+    await renderSelfStyledHtmlPdf(env, "<html></html>", null);
+    const options = quickAction.mock.calls[0]?.[1] as { actionTimeout?: number };
+    expect(options.actionTimeout).toBe(120_000);
   });
 });
 

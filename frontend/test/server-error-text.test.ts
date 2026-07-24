@@ -47,6 +47,16 @@ describe("resolveServerErrorKey", () => {
     expect(resolveServerErrorKey("some brand-new server message")).toBeNull();
   });
 
+  // render-pdf/render-text-pdf/render-epub-pdf steps (src/workflow.ts):
+  // previously unmapped entirely, so "PDF generation failed" reached users
+  // untranslated even in the Japanese UI (the bug this pair of keys fixes).
+  it("maps the render-step generic and timeout-specific messages (src/workflow.ts)", () => {
+    expect(resolveServerErrorKey("PDF generation failed")).toBe("pdf_err_render_failed");
+    expect(resolveServerErrorKey("PDF generation timed out; retrying may succeed")).toBe(
+      "pdf_err_render_timeout",
+    );
+  });
+
   // TXTアップロード系の対応表は src/text-upload.ts#textPrepareErrorMessage と
   // src/workflow.ts#runTextSource の実装（バックエンド確定後）に対して突き合わせ
   // 済み。ここでの文字列は実際に投げられる安定文字列そのもの。

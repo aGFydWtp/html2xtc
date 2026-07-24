@@ -83,6 +83,54 @@ function isNonRetryableUploadedPdfStatus(status: number): boolean {
 }
 
 /**
+ * Browser Run's own machine-readable code for "a timeout was reached...
+ * Request timed out" (measured in prod: every render-pdf capture that blew
+ * the ~60s quickAction budget on aozora.gr.jp's 神曲・淨火 returned exactly
+ * this code). Cloudflare's Browser Run FAQ documents that HTTP 422 alone
+ * covers OOM and page-crash failures too, not only timeouts — so this code,
+ * not the status, is what must gate the timeout-specific message below.
+ *
+ * NOT used to change retry behavior (unlike EpubError's
+ * DETERMINISTIC_ERROR_CODES allowlist, src/epub/errors.ts): the same code
+ * failed 淨火 15/15 times but let 吾輩は猫である succeed on a later retry, so
+ * it is not reliably deterministic and `retries` on the render-* steps stays
+ * exactly as configured.
+ */
+const BROWSER_RUN_TIMEOUT_CODE = 6002;
+
+/**
+ * Best-effort extraction of `errors[0].code` from a failed Browser Run
+ * quickAction response body. Never throws: a body that isn't JSON, or JSON
+ * without the expected shape, degrades to `null` — same fail-safe stance as
+ * isNonRetryableUploadedPdfStatus/EpubError's code allowlists, an
+ * unrecognized shape must never be mistaken for a match.
+ */
+function parseBrowserRunErrorCode(bodyText: string): number | null {
+  try {
+    const parsed: unknown = JSON.parse(bodyText);
+    const code = (parsed as { errors?: Array<{ code?: unknown }> })?.errors?.[0]?.code;
+    return typeof code === "number" ? code : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Client-facing message for a failed render-pdf/render-text-pdf/
+ * render-epub-pdf step. Deliberately NOT keyed off `response.status === 422`
+ * (see BROWSER_RUN_TIMEOUT_CODE's comment) — only this code selects the
+ * timeout-specific message; every other code (or an unparseable body) keeps
+ * the existing generic message.
+ * frontend/src/lib/server-error-text.ts maps both exact strings to i18n
+ * keys — keep the two in sync.
+ */
+function browserRunPdfErrorMessage(code: number | null): string {
+  return code === BROWSER_RUN_TIMEOUT_CODE
+    ? "PDF generation timed out; retrying may succeed"
+    : "PDF generation failed";
+}
+
+/**
  * Conversion pipeline behind POST /jobs (extract mode and Aozora Bunko URLs
  * run extract-content first
  * → then always render-pdf → convert-xtc → delete-intermediate-pdf). The
@@ -294,6 +342,16 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
         const browserMsHeader = response.headers.get("X-Browser-Ms-Used");
         const browserMsParsed =
           browserMsHeader !== null ? Number(browserMsHeader) : NaN;
+        // Read the body once, ahead of the log line, so both the code
+        // classification and the (unchanged) console.error detail can use
+        // it; response.text() cannot be called twice. Left null on success:
+        // response.arrayBuffer() below reads the real PDF bytes instead.
+        let browserRunErrorBody: string | null = null;
+        let browserRunErrorCode: number | null = null;
+        if (!response.ok) {
+          browserRunErrorBody = await response.text();
+          browserRunErrorCode = parseBrowserRunErrorCode(browserRunErrorBody);
+        }
         console.log(`[${jobId}] render-pdf`, {
           mode,
           ok: response.ok,
@@ -302,14 +360,15 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
           browserMs: Number.isFinite(browserMsParsed) ? browserMsParsed : null,
           articleBytes,
           fontCssBytes,
+          code: browserRunErrorCode,
         });
         if (!response.ok) {
           // Upstream detail goes to logs only; the thrown message surfaces
           // to the client via instance.status().error on final failure.
           console.error(
-            `[${jobId}] Browser Run returned ${response.status}: ${await response.text()}`,
+            `[${jobId}] Browser Run returned ${response.status}: ${browserRunErrorBody}`,
           );
-          throw new Error("PDF generation failed");
+          throw new Error(browserRunPdfErrorMessage(browserRunErrorCode));
         }
         // Deliberately buffered, not streamed: the size gate needs the byte
         // count, Browser Rendering's response has no Content-Length we could
@@ -743,6 +802,14 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
           const browserMsHeader = response.headers.get("X-Browser-Ms-Used");
           const browserMsParsed =
             browserMsHeader !== null ? Number(browserMsHeader) : NaN;
+          // See render-pdf's identical comment: the body can only be read
+          // once, so it is read here (failure only) ahead of the log line.
+          let browserRunErrorBody: string | null = null;
+          let browserRunErrorCode: number | null = null;
+          if (!response.ok) {
+            browserRunErrorBody = await response.text();
+            browserRunErrorCode = parseBrowserRunErrorCode(browserRunErrorBody);
+          }
           console.log(`[${jobId}] render-text-pdf`, {
             ok: response.ok,
             status: response.status,
@@ -750,12 +817,13 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
             browserMs: Number.isFinite(browserMsParsed) ? browserMsParsed : null,
             articleBytes,
             fontCssBytes,
+            code: browserRunErrorCode,
           });
           if (!response.ok) {
             console.error(
-              `[${jobId}] Browser Run returned ${response.status}: ${await response.text()}`,
+              `[${jobId}] Browser Run returned ${response.status}: ${browserRunErrorBody}`,
             );
-            throw new Error("PDF generation failed");
+            throw new Error(browserRunPdfErrorMessage(browserRunErrorCode));
           }
           const pdfBytes = await response.arrayBuffer();
           const maxPdfBytes = resolveMaxPdfBytes(this.env);
@@ -1058,6 +1126,14 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
           const browserMsHeader = response.headers.get("X-Browser-Ms-Used");
           const browserMsParsed =
             browserMsHeader !== null ? Number(browserMsHeader) : NaN;
+          // See render-pdf's identical comment: the body can only be read
+          // once, so it is read here (failure only) ahead of the log line.
+          let browserRunErrorBody: string | null = null;
+          let browserRunErrorCode: number | null = null;
+          if (!response.ok) {
+            browserRunErrorBody = await response.text();
+            browserRunErrorCode = parseBrowserRunErrorCode(browserRunErrorBody);
+          }
           console.log(`[${jobId}] render-epub-pdf`, {
             ok: response.ok,
             status: response.status,
@@ -1065,12 +1141,13 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
             browserMs: Number.isFinite(browserMsParsed) ? browserMsParsed : null,
             articleBytes,
             fontCssBytes,
+            code: browserRunErrorCode,
           });
           if (!response.ok) {
             console.error(
-              `[${jobId}] Browser Run returned ${response.status}: ${await response.text()}`,
+              `[${jobId}] Browser Run returned ${response.status}: ${browserRunErrorBody}`,
             );
-            throw new Error("PDF generation failed");
+            throw new Error(browserRunPdfErrorMessage(browserRunErrorCode));
           }
           const pdfBytes = await response.arrayBuffer();
           const maxPdfBytes = resolveMaxPdfBytes(this.env);

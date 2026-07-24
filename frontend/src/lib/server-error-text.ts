@@ -44,6 +44,8 @@ export type ServerErrorKey = keyof Pick<
   | "pdf_err_no_pages_selected"
   | "pdf_err_timeout"
   | "pdf_err_convert_failed"
+  | "pdf_err_render_failed"
+  | "pdf_err_render_timeout"
   | "text_err_empty"
   | "text_err_too_large"
   | "text_err_encoding_unknown"
@@ -91,6 +93,17 @@ export function resolveServerErrorKey(err: string): ServerErrorKey | null {
   // failed"、src/workflow.ts）。TXT専用の文言ではなく全ソース共通の文字列なので、
   // TXT専用キー（text_err_convert_failed）は作らずここへ合流させる。
   if (err === "XTC conversion failed") return "pdf_err_convert_failed";
+  // render-pdf/render-text-pdf/render-epub-pdf steps (src/workflow.ts):
+  // thrown when Browser Run's PDF-rendering quickAction itself fails, before
+  // convert-xtc ever runs. Deliberately two entries, not one: the workflow
+  // only substitutes the timeout-specific string when Browser Run's response
+  // body carries error code 6002 (a Cloudflare Browser Run timeout code, per
+  // its docs — HTTP 422 alone also covers OOM/page-crash causes, so 422 is
+  // not a substitute signal here); every other cause keeps the generic
+  // string. Previously unmapped entirely (a bug: the generic string reached
+  // users untranslated even in the Japanese UI) until this pair was added.
+  if (err === "PDF generation timed out; retrying may succeed") return "pdf_err_render_timeout";
+  if (err === "PDF generation failed") return "pdf_err_render_failed";
 
   // --- TXTアップロード系（src/text-upload.ts#textPrepareErrorMessage / ------------
   //     src/workflow.ts#runTextSource と突き合わせ済みの実文字列） -----------------

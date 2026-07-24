@@ -93,6 +93,8 @@ export interface Messages {
   pdf_err_upload_failed: string;
   pdf_err_convert_failed: string;
   pdf_err_timeout: string;
+  pdf_err_render_failed: string;
+  pdf_err_render_timeout: string;
 
   // --- TXTアップロード入力（実装仕様書 §6, §10, §19） -----------------------------
   text_remove_file: string;
@@ -522,6 +524,8 @@ export const I18N: Record<Lang, Messages> = {
     pdf_err_upload_failed: "PDFのアップロードに失敗しました。",
     pdf_err_convert_failed: "XTCへの変換に失敗しました。",
     pdf_err_timeout: "PDFが大きいため、変換が時間内に完了しませんでした。",
+    pdf_err_render_failed: "PDFの生成に失敗しました。",
+    pdf_err_render_timeout: "PDFの生成がタイムアウトしました。再試行すると成功する場合があります。",
 
     text_remove_file: "ファイルを解除",
     text_meta_line: (size, chars, lines) => `${size} ・ ${chars.toLocaleString("ja-JP")}字 ・ ${lines.toLocaleString("ja-JP")}行`,
@@ -935,6 +939,8 @@ export const I18N: Record<Lang, Messages> = {
     pdf_err_upload_failed: "Failed to upload the PDF.",
     pdf_err_convert_failed: "Failed to convert to XTC.",
     pdf_err_timeout: "The PDF is too large and the conversion did not finish in time.",
+    pdf_err_render_failed: "Failed to generate the PDF.",
+    pdf_err_render_timeout: "PDF generation timed out. Retrying may succeed.",
 
     text_remove_file: "Remove file",
     text_meta_line: (size, chars, lines) => `${size} · ${chars.toLocaleString("en-US")} chars · ${lines.toLocaleString("en-US")} lines`,

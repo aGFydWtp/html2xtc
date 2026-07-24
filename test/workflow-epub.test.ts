@@ -416,6 +416,64 @@ describe("runEpubSource: render-epub-pdf retry (spec §19.1 render retry)", () =
   });
 });
 
+describe("render-epub-pdf error classification (Browser Run error code, not just 422)", () => {
+  // The classification helper (src/workflow.ts, shared by all three render
+  // steps) is only exercised here — render-epub-pdf is the one step this
+  // file's fake WorkflowStep/R2 setup already drives end-to-end.
+  it("throws the timeout-specific message when Browser Run's body carries code 6002", async () => {
+    const bucket = new FakeR2Bucket();
+    const source = epubSource(bucket, minimalEpubBytes());
+    const step = new FakeWorkflowStep();
+    mockedRenderSelfStyledHtmlPdf.mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({
+            errors: [{ code: 6002, message: "A timeout was reached: Request timed out" }],
+          }),
+          { status: 422 },
+        ),
+    );
+
+    await expect(runEpub(fakeEnv(bucket), step, source)).rejects.toThrow(
+      "PDF generation timed out; retrying may succeed",
+    );
+    // retries stay exactly as configured (limit 2 => 3 attempts) — 6002 is
+    // NOT made non-retryable, since the same code has been observed to
+    // succeed on a later retry for some inputs.
+    expect(step.callCounts["render-epub-pdf"]).toBe(3);
+  });
+
+  it("keeps the generic message for a 422 with a different (or no) code", async () => {
+    const bucket = new FakeR2Bucket();
+    const source = epubSource(bucket, minimalEpubBytes());
+    const step = new FakeWorkflowStep();
+    mockedRenderSelfStyledHtmlPdf.mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({ errors: [{ code: 9999, message: "out of memory" }] }),
+          { status: 422 },
+        ),
+    );
+
+    await expect(runEpub(fakeEnv(bucket), step, source)).rejects.toThrow(
+      "PDF generation failed",
+    );
+  });
+
+  it("falls back to the generic message when the body is not JSON", async () => {
+    const bucket = new FakeR2Bucket();
+    const source = epubSource(bucket, minimalEpubBytes());
+    const step = new FakeWorkflowStep();
+    mockedRenderSelfStyledHtmlPdf.mockImplementation(
+      async () => new Response("internal server error", { status: 500 }),
+    );
+
+    await expect(runEpub(fakeEnv(bucket), step, source)).rejects.toThrow(
+      "PDF generation failed",
+    );
+  });
+});
+
 describe("runEpubSource: rendered-PDF size limit (spec §19.1 PDFサイズ超過)", () => {
   it("throws NonRetryableError without retrying when the PDF exceeds MAX_PDF_BYTES", async () => {
     const bucket = new FakeR2Bucket();

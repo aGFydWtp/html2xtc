@@ -179,8 +179,9 @@ export async function buildInlineFontCss(
     const css = faces
       .map((face, i) => inlineFontFace(face, fonts[i] as Uint8Array, family))
       .join("\n");
+    const cssBytes = new TextEncoder().encode(css).length;
     console.log(
-      `[${jobId}] font: inline (${family}, ${faces.length} faces, ${Math.round(totalBytes / 1024)}KB woff2, ${covered} unique chars)`,
+      `[${jobId}] font: inline (${family}, ${faces.length} faces, ${Math.round(totalBytes / 1024)}KB woff2, ${covered} unique chars, ${Math.round(cssBytes / 1024)}KB css)`,
     );
     return css;
   } catch (error) {

@@ -235,6 +235,13 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
           );
         }
         let response: Response;
+        // articleBytes/fontCssBytes stay 0 on the full-page branch (renderPdf
+        // sends only the target URL — no HTML/CSS payload of our own rides
+        // along); the extract-mode branch below fills them with the actual
+        // quickAction payload size.
+        let articleBytes = 0;
+        let fontCssBytes = 0;
+        const renderStart = Date.now();
         if (article !== null) {
           // Missing/unreadable fonts.css only degrades the font (the render
           // falls back to the @import variant inside renderPdfFromHtml).
@@ -252,15 +259,34 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
               );
             }
           }
+          const articleHtml = await article.text();
+          articleBytes = new TextEncoder().encode(articleHtml).length;
+          if (fontCss !== null) {
+            fontCssBytes = new TextEncoder().encode(fontCss).length;
+          }
           response = await renderPdfFromHtml(
             this.env,
-            await article.text(),
+            articleHtml,
             fontCss,
             options,
           );
         } else {
           response = await renderPdf(this.env, url, options);
         }
+        const elapsedMs = Date.now() - renderStart;
+        // Browser Rendering's Quick Actions always report the browser time a
+        // request consumed via this header (Cloudflare docs); this is the
+        // only way to observe capture duration once the quickAction budget
+        // (~60s) is exhausted and the request itself times out.
+        const browserMsHeader = response.headers.get("X-Browser-Ms-Used");
+        console.log(`[${jobId}] render-pdf`, {
+          ok: response.ok,
+          status: response.status,
+          elapsedMs,
+          browserMs: browserMsHeader !== null ? Number(browserMsHeader) : null,
+          articleBytes,
+          fontCssBytes,
+        });
         if (!response.ok) {
           // Upstream detail goes to logs only; the thrown message surfaces
           // to the client via instance.status().error on final failure.
@@ -683,11 +709,28 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
             }
           }
 
+          const articleHtml = await article.text();
+          const articleBytes = new TextEncoder().encode(articleHtml).length;
+          const fontCssBytes =
+            fontCss !== null ? new TextEncoder().encode(fontCss).length : 0;
+          const renderStart = Date.now();
           const response = await renderSelfStyledHtmlPdf(
             this.env,
-            await article.text(),
+            articleHtml,
             fontCss,
           );
+          const elapsedMs = Date.now() - renderStart;
+          // See render-pdf's comment: X-Browser-Ms-Used is Quick Actions'
+          // reported browser-time consumption for the request.
+          const browserMsHeader = response.headers.get("X-Browser-Ms-Used");
+          console.log(`[${jobId}] render-text-pdf`, {
+            ok: response.ok,
+            status: response.status,
+            elapsedMs,
+            browserMs: browserMsHeader !== null ? Number(browserMsHeader) : null,
+            articleBytes,
+            fontCssBytes,
+          });
           if (!response.ok) {
             console.error(
               `[${jobId}] Browser Run returned ${response.status}: ${await response.text()}`,
@@ -977,11 +1020,28 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
             }
           }
 
+          const articleHtml = await article.text();
+          const articleBytes = new TextEncoder().encode(articleHtml).length;
+          const fontCssBytes =
+            fontCss !== null ? new TextEncoder().encode(fontCss).length : 0;
+          const renderStart = Date.now();
           const response = await renderSelfStyledHtmlPdf(
             this.env,
-            await article.text(),
+            articleHtml,
             fontCss,
           );
+          const elapsedMs = Date.now() - renderStart;
+          // See render-pdf's comment: X-Browser-Ms-Used is Quick Actions'
+          // reported browser-time consumption for the request.
+          const browserMsHeader = response.headers.get("X-Browser-Ms-Used");
+          console.log(`[${jobId}] render-epub-pdf`, {
+            ok: response.ok,
+            status: response.status,
+            elapsedMs,
+            browserMs: browserMsHeader !== null ? Number(browserMsHeader) : null,
+            articleBytes,
+            fontCssBytes,
+          });
           if (!response.ok) {
             console.error(
               `[${jobId}] Browser Run returned ${response.status}: ${await response.text()}`,

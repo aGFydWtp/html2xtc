@@ -721,14 +721,22 @@ export const LAZY_IMAGE_SCRIPT = `(() => {
 // timeout (workflow.ts).
 const PDF_FULL_WAIT_MS = 10_000;
 
-// Options shared by both render paths (full URL and extract-mode HTML).
+// Options shared by all render paths (full URL, extract-mode HTML, and the
+// TXT-upload self-styled HTML).
 const PDF_GOTO_OPTIONS = {
   // networkidle2 also applies to html-sourced renders: it waits for the
   // article's (absolute-URL) images to finish loading before capture.
   waitUntil: "networkidle2",
-  // Browser Run's documented cap for goto is 60s; use the full budget so
-  // heavy pages still load for async (/jobs) conversions.
-  timeout: 60_000,
+  // 60s is not goto's individual cap — it is roughly the whole quickAction
+  // budget. Prod tail logs showed Browser Run 422/6002 timeouts ("A timeout
+  // was reached... Request timed out") landing at 62-63s wall-clock on a
+  // pathological page (aozora.gr.jp extract conversion), which matches a
+  // goto that ran the full 60s leaving nothing for the PDF capture that
+  // follows. Budget instead so goto + the post-goto wait + capture together
+  // stay under ~60s:
+  //   full path (renderPdf):        goto 25s + PDF_FULL_WAIT_MS 10s + capture
+  //   extract/TXT paths:            goto 25s + waitForTimeout 3s   + capture
+  timeout: 25_000,
 } as const;
 
 const PDF_OPTIONS = {

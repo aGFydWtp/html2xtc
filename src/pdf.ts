@@ -721,14 +721,37 @@ export const LAZY_IMAGE_SCRIPT = `(() => {
 // timeout (workflow.ts).
 const PDF_FULL_WAIT_MS = 10_000;
 
-// Options shared by both render paths (full URL and extract-mode HTML).
+// Options shared by all render paths (full URL, extract-mode HTML, and the
+// TXT-upload self-styled HTML).
 const PDF_GOTO_OPTIONS = {
   // networkidle2 also applies to html-sourced renders: it waits for the
   // article's (absolute-URL) images to finish loading before capture.
   waitUntil: "networkidle2",
-  // Browser Run's documented cap for goto is 60s; use the full budget so
-  // heavy pages still load for async (/jobs) conversions.
-  timeout: 60_000,
+  // Fact (measured in prod): an extract-mode render (aozora.gr.jp,
+  // pathological page) failed 9 consecutive attempts with Browser Run
+  // 422/6002 ("A timeout was reached... Request timed out"), every attempt
+  // at 62-63s wall-clock, deterministically even with no concurrent load.
+  //
+  // Interpretation (not fully confirmed): the leading theory is that 60s is
+  // not goto's individual cap but roughly the whole quickAction budget, so a
+  // goto that ran the full 60,000ms left nothing for the PDF capture that
+  // follows — capture is what actually blew the deadline. The alternative
+  // that measurement can't yet rule out: the 60,000ms simply applied to goto
+  // itself, and the 62-63s figure is goto's own timeout plus a few seconds
+  // of overhead — in which case this change is only trimming how long goto
+  // is allowed to run, not fixing a budget split. Post-deploy signal that
+  // will disambiguate: if the same page's failures now land at ~25s, it was
+  // goto; if they still land at ~62-63s, it's capture.
+  //
+  // Sizing 25_000: under either theory the full path's total budget is
+  // goto + PDF_FULL_WAIT_MS (10s) + capture <= ~60s, so a page whose goto
+  // already needed 35s+ could never have succeeded before this change
+  // either (it would exhaust the ~60s budget in goto alone). Cutting goto to
+  // 25s leaves ~25s for capture; the only pages newly at risk of failing are
+  // ones whose goto needs 25-35s AND whose capture is unusually cheap — a
+  // narrow band, and no full-path (renderPdf) regression data exists yet to
+  // confirm or refute it.
+  timeout: 25_000,
 } as const;
 
 const PDF_OPTIONS = {

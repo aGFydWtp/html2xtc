@@ -214,9 +214,10 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
       "render-pdf",
       {
         retries: { limit: 2, delay: "10 seconds", backoff: "exponential" },
-        // Must cover a worst-case legitimate render: goto cap (60s) + fixed
-        // lazy-image/font grace (10s, PDF_FULL_WAIT_MS) + pdf generation cap
-        // (300s) in pdf.ts, plus margin for R2 I/O.
+        // Must cover a worst-case legitimate render: goto cap (25s,
+        // PDF_GOTO_OPTIONS) + fixed lazy-image/font grace (10s,
+        // PDF_FULL_WAIT_MS) + pdf generation cap (300s) in pdf.ts, plus
+        // margin for R2 I/O.
         timeout: "7 minutes",
       },
       async () => {

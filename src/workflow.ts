@@ -235,7 +235,18 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
           );
         }
         let response: Response;
+        let renderStart: number;
+        // articleBytes/fontCssBytes stay null on the full-page branch
+        // (renderPdf sends only the target URL — no HTML/CSS payload of our
+        // own rides along, so 0 would misleadingly read as "sent, but
+        // empty"); the extract-mode branch below fills them with the actual
+        // quickAction payload size. `mode` records which branch ran so a log
+        // line's null bytes can be told apart from "extract sent 0 bytes".
+        let articleBytes: number | null = null;
+        let fontCssBytes: number | null = null;
+        let mode: "extract" | "full";
         if (article !== null) {
+          mode = "extract";
           // Missing/unreadable fonts.css only degrades the font (the render
           // falls back to the @import variant inside renderPdfFromHtml).
           let fontCss: string | null = null;
@@ -252,15 +263,46 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
               );
             }
           }
+          const articleHtml = await article.text();
+          articleBytes = new TextEncoder().encode(articleHtml).length;
+          if (fontCss !== null) {
+            fontCssBytes = new TextEncoder().encode(fontCss).length;
+          }
+          // Measured from immediately before the quickAction call only: R2
+          // I/O and the .text()/TextEncoder work above must stay outside
+          // elapsedMs, or it stops reflecting capture time (the thing this
+          // log exists to observe).
+          renderStart = Date.now();
           response = await renderPdfFromHtml(
             this.env,
-            await article.text(),
+            articleHtml,
             fontCss,
             options,
           );
         } else {
+          mode = "full";
+          renderStart = Date.now();
           response = await renderPdf(this.env, url, options);
         }
+        const elapsedMs = Date.now() - renderStart;
+        // Browser Rendering's Quick Actions always report the browser time a
+        // request consumed via this header (Cloudflare docs); this is the
+        // only way to observe capture duration once the quickAction budget
+        // (~60s) is exhausted and the request itself times out. An empty or
+        // non-numeric header (unconfirmed whether this ever happens) must not
+        // silently read as "0ms" or "NaN", hence the isFinite guard.
+        const browserMsHeader = response.headers.get("X-Browser-Ms-Used");
+        const browserMsParsed =
+          browserMsHeader !== null ? Number(browserMsHeader) : NaN;
+        console.log(`[${jobId}] render-pdf`, {
+          mode,
+          ok: response.ok,
+          status: response.status,
+          elapsedMs,
+          browserMs: Number.isFinite(browserMsParsed) ? browserMsParsed : null,
+          articleBytes,
+          fontCssBytes,
+        });
         if (!response.ok) {
           // Upstream detail goes to logs only; the thrown message surfaces
           // to the client via instance.status().error on final failure.
@@ -683,11 +725,32 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
             }
           }
 
+          const articleHtml = await article.text();
+          const articleBytes = new TextEncoder().encode(articleHtml).length;
+          const fontCssBytes =
+            fontCss !== null ? new TextEncoder().encode(fontCss).length : 0;
+          const renderStart = Date.now();
           const response = await renderSelfStyledHtmlPdf(
             this.env,
-            await article.text(),
+            articleHtml,
             fontCss,
           );
+          const elapsedMs = Date.now() - renderStart;
+          // See render-pdf's comment: X-Browser-Ms-Used is Quick Actions'
+          // reported browser-time consumption for the request; the
+          // isFinite guard keeps an empty/non-numeric header from reading
+          // as a false "0ms"/NaN measurement.
+          const browserMsHeader = response.headers.get("X-Browser-Ms-Used");
+          const browserMsParsed =
+            browserMsHeader !== null ? Number(browserMsHeader) : NaN;
+          console.log(`[${jobId}] render-text-pdf`, {
+            ok: response.ok,
+            status: response.status,
+            elapsedMs,
+            browserMs: Number.isFinite(browserMsParsed) ? browserMsParsed : null,
+            articleBytes,
+            fontCssBytes,
+          });
           if (!response.ok) {
             console.error(
               `[${jobId}] Browser Run returned ${response.status}: ${await response.text()}`,
@@ -977,11 +1040,32 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
             }
           }
 
+          const articleHtml = await article.text();
+          const articleBytes = new TextEncoder().encode(articleHtml).length;
+          const fontCssBytes =
+            fontCss !== null ? new TextEncoder().encode(fontCss).length : 0;
+          const renderStart = Date.now();
           const response = await renderSelfStyledHtmlPdf(
             this.env,
-            await article.text(),
+            articleHtml,
             fontCss,
           );
+          const elapsedMs = Date.now() - renderStart;
+          // See render-pdf's comment: X-Browser-Ms-Used is Quick Actions'
+          // reported browser-time consumption for the request; the
+          // isFinite guard keeps an empty/non-numeric header from reading
+          // as a false "0ms"/NaN measurement.
+          const browserMsHeader = response.headers.get("X-Browser-Ms-Used");
+          const browserMsParsed =
+            browserMsHeader !== null ? Number(browserMsHeader) : NaN;
+          console.log(`[${jobId}] render-epub-pdf`, {
+            ok: response.ok,
+            status: response.status,
+            elapsedMs,
+            browserMs: Number.isFinite(browserMsParsed) ? browserMsParsed : null,
+            articleBytes,
+            fontCssBytes,
+          });
           if (!response.ok) {
             console.error(
               `[${jobId}] Browser Run returned ${response.status}: ${await response.text()}`,

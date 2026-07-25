@@ -187,17 +187,22 @@ class TestChunkedConversion:
         assert len(calls) == 1
 
     def test_above_threshold_converts_in_chunks_then_repacks(self):
+        # page_count = threshold + 1 pins the tightest boundary: one full
+        # CHUNK_SIZE_PAGES chunk plus a 1-page remainder. These literal page
+        # numbers (81/80/81) are current-default values on purpose -- if
+        # CHUNK_THRESHOLD_PAGES or CHUNK_SIZE_PAGES ever changes again, this
+        # test should fail loudly rather than silently follow the new value.
         calls = []
         with mock.patch.object(
             app.subprocess, "run", side_effect=self._recording_run(calls)
         ):
-            result = app.convert_pdf(FAKE_PDF, page_count=151)
+            result = app.convert_pdf(FAKE_PDF, page_count=81)
         assert result == FAKE_XTC
         assert len(calls) == 3
         (chunk1,) = self._sources(calls[0])
         (chunk2,) = self._sources(calls[1])
-        assert chunk1.endswith("source.pdf:1-100")
-        assert chunk2.endswith("source.pdf:101-151")
+        assert chunk1.endswith("source.pdf:1-80")
+        assert chunk2.endswith("source.pdf:81-81")
         # The repack step consumes exactly the chunk outputs, in page order.
         chunk_outputs = [cmd[cmd.index("-o") + 1] for cmd in calls[:2]]
         assert self._sources(calls[2]) == chunk_outputs
@@ -205,14 +210,14 @@ class TestChunkedConversion:
 
     def test_chunk_failure_raises_with_stage_name(self):
         def run(cmd, **kwargs):
-            if any(str(part).endswith(":101-151") for part in cmd):
+            if any(str(part).endswith(":81-81") for part in cmd):
                 return run_failure(cmd, **kwargs)
             return run_success(cmd, **kwargs)
 
         with mock.patch.object(app.subprocess, "run", side_effect=run):
             with pytest.raises(app.ConversionError) as excinfo:
-                app.convert_pdf(FAKE_PDF, page_count=151)
-        assert "chunk 2/2 pages 101-151" in str(excinfo.value)
+                app.convert_pdf(FAKE_PDF, page_count=81)
+        assert "chunk 2/2 pages 81-81" in str(excinfo.value)
         assert "boom: bad pdf" in excinfo.value.stderr
 
     def test_budget_exhaustion_between_chunks_raises(self):
@@ -232,6 +237,47 @@ class TestChunkedConversion:
         doc.new_page()
         title, page_count = app.read_pdf_metadata(doc.tobytes())
         assert page_count == 2
+
+
+class TestChunkSizeInvariant:
+    def test_chunk_size_does_not_exceed_threshold(self):
+        # app.py's chunking comment promises "a single xtctool invocation
+        # rasterizes at most CHUNK_SIZE_PAGES pages at once" for *every* PDF,
+        # including ones just at or under CHUNK_THRESHOLD_PAGES (which are
+        # still sent through in one single-pass call). If CHUNK_SIZE_PAGES
+        # ever exceeds CHUNK_THRESHOLD_PAGES, that single-pass call could
+        # rasterize more pages than the chunked path ever would, defeating
+        # the memory bound this whole feature exists for.
+        #
+        # This only checks the module's actual load-time default values; it
+        # would stay green even if the clamp enforcing the invariant were
+        # removed, as long as the two defaults themselves happened to agree.
+        # See TestClampChunkSizeToThreshold below for a test of the clamp
+        # itself, including the env-override scenario the invariant is
+        # actually meant to guard against.
+        assert app.CHUNK_SIZE_PAGES <= app.CHUNK_THRESHOLD_PAGES
+
+
+class TestClampChunkSizeToThreshold:
+    def test_within_threshold_is_unchanged(self, caplog):
+        with caplog.at_level(logging.WARNING, logger="converter"):
+            assert app._clamp_chunk_size_to_threshold(80, 80) == 80
+        assert caplog.text == ""
+
+    def test_env_override_of_chunk_size_alone_is_clamped(self, caplog):
+        # Reproduces the scenario the invariant exists to prevent: only
+        # XTC_CHUNK_SIZE_PAGES is overridden (e.g. to 200) while
+        # XTC_CHUNK_THRESHOLD_PAGES stays at its default (80). Without the
+        # clamp, an 81-200 page PDF would take the single-pass path (see
+        # convert_pdf) and rasterize up to 200 pages in one xtctool call --
+        # the same OOM/timeout shape chunking exists to avoid.
+        with caplog.at_level(logging.WARNING, logger="converter"):
+            clamped = app._clamp_chunk_size_to_threshold(200, 80)
+        assert clamped == 80
+        assert clamped <= 80
+        assert "XTC_CHUNK_SIZE_PAGES" in caplog.text
+        assert "200" in caplog.text
+        assert "80" in caplog.text
 
 
 class TestPositiveEnvInt:

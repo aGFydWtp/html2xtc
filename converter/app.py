@@ -7,7 +7,11 @@ optional pymupdf import (shipped with xtctool) used to read PDF metadata.
 POST /convert            trusted PDF (produced by our own Browser Run step)
                          request body = PDF bytes -> response body = XTC bytes
                          (X-Xtc-Title response header carries the PDF title,
-                          UTF-8 percent-encoded, when one could be extracted)
+                          UTF-8 percent-encoded, when one could be extracted;
+                          X-Xtc-Chapters request header, optional, carries a
+                          base64url JSON chapter list -- see
+                          decode_chapters_header/resolve_chapters below for
+                          the detection and XTC-embedding contract)
 POST /convert/uploaded-pdf  untrusted, user-uploaded PDF; see pdf_upload.py
                          for request/response contract and validation.
 GET  /healthz            liveness probe
@@ -194,6 +198,15 @@ class ConversionError(Exception):
 # metadata title to 127 UTF-8 bytes on write.
 MAX_TITLE_CHARS = 100
 
+# xtctool's XTCWriter._write_chapters (see xtctool-chapters.patch) reserves
+# an 80-byte fixed field per chapter name: up to 79 content bytes plus at
+# least one trailing null byte (it zero-pads whatever is left after a plain
+# byte-level slice to 79 bytes). Truncating to 79 bytes ourselves, safely
+# (see truncate_utf8_bytes), means that byte-level slice inside xtctool is
+# always a no-op for the names we send it -- it never gets a chance to split
+# a multi-byte UTF-8 character in half.
+MAX_CHAPTER_NAME_BYTES = 79
+
 
 def decode_base64url_utf8(value: str) -> str:
     """Decodes a base64url (no padding) UTF-8 header value, matching
@@ -207,6 +220,54 @@ def decode_base64url_utf8(value: str) -> str:
         return raw.decode("utf-8")
     except Exception:  # noqa: BLE001 - malformed header, not fatal
         return ""
+
+
+def truncate_utf8_bytes(text: str, max_bytes: int) -> str:
+    """Truncates text so its UTF-8 encoding is at most max_bytes, without
+    ever splitting a multi-byte character. A plain byte-level slice (as
+    xtctool's own XTCWriter._write_chapters does on the value it is handed --
+    see MAX_CHAPTER_NAME_BYTES and xtctool-chapters.patch) can otherwise cut
+    a UTF-8 sequence in half and write invalid UTF-8 into the XTC
+    container."""
+    if len(text.encode("utf-8")) <= max_bytes:
+        return text
+    while text and len(text.encode("utf-8")) > max_bytes:
+        text = text[:-1]
+    return text
+
+
+def decode_chapters_header(raw_header: str) -> list[dict[str, str]]:
+    """Decodes X-Xtc-Chapters (base64url JSON array of {"name", "marker"}
+    objects, in chapter order) into a plain list of {"name", "marker"}
+    dicts. Malformed input fails soft to [] -- chapters are a nice-to-have
+    piece of XTC metadata, never something that should block a conversion,
+    matching X-Xtc-Author/X-Xtc-Title's stance on bad headers.
+
+    marker is optional per entry (missing/non-string falls back to "", which
+    makes detect_chapter_pages skip straight to the name-based fallback
+    search); name is required -- entries missing a non-empty string name are
+    dropped rather than raising."""
+    decoded = decode_base64url_utf8(raw_header)
+    if not decoded:
+        return []
+    try:
+        data = json.loads(decoded)
+    except Exception:  # noqa: BLE001 - malformed header, not fatal
+        return []
+    if not isinstance(data, list):
+        return []
+    chapters: list[dict[str, str]] = []
+    for entry in data:
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("name")
+        if not isinstance(name, str) or not name:
+            continue
+        marker = entry.get("marker")
+        if not isinstance(marker, str):
+            marker = ""
+        chapters.append({"name": name, "marker": marker})
+    return chapters
 
 
 def sanitize_title(raw: str) -> str:
@@ -244,6 +305,218 @@ def count_pdf_pages(pdf_bytes: bytes) -> int | None:
     return read_pdf_metadata(pdf_bytes)[1]
 
 
+def normalize_search_text(text: str) -> str:
+    """Strips every whitespace character (space, tab, newline, full-width
+    U+3000 IDEOGRAPHIC SPACE -- str.isspace() covers all of these) from text
+    before chapter marker/name search. Vertical-writing PDFs can have
+    pymupdf's text extraction inject spurious whitespace/line breaks between
+    characters that read contiguously on the rendered page, so both the
+    haystack (page text) and the needle (marker/name) are normalized the
+    same way before substring search. A local test (2026-07, headless
+    Chrome 150.0.7871.182 + pymupdf, vertical writing-mode) found no such
+    fragmentation for the marker span specifically -- see
+    detect_chapter_pages' docstring -- but this normalization is kept as
+    insurance regardless, since a different font/layout combination could
+    still fragment it."""
+    return "".join(ch for ch in text if not ch.isspace())
+
+
+def detect_chapter_pages(pdf_bytes: bytes, chapters: list[dict[str, str]]) -> list[dict]:
+    """Locates each configured chapter's starting page (0-indexed) in
+    document order, in two passes against whitespace-stripped page text (see
+    normalize_search_text, which guards against vertical-writing layouts
+    injecting spurious whitespace/line breaks into extracted text):
+
+    1. Marker pass: every chapter is searched for by its marker string (the
+       invisible <span class="xtc-chapter-marker"> the Worker embeds just
+       before each heading -- see this module's docstring for the
+       X-Xtc-Chapters contract). Verified locally (2026-07, headless Chrome
+       150.0.7871.182 + pymupdf, a 30-page vertical-writing document --
+       `writing-mode: vertical-rl`, `@page { size: 528px 792px }`): a
+       `color: transparent; font-size: 1px` marker span DOES survive in the
+       PDF's text layer, including with the Worker's `user-select: none` +
+       `aria-hidden="true"` added on top, and it matched even in raw
+       (non-whitespace-stripped) extracted text -- vertical writing did not
+       fragment it. `display:none`, `visibility:hidden`, `opacity:0`,
+       `font-size:0`, and collapsing the box to zero size were all
+       confirmed to strip the text instead, which is why the marker uses
+       the transparent/1px approach specifically. That said, this was a
+       local test against a specific Chromium build -- production runs on
+       Cloudflare Browser Rendering, a different Chromium build, so it is
+       not a guarantee for every document there. The discard-everything
+       behavior below exists precisely for the case where markers are
+       nonetheless dropped: if NOT A SINGLE chapter is located this way,
+       marker detection is treated as broken for this document and
+       name-based fallback is skipped altogether -- trusting it anyway
+       risks binding every chapter to an early table-of-contents page that
+       lists every chapter title in already-monotonic order, which would
+       otherwise sail through the monotonic check below. In that case this
+       returns [] (no chapter metadata), which is a strictly better outcome
+       than a chapter table that is entirely wrong.
+
+    2. Name-fallback pass (only reached when at least one marker was found
+       above): each chapter without a marker hit is searched for by name,
+       but the search window is restricted to strictly between its nearest
+       marker-located neighbours (the closest preceding and following
+       configured chapter that WAS found by marker) -- both a lower and an
+       upper bound, not just "after the previous accepted chapter". This
+       keeps an early table of contents out of the window whenever a real
+       marker hit exists on either side of the gap.
+
+    Finally, a monotonic pass drops any chapter (marker- or name-located)
+    whose page does not strictly increase over the previous *accepted*
+    chapter's page, as a last-resort safety net.
+
+    Returns [{"name": str, "start_page": int}, ...] for the located
+    chapters only, still in chapter order."""
+    if not chapters or pymupdf is None:
+        return []
+    try:
+        with pymupdf.open(stream=pdf_bytes, filetype="pdf") as doc:
+            page_texts = [normalize_search_text(page.get_text()) for page in doc]
+    except Exception:  # noqa: BLE001 - detection is optional, never fatal
+        logger.exception("failed to read PDF text for chapter detection")
+        return []
+
+    def find_first(needle: str, start: int, end: int) -> int | None:
+        """First page index in [start, end] (inclusive) whose text contains
+        needle, or None. An inverted range (start > end) never matches."""
+        for i in range(max(start, 0), min(end, len(page_texts) - 1) + 1):
+            if needle in page_texts[i]:
+                return i
+        return None
+
+    marker_hits: list[int | None] = []
+    for chapter in chapters:
+        marker = normalize_search_text(chapter.get("marker") or "")
+        marker_hits.append(find_first(marker, 0, len(page_texts) - 1) if marker else None)
+
+    if not any(hit is not None for hit in marker_hits):
+        logger.warning(
+            "chapter detection: marker matched none of the %d configured "
+            "chapters; discarding name-based fallback matches entirely and "
+            "proceeding without chapter metadata (marker detection appears "
+            "broken for this document -- e.g. Chromium may have dropped the "
+            "invisible marker spans from the PDF text layer -- so trusting "
+            "name-only matches risks binding every chapter to an unrelated "
+            "page, such as an early table of contents)",
+            len(chapters),
+        )
+        return []
+
+    candidates: list[int | None] = []
+    for index, chapter in enumerate(chapters):
+        if marker_hits[index] is not None:
+            candidates.append(marker_hits[index])
+            continue
+        needle_name = normalize_search_text(chapter["name"])
+        if not needle_name:
+            candidates.append(None)
+            continue
+        # Bound the search to strictly between the nearest marker-located
+        # neighbours on either side (by configured chapter order, not by
+        # page number) -- an unbounded search would happily match an early
+        # table of contents that lists this chapter's name too.
+        lower = next((h for h in reversed(marker_hits[:index]) if h is not None), None)
+        upper = next((h for h in marker_hits[index + 1 :] if h is not None), None)
+        start = lower + 1 if lower is not None else 0
+        end = upper - 1 if upper is not None else len(page_texts) - 1
+        candidates.append(find_first(needle_name, start, end) if start <= end else None)
+
+    located: list[dict] = []
+    last_page = -1
+    for chapter, page_index in zip(chapters, candidates):
+        name = chapter["name"]
+        if page_index is None:
+            logger.info("chapter %r: not found by marker or name; skipping", name)
+            continue
+        if page_index <= last_page:
+            logger.warning(
+                "chapter %r: detected page %d does not follow previous "
+                "chapter's page %d; skipping as a likely false match",
+                name,
+                page_index,
+                last_page,
+            )
+            continue
+
+        located.append({"name": name, "start_page": page_index})
+        last_page = page_index
+
+    logger.info("chapter detection: found %d/%d chapters", len(located), len(chapters))
+    return located
+
+
+def build_chapter_entries(located: list[dict], total_pages: int) -> list[dict]:
+    """Turns detect_chapter_pages' {"name", "start_page"} results into
+    {"name", "start_page", "end_page"} triples for the XTC chapter table:
+    each chapter's end_page is the next chapter's start_page - 1 (inclusive
+    end), and the last chapter's end_page is total_pages - 1. Entries whose
+    start_page/end_page would not fit a uint16 are dropped (and logged) --
+    should not happen in practice (total_pages already bounds them) but the
+    XTC chapter entry format cannot represent anything else. Chapter names
+    are truncated to a UTF-8-safe MAX_CHAPTER_NAME_BYTES here, once, right
+    before their only consumer (the TOML chapters block); a name containing
+    an unpaired UTF-16 surrogate (json.loads happily decodes one from a
+    header into a plain str, even though it can never be UTF-8 encoded) also
+    drops just that chapter here, rather than raising all the way out to
+    Handler.do_POST and failing the whole conversion -- chapters are always
+    best-effort, never a hard requirement for a successful conversion, same
+    as every other drop-and-log case in this module."""
+    entries: list[dict] = []
+    for index, chapter in enumerate(located):
+        start_page = chapter["start_page"]
+        if index + 1 < len(located):
+            end_page = located[index + 1]["start_page"] - 1
+        else:
+            end_page = total_pages - 1
+        if not (0 <= start_page <= 0xFFFF and 0 <= end_page <= 0xFFFF):
+            logger.warning(
+                "chapter %r: start_page=%d end_page=%d out of uint16 range; "
+                "skipping",
+                chapter["name"],
+                start_page,
+                end_page,
+            )
+            continue
+        try:
+            name = truncate_utf8_bytes(chapter["name"], MAX_CHAPTER_NAME_BYTES)
+        except UnicodeError:
+            logger.warning(
+                "chapter %r: name cannot be encoded as UTF-8 (e.g. an "
+                "unpaired surrogate); skipping",
+                chapter["name"],
+            )
+            continue
+        entries.append({"name": name, "start_page": start_page, "end_page": end_page})
+    return entries
+
+
+def resolve_chapters(
+    pdf_bytes: bytes, chapters_spec: list[dict[str, str]], page_count: int | None
+) -> list[dict]:
+    """End-to-end: chapters_spec (decode_chapters_header's decoded
+    X-Xtc-Chapters entries) -> located page numbers -> final
+    {"name", "start_page", "end_page"} entries ready for the TOML
+    [[chapters]] block (see _toml_chapters_block). Returns [] (no chapter
+    metadata; the conversion proceeds exactly as it did before this feature
+    existed) when chapters_spec is empty, the page count is unknown, or
+    detection located zero chapters -- chapters are always best-effort,
+    never a hard requirement for a successful conversion."""
+    if not chapters_spec:
+        return []
+    if not page_count:
+        logger.warning(
+            "X-Xtc-Chapters present but page count is unavailable; "
+            "skipping chapter metadata"
+        )
+        return []
+    located = detect_chapter_pages(pdf_bytes, chapters_spec)
+    if not located:
+        return []
+    return build_chapter_entries(located, page_count)
+
+
 def _toml_value(value) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
@@ -255,10 +528,34 @@ def _toml_value(value) -> str:
     raise ValueError(f"unsupported TOML value type: {type(value).__name__}")
 
 
-def config_with_title_author(title: str, author: str = "") -> str:
+def _toml_chapters_block(chapters: list[dict]) -> str:
+    """Serializes resolved chapter entries ({"name", "start_page",
+    "end_page"} dicts, see build_chapter_entries) as TOML [[chapters]]
+    array-of-tables text. Kept separate from _toml_value -- which only ever
+    serializes a table's scalar values -- because a list[dict] is a
+    structurally different shape that function was never meant to handle.
+    xtctool's cli/convert.py write_xtc (see xtctool-chapters.patch) reads
+    this table array back as cfg['chapters'] and turns each entry into an
+    XTCChapter passed to XTCWriter."""
+    lines = []
+    for chapter in chapters:
+        lines.append("[[chapters]]")
+        lines.append(f"name = {_toml_value(chapter['name'])}")
+        lines.append(f"start_page = {_toml_value(chapter['start_page'])}")
+        lines.append(f"end_page = {_toml_value(chapter['end_page'])}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def config_with_title_author_chapters(
+    title: str, author: str = "", chapters: list[dict] | None = None
+) -> str:
     """TOML text of CONFIG_PATH with [output].title (and, when given,
-    [output].author) overridden, so xtctool embeds them into the XTC
-    container metadata.
+    [output].author) overridden, plus -- when chapters is given -- a
+    [[chapters]] array-of-tables appended (see _toml_chapters_block).
+    xtctool embeds all of these into the XTC container: title/author via
+    XTCMetadata as before, chapters via the XTCChapter list cli/convert.py's
+    write_xtc now builds from cfg['chapters'] (see xtctool-chapters.patch).
 
     author defaults to "" and, when empty, is left untouched -- CONFIG_PATH's
     own [output].author (config-x3.toml: "") governs, exactly as before this
@@ -266,7 +563,10 @@ def config_with_title_author(title: str, author: str = "") -> str:
     PDFs from URL conversions, which never have an author) byte-for-byte
     unaffected; only the TXT-upload pipeline (src/workflow.ts, via the
     X-Xtc-Author request header decoded in _handle_convert below) ever passes
-    a non-empty author."""
+    a non-empty author. chapters is likewise only ever non-empty when
+    X-Xtc-Chapters was present and resolve_chapters located at least one
+    chapter -- every existing caller (no header, or a header that resolves
+    to zero chapters) stays unaffected the same way."""
     with open(CONFIG_PATH, "rb") as f:
         config = tomllib.load(f)
     output = config.setdefault("output", {})
@@ -279,7 +579,17 @@ def config_with_title_author(title: str, author: str = "") -> str:
         for key, value in values.items():
             lines.append(f"{key} = {_toml_value(value)}")
         lines.append("")
+    if chapters:
+        lines.append(_toml_chapters_block(chapters))
     return "\n".join(lines)
+
+
+def config_with_title_author(title: str, author: str = "") -> str:
+    """Backward-compatible alias for config_with_title_author_chapters(title,
+    author, None). Kept as its own name since it is part of this module's
+    tested surface (test/converter/test_app.py) and is still the only path
+    used whenever no chapter metadata is involved."""
+    return config_with_title_author_chapters(title, author)
 
 
 def config_with_title(title: str) -> str:
@@ -345,6 +655,7 @@ def convert_pdf(
     timeout_seconds: int = CONVERT_TIMEOUT_SECONDS,
     page_count: int | None | object = _UNCOUNTED,
     author: str = "",
+    chapters: list[dict] | None = None,
 ) -> bytes:
     """Run xtctool over the given PDF bytes and return the XTC bytes.
 
@@ -358,7 +669,18 @@ def convert_pdf(
     author is only ever non-empty for the TXT-upload pipeline (see
     _handle_convert's X-Xtc-Author handling below) -- the trusted /convert
     path has no other source for it, unlike title (read from the PDF's own
-    metadata)."""
+    metadata).
+
+    chapters is resolve_chapters' output: already-resolved
+    {"name", "start_page", "end_page"} entries with document-absolute page
+    numbers, or [] when there is nothing to embed. It is passed to xtctool
+    only on the FINAL invocation (the single-pass call below, or the
+    chunk-repack call in the chunked branch) -- never on a per-chunk call.
+    Embedding it into intermediate chunk XTCs would be wasted work: those
+    files are discarded once the repack step produces the final container,
+    and the repack step re-derives all container metadata (title, author,
+    chapters) from its own config file rather than from the input chunk
+    XTCs' metadata."""
     deadline = time.monotonic() + timeout_seconds
     with tempfile.TemporaryDirectory() as workdir:
         pdf_path = Path(workdir) / "source.pdf"
@@ -376,6 +698,25 @@ def convert_pdf(
                 merged_path.write_text(merged, encoding="utf-8")
                 config_path = str(merged_path)
 
+        # See the chapters parameter's docstring above for why this is a
+        # separate config, used only for the final xtctool invocation.
+        final_config_path = config_path
+        if chapters:
+            try:
+                merged_with_chapters = config_with_title_author_chapters(
+                    title, author, chapters
+                )
+            except Exception:  # noqa: BLE001 - metadata must never block conversion
+                logger.exception(
+                    "chapters config merge failed; omitting chapter metadata"
+                )
+            else:
+                chapters_config_path = Path(workdir) / "config-chapters.toml"
+                chapters_config_path.write_text(
+                    merged_with_chapters, encoding="utf-8"
+                )
+                final_config_path = str(chapters_config_path)
+
         if page_count is _UNCOUNTED:
             page_count = count_pdf_pages(pdf_bytes)
         if page_count is None or page_count <= CHUNK_THRESHOLD_PAGES:
@@ -384,7 +725,7 @@ def convert_pdf(
             _run_xtctool(
                 [str(pdf_path)],
                 xtc_path,
-                config_path,
+                final_config_path,
                 timeout_seconds,
                 timeout_seconds,
                 "single-pass",
@@ -421,11 +762,13 @@ def convert_pdf(
             chunk_paths.append(chunk_path)
 
         # Repack the chunk XTCs into the final container; the config (with the
-        # merged title, when present) supplies the output metadata.
+        # merged title/author/chapters, when present) supplies the output
+        # metadata -- see the chapters parameter's docstring above for why
+        # this is final_config_path rather than the per-chunk config_path.
         _run_xtctool(
             [str(path) for path in chunk_paths],
             xtc_path,
-            config_path,
+            final_config_path,
             deadline - time.monotonic(),
             timeout_seconds,
             f"repack of {len(chunk_paths)} chunks",
@@ -549,13 +892,48 @@ class Handler(BaseHTTPRequestHandler):
             # existing behavior (author stays config-x3.toml's own "").
             raw_author = self.headers.get("X-Xtc-Author")
             author = decode_base64url_utf8(raw_author) if raw_author else ""
+            # X-Xtc-Chapters (optional): base64url JSON array of
+            # {"name","marker"}, in chapter order -- see this module's
+            # docstring and decode_chapters_header/resolve_chapters for the
+            # header format and the detection contract. Decoding here is
+            # cheap (JSON parse of a short header); the actual page-detection
+            # pass over the PDF's text only happens inside resolve_chapters
+            # below, and only when this list is non-empty.
+            raw_chapters = self.headers.get("X-Xtc-Chapters")
+            chapters_spec = decode_chapters_header(raw_chapters) if raw_chapters else []
 
             with CONVERSION_SLOTS:
                 # Single pymupdf pass supplies both the title and the page
                 # count convert_pdf uses for its chunking decision.
                 title, page_count = read_pdf_metadata(pdf_bytes)
+                # A second pymupdf pass (full-document text extraction) only
+                # runs when chapters were actually requested -- every other
+                # /convert caller pays nothing extra, and effective_timeout_
+                # seconds below stays exactly timeout_seconds (unaffected).
+                #
+                # convert_pdf computes its own deadline as
+                # time.monotonic() + (the timeout_seconds it's given),
+                # starting fresh from the moment it's called -- so any time
+                # already spent here, before convert_pdf even starts, must
+                # be subtracted from the budget handed to it, or it would be
+                # granted for free on top of the Worker's
+                # X-Convert-Timeout-Seconds (which has no way to know this
+                # extra pass happened).
+                if chapters_spec:
+                    detection_start = time.monotonic()
+                    chapters = resolve_chapters(pdf_bytes, chapters_spec, page_count)
+                    elapsed = time.monotonic() - detection_start
+                    effective_timeout_seconds = max(0.0, timeout_seconds - elapsed)
+                else:
+                    chapters = []
+                    effective_timeout_seconds = timeout_seconds
                 xtc_bytes = convert_pdf(
-                    pdf_bytes, title, timeout_seconds, page_count, author
+                    pdf_bytes,
+                    title,
+                    effective_timeout_seconds,
+                    page_count,
+                    author,
+                    chapters,
                 )
         except ConversionError as exc:
             logger.error("conversion failed: %s; stderr: %s", exc, exc.stderr)

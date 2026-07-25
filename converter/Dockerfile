@@ -34,11 +34,20 @@ RUN pip install --no-cache-dir --require-hashes -r /tmp/requirements.lock
 # xtctool/core/xtg.py with np.packbits; output is byte-identical (verified
 # against commit d7bff34) but ~2000x faster per page, which keeps long PDFs
 # (600+ pages) well inside the conversion timeout on 1/4 vCPU.
+# xtctool-chapters.patch: build-time feature patch (see the patch header for
+# details). Adds a working chapter/table-of-contents write+read path to
+# xtctool/core/xtc.py (56-byte header with a chapterOffset field, matching
+# what the real Xteink X3 firmware requires to recognize chapters) and wires
+# a config [[chapters]] array through cli/convert.py's write_xtc() into it.
+# Applies independently of xtctool-packbits.patch (different files); order
+# between the two `git apply` calls does not matter.
 COPY xtctool-packbits.patch /tmp/xtctool-packbits.patch
+COPY xtctool-chapters.patch /tmp/xtctool-chapters.patch
 RUN git clone https://github.com/chazeon/xtctool.git /opt/xtctool \
     && git -C /opt/xtctool checkout d7bff34ff835889e158ca8ff2253de06a3e825cf \
     && sed -i '/force-include/,+1d' /opt/xtctool/pyproject.toml \
     && git -C /opt/xtctool apply --stat --apply /tmp/xtctool-packbits.patch \
+    && git -C /opt/xtctool apply --stat --apply /tmp/xtctool-chapters.patch \
     && pip install --no-cache-dir --no-deps "/opt/xtctool[performance,markdown]"
 
 # --- runtime: slim image without git or the source checkout ---------------

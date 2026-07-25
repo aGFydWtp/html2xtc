@@ -310,6 +310,11 @@ describe("buildTextDocumentShell", () => {
       displayTitle: "",
       author: "",
     });
-    expect(html).toContain('<h2 class="aozora-heading aozora-heading-large">第一章</h2>');
+    // Level 1 (大見出し) always gets its XTC chapter-marker span prepended —
+    // see packages/aozora-text/test/render-html.test.ts for dedicated
+    // coverage of that contract.
+    expect(html).toContain(
+      '<h2 class="aozora-heading aozora-heading-large"><span class="xtc-chapter-marker" aria-hidden="true">XTCCH0001</span>第一章</h2>',
+    );
   });
 });

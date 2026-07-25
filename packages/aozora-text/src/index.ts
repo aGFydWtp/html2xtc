@@ -34,14 +34,26 @@ export { separateDocumentStructure } from "./metadata";
 export type { DocumentStructure } from "./metadata";
 
 export {
+  determineChapterHeadingLevel,
+  extractChapters,
   extractPlainText,
   renderBibliographyToHtml,
   renderDocumentToHtml,
 } from "./render-html";
+export type { ExtractChaptersResult } from "./render-html";
 
 export { countRecognizedAnnotations } from "./count";
 
 export { AOZORA_DOCUMENT_CSS } from "./styles";
+
+export {
+  XTC_CHAPTER_MARKER_CLASS,
+  XTC_CHAPTER_MARKER_CSS,
+  formatChapterMarker,
+  normalizeChapterName,
+  renderChapterMarkerHtml,
+} from "./chapters";
+export type { XtcChapter } from "./chapters";
 
 export { detectAozoraFormat } from "./detect";
 export type { AozoraDetectionResult } from "./detect";

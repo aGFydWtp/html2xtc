@@ -66,6 +66,7 @@ import { MAX_TEXT_FILE_BYTES } from "./text-normalize";
 import { decodeTextOptionsHeader } from "./text-options";
 import type { AozoraCatalogSyncParams, ConvertJobParams, ConvertMode, Env } from "./types";
 import { UrlValidationError, validatePublicUrl } from "./validate";
+import type { XtcChapter } from "../packages/aozora-text/src/index";
 
 export { AozoraCatalogSyncWorkflow } from "./catalog-workflow";
 export { XtcConverterContainer } from "./container";
@@ -853,6 +854,13 @@ async function handleConvert(request: Request, env: Env): Promise<Response> {
 
   const jobId = crypto.randomUUID();
 
+  // XTC chapter/table-of-contents metadata: set only when
+  // prepareRenderInput's dedicated Aozora extractor ran and found headings
+  // — [] on every other path (full-render, the generic extractor, or no
+  // headings at all). Forwarded to convertInContainer below
+  // exactly like the Workflow's URL pipeline (src/workflow.ts's `run()`).
+  let chapters: XtcChapter[] = [];
+
   let pdfResponse: Response;
   try {
     // Aozora Bunko URLs take the prepared-HTML path regardless of mode: the
@@ -870,6 +878,9 @@ async function handleConvert(request: Request, env: Env): Promise<Response> {
         mode,
         options,
       );
+      if (input.kind === "html") {
+        chapters = input.chapters ?? [];
+      }
       pdfResponse =
         input.kind === "html"
           ? await renderPdfFromHtml(env, input.html, input.fontCss, options)
@@ -909,7 +920,10 @@ async function handleConvert(request: Request, env: Env): Promise<Response> {
     env.XTC_BUCKET.put(pdfKey, pdfBytes, {
       httpMetadata: { contentType: "application/pdf" },
     }),
-    convertInContainer(env, jobId, pdfBytes, SYNC_CONVERTER_FETCH_TIMEOUT_MS),
+    // No author on this sync URL path (container.ts's own doc comment);
+    // `chapters` is set above only when the dedicated Aozora extractor ran
+    // and found headings.
+    convertInContainer(env, jobId, pdfBytes, SYNC_CONVERTER_FETCH_TIMEOUT_MS, undefined, chapters),
   ]);
 
   if (putResult.status === "rejected") {

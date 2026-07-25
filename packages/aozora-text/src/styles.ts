@@ -19,6 +19,8 @@
  * than root-level.
  */
 
+import { XTC_CHAPTER_MARKER_CSS } from "./chapters";
+
 // 字下げ (jisage_N: N-em indent from the line start) and 地付き (chitsuki_N:
 // aligned to the line end, N em short of it) run up to well past 10 em in
 // real files; 30 covers everything observed in practice, and an unmatched
@@ -138,4 +140,7 @@ ${aozoraIndentRules()}
 .chitsuki_0 {
   text-align: end !important;
 }
+
+/* --- XTC chapter markers (chapters.ts) --------------------------------- */
+${XTC_CHAPTER_MARKER_CSS}
 `;

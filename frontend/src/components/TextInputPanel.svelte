@@ -11,7 +11,7 @@
   import { submitText, type TextUploadHandle } from "../lib/convert.svelte";
   import { t } from "../lib/i18n.svelte";
   import {
-    computeInitialTextOptions,
+    computeInitialTextState,
     resolveAutoFillAuthor,
     resolveAutoFillTitle,
     summarizeAozoraDiagnostics,
@@ -386,23 +386,41 @@
   // （1ファイルにつき1回のみ）。詳細設定の変更でnormalizedTextが変わっても
   // autoPreviewFileガードにより再自動生成はしない — その場合はcanRegenerate/
   // x3Staleでユーザーに再生成を促す（要件3）。file が変われば改めて1回自動実行する。
-  // 副作用本体はuntrack()で包み、options/previewModeへの書き込みが依存として
-  // 拾われて無限ループしないようにする（上の表題自動導出$effectと同じ思想）。
+  // 副作用本体はuntrack()で包み、options/normalizedText/previewModeへの書き込みが
+  // 依存として拾われて無限ループしないようにする（上の表題自動導出$effectと同じ
+  // 思想）。
   //
-  // computeInitialTextOptions（仕様 §15.2/§15.3）: ユーザーがまだ入力形式を手動
-  // 変更していなければ decodedText を高信頼判定し、判定結果（またはユーザーが
-  // 既に選んでいた形式）に応じて「青空文庫プリセット」or「標準プリセット」を、
-  // 個別設定が初期値のままの場合だけ適用する。手動変更後（inputFormatManuallySet）
+  // ゲートは decodedText（デコード直後の生テキスト）で判定する。normalizedText で
+  // 判定すると、150msデバウンスの正規化$effectが確定させるまでこの初期化effect自体
+  // が発火せず、かつ発火した瞬間の normalizedText/options は「まだ青空プリセットの
+  // joinHardWrappedLines=false 等が本文へ反映される前」の値になってしまう
+  // （生成したX3プレビューのcacheKeyと、その直後に確定するcurrentPreviewKeyが
+  // ずれ、表示直後にstale警告が出るバグの原因だった）。
+  //
+  // computeInitialTextState（仕様 §15.2/§15.3/§15.4）が
+  //   1. inputFormat自動判定 + プリセット適用（個別設定が初期値のままの場合のみ）
+  //   2. 確定したoptionsでの正規化（150msデバウンスを挟まない同期実行）
+  //   3. 青空ヘッダ（表題・著者）の自動入力（未編集の欄のみ）
+  // を1回の同期呼び出しでまとめて確定させるため、直後に呼ぶ generateX3Preview() は
+  // 「これ以上変わらない」本文とoptionsを読める。手動変更後（inputFormatManuallySet）
   // は自動判定をスキップし、ユーザーが選んだ形式のプリセットのみ適用する。
   let autoPreviewFile: File | null = null;
   $effect(() => {
     const current = file;
     const ready = status === "ready";
-    const hasText = normalizedText !== "";
+    const hasText = decodedText !== "";
     if (!ready || !hasText || autoPreviewFile === current) return;
     untrack(() => {
       autoPreviewFile = current;
-      options = computeInitialTextOptions(options, decodedText, inputFormatManuallySet);
+      // デバウンス中の再正規化タイマーが残っていれば破棄する — ここで同期計算する
+      // 値が最終確定値であり、150ms後に別の（古い設定に基づく）結果で上書きさせない。
+      if (normalizeTimer) {
+        clearTimeout(normalizeTimer);
+        normalizeTimer = undefined;
+      }
+      const initial = computeInitialTextState(options, decodedText, inputFormatManuallySet, autoTitle);
+      options = initial.options;
+      normalizedText = initial.normalizedText;
       previewMode = "x3";
       void generateX3Preview();
     });

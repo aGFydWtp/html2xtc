@@ -3,10 +3,12 @@
 // Svelteコンポーネント（TextInputPanel.svelte/TextOptions.svelte）自体の単体テストは
 // 行わず、そこから切り出したロジックをここで検証する（実装ブリーフのテスト方針）。
 import { describe, expect, it } from "vitest";
-import type { AozoraDiagnostic } from "@html2xtc/aozora-text";
+import { separateDocumentStructure, type AozoraDiagnostic } from "@html2xtc/aozora-text";
 import { DEFAULT_TEXT_OPTIONS, type TextConvertOptions } from "../src/lib/text-options";
+import { normalizeText } from "../src/lib/text-normalize";
 import {
   computeInitialTextOptions,
+  computeInitialTextState,
   resolveAutoFillAuthor,
   resolveAutoFillTitle,
   resolveAutoInputFormat,
@@ -84,6 +86,84 @@ describe("computeInitialTextOptions (§15.2/§15.3)", () => {
     expect(result.inputFormat).toBe("aozora"); // format selection is independent of preset gating
     expect(result.fontSizePx).toBe(22); // user's explicit choice preserved
     expect(result.layout).toBe("horizontal"); // preset not applied at all (not just fontSizePx spared)
+  });
+});
+
+// 表題/著者ヘッダ付き + 段落内に文末記号のない改行を含む本文
+// （joinHardWrappedLines の true/false で正規化結果が変わることを検証するため）。
+// ［＃ここから2字下げ］/［＃ここで字下げ終わり］/《ルビ》は AOZORA_LOOKING_TEXT と
+// 同じ組み合わせで isAozora=true になる（score 5 以上）。
+const AOZORA_WITH_WRAPPED_BODY = `表題です
+著者です
+-------------------------------------------------------
+本文［＃ここから2字下げ］
+テスト［＃ここで字下げ終わり］
+これは《ルビ》のテストです
+続きの文章です
+`;
+
+describe("computeInitialTextState (初回自動X3プレビューのstale修正)", () => {
+  it("returns normalizedText that reflects the FINAL options (joinHardWrappedLines=false for aozora), not a pre-adjustment default", () => {
+    const result = computeInitialTextState(cloneDefaults(), AOZORA_WITH_WRAPPED_BODY, false, "auto-derived");
+    expect(result.options.inputFormat).toBe("aozora");
+    expect(result.options.joinHardWrappedLines).toBe(false);
+
+    // 修正前のバグ: computeInitialTextOptions()でoptions.joinHardWrappedLines=false
+    // (aozoraプリセット)が確定した後も、150msデバウンスの正規化$effectが追いつく前に
+    // generateX3Preview()が呼ばれ、実際に送信される本文はデフォルト
+    // (joinHardWrappedLines=true)で正規化されたものになっていた。
+    const staleJoinedText = normalizeText(AOZORA_WITH_WRAPPED_BODY, {
+      maxConsecutiveBlankLines: DEFAULT_TEXT_OPTIONS.maxConsecutiveBlankLines,
+      preserveSpaces: DEFAULT_TEXT_OPTIONS.preserveSpaces,
+      joinHardWrappedLines: true,
+    }).text;
+    const finalText = normalizeText(AOZORA_WITH_WRAPPED_BODY, {
+      maxConsecutiveBlankLines: result.options.maxConsecutiveBlankLines,
+      preserveSpaces: result.options.preserveSpaces,
+      joinHardWrappedLines: false,
+    }).text;
+
+    expect(result.normalizedText).toBe(finalText);
+    expect(result.normalizedText).not.toBe(staleJoinedText);
+  });
+
+  it("fills in title/author extracted from the aozora header when both fields are untouched", () => {
+    const result = computeInitialTextState(cloneDefaults(), AOZORA_WITH_WRAPPED_BODY, false, "auto-derived");
+    expect(result.options.title).toBe("表題です");
+    expect(result.options.author).toBe("著者です");
+  });
+
+  it("does not overwrite a user-typed title/author even when a header is present", () => {
+    const withUserInput: TextConvertOptions = {
+      ...cloneDefaults(),
+      title: "ユーザーの表題",
+      author: "ユーザーの著者",
+    };
+    const result = computeInitialTextState(withUserInput, AOZORA_WITH_WRAPPED_BODY, false, "auto-derived");
+    expect(result.options.title).toBe("ユーザーの表題");
+    expect(result.options.author).toBe("ユーザーの著者");
+  });
+
+  it("applies the standard preset (joinHardWrappedLines=true) and leaves title/author untouched for plain text", () => {
+    const result = computeInitialTextState(cloneDefaults(), PLAIN_TEXT, false, "auto-derived");
+    expect(result.options.inputFormat).toBe("plain");
+    expect(result.options.joinHardWrappedLines).toBe(true);
+    expect(result.options.title).toBe("");
+    expect(result.options.author).toBe("");
+    expect(result.normalizedText).toBe(
+      normalizeText(PLAIN_TEXT, {
+        maxConsecutiveBlankLines: result.options.maxConsecutiveBlankLines,
+        preserveSpaces: result.options.preserveSpaces,
+        joinHardWrappedLines: true,
+      }).text,
+    );
+  });
+
+  it("is idempotent: re-applying the header autofill to the already-filled result is a no-op", () => {
+    const result = computeInitialTextState(cloneDefaults(), AOZORA_WITH_WRAPPED_BODY, false, "auto-derived");
+    const structure = separateDocumentStructure(result.normalizedText.split("\n"));
+    expect(resolveAutoFillTitle(result.options.title, "auto-derived", structure.title)).toBe(result.options.title);
+    expect(resolveAutoFillAuthor(result.options.author, structure.author)).toBe(result.options.author);
   });
 });
 

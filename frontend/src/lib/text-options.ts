@@ -60,7 +60,7 @@ export const DEFAULT_TEXT_OPTIONS: TextConvertOptions = {
   encoding: "auto",
   layout: "horizontal",
   font: "BIZ UDPGothic",
-  fontSizePx: 18,
+  fontSizePx: 26,
   lineHeight: 1.8,
   paragraphSpacingEm: 0.9,
   margins: {
@@ -82,7 +82,7 @@ export const DEFAULT_TEXT_OPTIONS: TextConvertOptions = {
 // 切り替えた場合のみ適用する。
 export const VERTICAL_DEFAULT_OVERRIDES: Pick<TextConvertOptions, "font" | "fontSizePx" | "lineHeight"> = {
   font: "BIZ UDMincho",
-  fontSizePx: 18,
+  fontSizePx: 26,
   lineHeight: 1.9,
 };
 
@@ -125,7 +125,7 @@ export const AOZORA_PRESET_OVERRIDES: Pick<
 > = {
   layout: "vertical",
   font: "BIZ UDMincho",
-  fontSizePx: 18,
+  fontSizePx: 26,
   lineHeight: 1.9,
   joinHardWrappedLines: false,
 };
@@ -164,9 +164,9 @@ export type TextPresetId = "standard" | "vertical_novel" | "large_font";
 type TextPresetPatch = Partial<Pick<TextConvertOptions, "layout" | "font" | "fontSizePx" | "lineHeight">>;
 
 export const TEXT_PRESETS: Record<TextPresetId, TextPresetPatch> = {
-  standard: { layout: "horizontal", font: "BIZ UDPGothic", fontSizePx: 18, lineHeight: 1.8 },
-  vertical_novel: { layout: "vertical", font: "BIZ UDMincho", fontSizePx: 18, lineHeight: 1.9 },
-  large_font: { fontSizePx: 23, lineHeight: 1.8 },
+  standard: { layout: "horizontal", font: "BIZ UDPGothic", fontSizePx: 26, lineHeight: 1.8 },
+  vertical_novel: { layout: "vertical", font: "BIZ UDMincho", fontSizePx: 26, lineHeight: 1.9 },
+  large_font: { fontSizePx: 30, lineHeight: 1.8 },
 };
 
 export function applyTextPreset(options: TextConvertOptions, preset: TextPresetId): TextConvertOptions {

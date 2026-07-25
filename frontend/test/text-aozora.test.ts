@@ -53,7 +53,7 @@ describe("computeInitialTextOptions (§15.2/§15.3)", () => {
     expect(result.inputFormat).toBe("aozora");
     expect(result.layout).toBe("vertical");
     expect(result.font).toBe("BIZ UDMincho");
-    expect(result.fontSizePx).toBe(18);
+    expect(result.fontSizePx).toBe(26);
     expect(result.lineHeight).toBe(1.9);
     expect(result.joinHardWrappedLines).toBe(false);
   });

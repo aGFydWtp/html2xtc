@@ -7,11 +7,13 @@
 import {
   detectAozoraFormat,
   MAX_DIAGNOSTICS,
+  separateDocumentStructure,
   type AozoraDetectionResult,
   type AozoraDiagnostic,
 } from "@html2xtc/aozora-text";
 import { applyAozoraPresetIfUntouched } from "./text-options";
 import { applyTextPreset, type TextConvertOptions, type TextInputFormat } from "./text-options";
+import { normalizeText } from "./text-normalize";
 
 /**
  * inputFormat の自動判定（仕様 §15.2）。ユーザーが一度手動変更していれば
@@ -49,6 +51,53 @@ export function computeInitialTextOptions(
   return withFormat.inputFormat === "aozora"
     ? applyAozoraPresetIfUntouched(withFormat)
     : applyTextPreset(withFormat, "standard");
+}
+
+export interface InitialTextState {
+  options: TextConvertOptions;
+  normalizedText: string;
+}
+
+/**
+ * ファイル読込完了直後の初期状態（options + 正規化済み本文）を、1回の同期呼び出し
+ * で確定させる。TextInputPanel.svelte の初期化effectは元々
+ * 「options確定 → (150msデバウンス経由で非同期に)正規化 → (normalizedTextの変化を
+ * 契機に非同期に)青空ヘッダ自動入力」という3段の非同期パイプラインに乗せたまま
+ * generateX3Preview() を呼んでいたため、初回自動プレビューが「まだ確定していない
+ * 古い正規化結果・古いoptions」から作られ、表示直後にstale判定されるバグがあった
+ * （x3DisplayedKeyの元になったcacheKeyと、その後確定するcurrentPreviewKeyがずれる）。
+ * ここでは同じ3段を同期的に直列実行し、呼び出し側が「これ以上変わらない」本文と
+ * optionsをまとめて受け取れるようにする。150msデバウンスはユーザーがスライダー等を
+ * 操作した後の再正規化のみに残す（この関数は初期化パス専用）。
+ *
+ * 青空ヘッダ由来の title/author 反映は resolveAutoFillTitle/resolveAutoFillAuthor を
+ * 経由するため、TextInputPanel.svelte 側の既存$effect（normalizedTextの変化のたびに
+ * 同じ2関数を呼ぶ）が初期化後に再実行されても、抽出結果と現在値が既に一致していて
+ * 冪等（no-op）になる。
+ */
+export function computeInitialTextState(
+  options: TextConvertOptions,
+  decodedText: string,
+  manuallySet: boolean,
+  autoDerivedTitle: string,
+): InitialTextState {
+  const initialOptions = computeInitialTextOptions(options, decodedText, manuallySet);
+  const normalizedText = normalizeText(decodedText, {
+    maxConsecutiveBlankLines: initialOptions.maxConsecutiveBlankLines,
+    preserveSpaces: initialOptions.preserveSpaces,
+    joinHardWrappedLines: initialOptions.joinHardWrappedLines,
+  }).text;
+  if (initialOptions.inputFormat !== "aozora" || normalizedText === "") {
+    return { options: initialOptions, normalizedText };
+  }
+  const structure = separateDocumentStructure(normalizedText.split("\n"));
+  const title = resolveAutoFillTitle(initialOptions.title, autoDerivedTitle, structure.title);
+  const author = resolveAutoFillAuthor(initialOptions.author, structure.author);
+  const finalOptions =
+    title === initialOptions.title && author === initialOptions.author
+      ? initialOptions
+      : { ...initialOptions, title, author };
+  return { options: finalOptions, normalizedText };
 }
 
 /**

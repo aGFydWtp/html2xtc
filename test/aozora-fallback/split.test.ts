@@ -47,6 +47,70 @@ function countTag(fragmentHtml: string, tag: string): number {
   return document.body.querySelectorAll(tag).length;
 }
 
+/**
+ * Fixtures below mimic 神曲 02 浄火's actual structure (no `<div>`, no
+ * heading elements, a giant run of `<br>`-delimited text with `<ruby>`
+ * inline, and `<span class="notes">［＃改ページ］</span>` page-break notes —
+ * see aozora-fallback-boundary-improvement-spec.md §3.1). The existing
+ * fixtures above (`buildAozoraLikeContent`) are `<div>`/`<h4>`-based and
+ * cannot reproduce the defects this suite guards against.
+ */
+
+/** A run of `n` `<br>` tags separated by `\r\n`, matching Aozora reader
+ * HTML's actual serialization (`<br>\r\n<br>\r\n<br>`) — the whitespace
+ * between tags is its own zero-length text node (spec §4.2). */
+function brSeq(n: number): string {
+  return Array(n).fill("<br />").join("\r\n");
+}
+
+/** One "line" of body text: some kana padding, an inline `<ruby>` gloss, more
+ * kana, a sentence-final punctuation mark, and a single trailing `<br>` —
+ * the shape of a real 浄火 line. */
+function flatLine(seed: number): string {
+  return `${"あ".repeat(20)}${rubyWord()}${"い".repeat(20)}それ${seed}。<br />`;
+}
+
+function flatLines(count: number, startSeed: number): string {
+  let html = "";
+  for (let i = 0; i < count; i++) html += flatLine(startSeed + i);
+  return html;
+}
+
+function chapterTitle(n: number): string {
+  return `　　　第${n}章`;
+}
+
+/** Same shape as flatLine, but with no sentence-ending punctuation, so it
+ * never scores as a (legitimate) "line ends in 。" candidate itself — used
+ * only by the mid-line trap test below, to isolate the ONE deliberately
+ * mid-line "。" (the trap) as the sole sentence-end candidate in the whole
+ * fixture. Without this, the surrounding body's own "それN。<br>" line-ends
+ * are indistinguishable, at the old scorer's tier granularity, from the
+ * trap, and whichever happens to be closest to a 25/50/75% target wins —
+ * which is not reliably the trap, and is exactly why the previous version of
+ * this test passed against the pre-fix scorer too (see change-reviewer
+ * feedback on the first revision of this test). */
+function flatLineNoPeriod(seed: number): string {
+  return `${"あ".repeat(20)}${rubyWord()}${"い".repeat(20)}それ${seed}<br />`;
+}
+
+function flatLinesNoPeriod(count: number, startSeed: number): string {
+  let html = "";
+  for (let i = 0; i < count; i++) html += flatLineNoPeriod(startSeed + i);
+  return html;
+}
+
+// Deliberately [ \t\r\n] rather than \s: \s also matches U+3000 IDEOGRAPHIC
+// SPACE, which Aozora text uses for genuine indentation (e.g. chapterTitle
+// below) — matching it here would strip real content, not just filler.
+function tailIsOnlyBrOrWhitespace(html: string): boolean {
+  return /^(?:[ \t\r\n]|<br\s*\/?>)*$/i.test(html);
+}
+
+function stripLeadingBrAndWhitespace(html: string): string {
+  return html.replace(/^(?:[ \t\r\n]|<br\s*\/?>)*/i, "");
+}
+
 describe("splitContentIntoChunks", () => {
   it("returns exactly 4 non-empty chunks in original order with equal total text", () => {
     const content = buildAozoraLikeContent(30);
@@ -234,5 +298,119 @@ describe("repairHeadingOrphans", () => {
     // the first chunk can only ever contain that one segment — the second
     // boundary must stop at 2 (right after H1), never below it.
     expect(repaired).toEqual([1, 2]);
+  });
+});
+
+describe("splitContentIntoChunks — flat (div-less, heading-less) Aozora reader HTML", () => {
+  const PAGE_BREAK_KEYWORDS = ["改ページ", "改丁", "改見開き", "改段"];
+
+  function buildPageBreakFixture(keyword: string): string {
+    const before = flatLines(60, 0);
+    const gap = `${brSeq(3)}<span class="notes">［＃${keyword}］</span>\r\n${brSeq(4)}`;
+    const after = chapterTitle(1) + flatLines(60, 100);
+    return before + gap + after;
+  }
+
+  it.each(PAGE_BREAK_KEYWORDS)(
+    "recognizes ［＃%s］ as a page-break boundary (chunk cuts right after the note + trailing <br>s)",
+    (keyword) => {
+      const content = buildPageBreakFixture(keyword);
+      const chunks = splitContentIntoChunks(content);
+      const noteMarker = `［＃${keyword}］`;
+
+      const noteChunkIdx = chunks.findIndex((c) => c.html.includes(noteMarker));
+      expect(noteChunkIdx).toBeGreaterThanOrEqual(0);
+
+      const chunkHtml = chunks[noteChunkIdx].html;
+      const spanCloseIdx = chunkHtml.indexOf("</span>", chunkHtml.indexOf(noteMarker));
+      expect(spanCloseIdx).toBeGreaterThanOrEqual(0);
+      const tail = chunkHtml.slice(spanCloseIdx + "</span>".length);
+      // Nothing but (possibly whitespace-separated) <br>s follows the note
+      // within its own chunk — the note is effectively the last "real"
+      // content of the chunk.
+      expect(tailIsOnlyBrOrWhitespace(tail)).toBe(true);
+
+      // The chapter title that follows the gap must open the NEXT chunk,
+      // not stay behind in this one.
+      const nextChunk = chunks[noteChunkIdx + 1];
+      expect(nextChunk).toBeDefined();
+      expect(stripLeadingBrAndWhitespace(nextChunk!.html).startsWith(chapterTitle(1))).toBe(true);
+    },
+  );
+
+  it("does not treat a partial-match notes span (extra surrounding text) as a page break", () => {
+    // A span.notes whose trimmed text is NOT an exact match for one of the
+    // four recognized notations — e.g. a citation of the notation inside a
+    // sentence — must never trigger the page-break tier.
+    const before = "まえまえまえまえまえ";
+    const after = "あとあとあとあとあと";
+    const trap = `${before}<span class="notes">［＃改ページ］と記された行</span>${after}`;
+    const content = flatLines(60, 0) + trap + flatLines(60, 100);
+
+    const chunks = splitContentIntoChunks(content);
+
+    // If the split correctly ignored the partial match, the text
+    // immediately surrounding it was never a chosen boundary, so it stays
+    // intact within a single chunk.
+    const chunkWithTrap = chunks.find((c) => c.html.includes(before) && c.html.includes(after));
+    expect(chunkWithTrap).toBeDefined();
+  });
+
+  it("recognizes <br>\\r\\n<br> (whitespace-separated consecutive <br>s) as a blank line worth splitting after", () => {
+    // Regression test: the pre-fix scorer's `segments[i-2].isBr` check did
+    // not skip the whitespace text node Aozora reader HTML inserts between
+    // <br> tags, so this tier never fired on real documents (spec §4.2).
+    const before = flatLines(60, 0);
+    const gap = brSeq(2); // combined with `before`'s trailing single <br>, a run of 3
+    const after = flatLines(60, 100);
+    const content = before + gap + after;
+
+    const chunks = splitContentIntoChunks(content);
+    const gapChunkIdx = chunks.findIndex((c) => {
+      const trimmed = c.html.replace(/\s+$/, "");
+      return /(?:<br\s*\/?>\s*){2,}$/i.test(trimmed);
+    });
+
+    expect(gapChunkIdx).toBeGreaterThanOrEqual(0);
+    expect(gapChunkIdx).toBeLessThan(chunks.length - 1);
+  });
+
+  it("does not cut mid-line: a sentence-ending punctuation mark followed by more content on the same line stays together", () => {
+    // Mirrors the actual failure from spec §3.3: "…彼我に。" ends a sentence
+    // but the same line continues with a <ruby> gloss and more text before
+    // the real (br-terminated) line end. Surrounding filler uses
+    // flatLinesNoPeriod (no sentence-ending punctuation anywhere else) so
+    // this trap is the ONLY prev.endsSentence candidate in the whole
+    // fixture — old scoreBoundary's tier 4 (score 4, better than every
+    // other fallback-tier candidate in this fixture) therefore has no
+    // competing candidate and must pick this exact mid-line spot wherever
+    // it falls in-band. `before`/`after` are sized symmetrically so the
+    // trap sits close to the 50% target (±20% band easily covers it).
+    const before = flatLinesNoPeriod(100, 0);
+    const midLineTrap = `…とどむるなかれ。 八二—八四<br>彼我に。${rubyWord()}を愛する愛、その義務に缺くる<br />`;
+    const after = flatLinesNoPeriod(100, 200);
+    const content = before + midLineTrap + after;
+
+    const chunks = splitContentIntoChunks(content);
+
+    const trapChunk = chunks.find((c) => c.html.includes("彼我に。"));
+    expect(trapChunk).toBeDefined();
+    // The content immediately following the sentence-final punctuation on
+    // the same line must remain in the same chunk — no boundary was
+    // inserted right after "。" just because it ends a sentence.
+    expect(trapChunk!.html).toContain("を愛する愛");
+  });
+
+  it("never opens a chunk with a stray <br> (blank-line runs stay attached to the end of the preceding chunk)", () => {
+    const before = flatLines(60, 0);
+    const gap = brSeq(3);
+    const after = flatLines(60, 100);
+    const content = before + gap + after;
+
+    const chunks = splitContentIntoChunks(content);
+    for (let i = 0; i < chunks.length - 1; i++) {
+      const nextStart = chunks[i + 1].html.replace(/^\s+/, "");
+      expect(/^<br\s*\/?>/i.test(nextStart)).toBe(false);
+    }
   });
 });

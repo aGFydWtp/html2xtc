@@ -11,30 +11,62 @@ import type { ContentMetrics } from "./metrics";
  * src/aozora-fallback/html.ts) into 4 balanced, non-empty, order-preserving
  * pieces (spec §14).
  *
- * Implementation notes against the spec's 8-tier boundary-candidate priority
- * list (§14 "境界候補の優先順位"):
+ * Implementation notes against the spec's boundary-candidate priority list
+ * (§14 "境界候補の優先順位"). `scoreBoundary()` was revised (see
+ * `aozora-fallback-boundary-improvement-spec.md`) after real Aozora reader
+ * HTML (e.g. 神曲 02 浄火 — div-less, heading-less, `<br>`-delimited text
+ * with `<span class="notes">` page-break notes) showed the original tier
+ * order produced mid-line and mid-chapter cuts. Current tiers, lower wins:
  *
- *   1. 明示的改ページ  -> `<hr>` or a class containing "page" (Aozora's
- *      reader HTML has no other standard page-break marker this extractor
- *      preserves; unconfirmed against every possible source document).
- *   2. h1-h4直前        -> implemented directly (segment.isHeading).
- *   3. 章・節ブロック直前 -> collapsed into "before a div/section" (5) below;
- *      Aozora's main_text has no separate "section" wrapper distinct from
- *      its indentation <div class="jisage_N"> blocks, so a dedicated tier
- *      would duplicate tier 5's selector.
- *   4. 段落の直後        -> a text segment ending in a sentence terminator
- *      (。」』.!?).
- *   5. divの直後         -> implemented directly (segment.isBlock).
- *   6. 連続br            -> implemented directly (two consecutive <br>).
- *   7. 子要素境界        -> the fallback: ANY inter-segment boundary is a
- *      valid (if unscored) candidate — this is what makes the search always
- *      terminate.
- *   8. テキストノード境界 -> splitTextFallback below: only reached when the
- *      content has fewer top-level/recursed segments than chunks needed;
- *      splits a Text node at a Unicode code-point boundary (Array.from),
- *      never inside an element, so <ruby> and HTML entities can never be
- *      broken (entities do not exist at this stage — content is DOM text,
- *      re-escaped on output).
+ *   1. 直前の実体セグメントが改ページ -> `<hr>`, a class containing "page",
+ *      or (added) a `<span class="notes">` whose trimmed text content is
+ *      exactly `［＃改ページ／改丁／改見開き／改段］` — Aozora reader HTML's
+ *      actual page-break marker, matching the same notation set
+ *      `packages/aozora-text/src/parse-document.ts` recognizes on the TXT
+ *      path. "直前の実体セグメント" skips `<br>`/whitespace fillers via
+ *      `previousMeaningful()`, so trailing `<br>`s after the marker don't
+ *      hide it.
+ *   2. 次が見出し        -> segment.isHeading (h1-h4), unchanged.
+ *   3. 次がdiv/section   -> segment.isBlock, unchanged (collapses spec tiers
+ *      3 and 5 into one selector: Aozora's main_text has no separate
+ *      "section" wrapper distinct from its indentation
+ *      <div class="jisage_N"> blocks, so a dedicated tier would duplicate
+ *      this one's selector).
+ *   4. 連続br（2本以上） -> `precedingBreakRun()` counts consecutive `<br>`
+ *      segments before the boundary, skipping whitespace-only text-node
+ *      fillers in between (Aozora reader HTML emits `<br>\r\n<br>`, where the
+ *      `\r\n` is its own zero-length text segment — the original
+ *      `segments[i-2].isBr` check did not skip these and so never fired on
+ *      real documents; see spec §4.2). A run of 2+ is treated as a blank
+ *      line, i.e. a chapter/paragraph break.
+ *   5. 単一br かつ直前が文末 -> a single preceding `<br>` where the previous
+ *      meaningful segment's text ends in a sentence terminator
+ *      (。」』.!?) — end-of-line AND end-of-sentence together.
+ *   6. 単一br（行末のみ） -> a single preceding `<br>` regardless of
+ *      sentence-final punctuation. Ranked below tier 4/5 deliberately: the
+ *      original scorer treated "prev.endsSentence" (mid-line sentence ends,
+ *      since it never checked for a following line break) ABOVE consecutive
+ *      `<br>` runs, which combined with tier 4's dead check above meant a
+ *      sentence-final punctuation mark mid-line beat a real blank-line
+ *      chapter break — the cause of the mid-line cut in spec §3.3/§4.3.
+ *   7. 直前がdiv/section -> segment.isBlock on the previous meaningful
+ *      segment (was tier 5 pre-revision).
+ *   8. 子要素境界（行の途中）-> the fallback: any remaining inter-segment
+ *      boundary, used only when nothing better is in range — this is what
+ *      makes the search always terminate.
+ *   9. `<br>`／空白の内部 -> scored last (not excluded) so a boundary
+ *      immediately before a `<br>` or whitespace filler is only chosen when
+ *      truly nothing else qualifies (chooseBoundaries' `best === -1` guard
+ *      still needs a full range of scored candidates); prevents splitting a
+ *      blank-line run across two chunks so the next chunk never opens on a
+ *      stray blank line.
+ *
+ * Spec tier "8. テキストノード境界" -> splitTextFallback below: only reached
+ * when the content has fewer top-level/recursed segments than chunks needed;
+ * splits a Text node at a Unicode code-point boundary (Array.from), never
+ * inside an element, so <ruby> and HTML entities can never be broken
+ * (entities do not exist at this stage — content is DOM text, re-escaped on
+ * output).
  *
  * "巨大ブロックは子ノードへ再帰する" is implemented by flattenSegments:
  * before scoring, any single top-level child whose own text exceeds
@@ -43,6 +75,9 @@ import type { ContentMetrics } from "./metrics";
  * enough segments when the content is naturally low in top-level children.
  */
 
+/** 青空文庫リーダーHTMLに <span class="notes"> として残る改ページ注記。
+ * TXT経路の parse-document.ts が認識する記法集合と同じもの。 */
+const AOZORA_PAGE_BREAK_NOTE = /^［＃(改ページ|改丁|改見開き|改段)］$/;
 const CHUNK_COUNT = 4;
 const DOMINANT_FRACTION = 0.4;
 const MAX_RECURSION_DEPTH = 6;
@@ -163,24 +198,65 @@ function flattenSegments(node: DomNode, totalLength: number, depth: number): Seg
       isHeading: /^h[1-4]$/.test(tag),
       isBr: tag === "br",
       isBlock: tag === "div" || tag === "section",
-      isPageBreak: tag === "hr" || /page/i.test(classAttr),
+      isPageBreak:
+        tag === "hr" ||
+        /page/i.test(classAttr) ||
+        AOZORA_PAGE_BREAK_NOTE.test((child.textContent ?? "").trim()),
       endsSentence: false,
     });
   }
   return out;
 }
 
+/** 空白のみのセグメント（改行など）。textLen 0 かつ構造的な意味を持たない。 */
+function isFiller(s: Segment): boolean {
+  return (
+    s.textLen === 0 && !s.isBr && !s.isBlock && !s.isHeading && !s.isPageBreak
+  );
+}
+
+/** 境界 i の直前に連続する <br> の本数。空白のみのセグメントは数に入れず、
+ * かつ連続を切らない（Aozora の reader HTML は <br>\r\n<br> と改行を挟む）。 */
+function precedingBreakRun(segments: Segment[], i: number): number {
+  let n = 0;
+  for (let k = i - 1; k >= 0; k--) {
+    const s = segments[k];
+    if (s.isBr) {
+      n++;
+      continue;
+    }
+    if (isFiller(s)) continue;
+    break;
+  }
+  return n;
+}
+
+/** 境界 i の直前にある、実体を持つ直近のセグメント（<br>・空白は飛ばす）。 */
+function previousMeaningful(segments: Segment[], i: number): Segment | undefined {
+  for (let k = i - 1; k >= 0; k--) {
+    const s = segments[k];
+    if (s.isBr || isFiller(s)) continue;
+    return s;
+  }
+  return undefined;
+}
+
 /** Boundary "before segments[i]" priority score — lower wins (spec §14 order). */
 function scoreBoundary(segments: Segment[], i: number): number {
-  const prev = segments[i - 1];
   const next = segments[i];
-  if (prev.isPageBreak) return 1;
+  const prev = previousMeaningful(segments, i);
+  const brRun = precedingBreakRun(segments, i);
+  // 境界の直後が <br>／空白だと空行群が2チャンクに分断され、次チャンクの
+  // 先頭ページが空行から始まる。実体のあるセグメントの直前にだけ置く。
+  if (next.isBr || isFiller(next)) return 9;
+  if (prev?.isPageBreak === true) return 1;
   if (next.isHeading) return 2;
-  if (next.isBlock) return 3; // collapses spec tiers 3 and 5 (see doc comment)
-  if (prev.endsSentence) return 4;
-  if (prev.isBlock) return 5;
-  if (prev.isBr && i >= 2 && segments[i - 2].isBr) return 6;
-  return 7; // any inter-segment boundary — always a valid fallback candidate
+  if (next.isBlock) return 3;
+  if (brRun >= 2) return 4; // 空行 = 章・段落の切れ目
+  if (brRun === 1 && prev?.endsSentence === true) return 5; // 行末かつ文末
+  if (brRun === 1) return 6; // 行末
+  if (prev?.isBlock === true) return 7;
+  return 8; // 行の途中 — 最後の手段
 }
 
 /** Picks 3 boundary indices (each "before segments[boundary]") balancing

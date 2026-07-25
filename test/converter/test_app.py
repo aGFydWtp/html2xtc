@@ -11,6 +11,7 @@ import sys
 import threading
 import time
 import tomllib
+import types
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 from http.server import ThreadingHTTPServer
@@ -869,6 +870,720 @@ class TestHttpServer:
         for body, (status, _, response) in zip(bodies, results):
             assert status == 200
             assert response == b"XTC:" + body
+
+
+def _b64url_json(payload) -> str:
+    return base64.urlsafe_b64encode(json.dumps(payload).encode("utf-8")).rstrip(b"=").decode(
+        "ascii"
+    )
+
+
+class TestDecodeChaptersHeader:
+    """X-Xtc-Chapters: base64url JSON array of {"name","marker"} objects, in
+    chapter order (see app.py's module docstring). Malformed input fails
+    soft to [] -- chapters are a nice-to-have, never something that should
+    block a conversion."""
+
+    def test_decodes_valid_header(self):
+        payload = [
+            {"name": "第一章 その名", "marker": "XTCCH0001"},
+            {"name": "第二章", "marker": "XTCCH0002"},
+        ]
+        assert app.decode_chapters_header(_b64url_json(payload)) == payload
+
+    def test_missing_marker_defaults_to_empty_string(self):
+        payload = [{"name": "第一章"}]
+        assert app.decode_chapters_header(_b64url_json(payload)) == [
+            {"name": "第一章", "marker": ""}
+        ]
+
+    def test_non_string_marker_defaults_to_empty_string(self):
+        payload = [{"name": "第一章", "marker": 123}]
+        assert app.decode_chapters_header(_b64url_json(payload)) == [
+            {"name": "第一章", "marker": ""}
+        ]
+
+    def test_entries_missing_a_name_are_dropped(self):
+        payload = [
+            {"marker": "XTCCH0001"},
+            {"name": "", "marker": "XTCCH0002"},
+            {"name": 123, "marker": "XTCCH0003"},
+            {"name": "OK", "marker": "XTCCH0004"},
+        ]
+        assert app.decode_chapters_header(_b64url_json(payload)) == [
+            {"name": "OK", "marker": "XTCCH0004"}
+        ]
+
+    def test_non_dict_entries_are_skipped(self):
+        payload = ["not-a-dict", {"name": "OK"}]
+        assert app.decode_chapters_header(_b64url_json(payload)) == [
+            {"name": "OK", "marker": ""}
+        ]
+
+    def test_malformed_base64_is_empty_list(self):
+        assert app.decode_chapters_header("not valid base64url!!") == []
+
+    def test_non_json_payload_is_empty_list(self):
+        encoded = base64.urlsafe_b64encode(b"not json").rstrip(b"=").decode("ascii")
+        assert app.decode_chapters_header(encoded) == []
+
+    def test_non_array_payload_is_empty_list(self):
+        assert app.decode_chapters_header(_b64url_json({"name": "x"})) == []
+
+    def test_empty_header_is_empty_list(self):
+        assert app.decode_chapters_header("") == []
+
+
+class TestNormalizeSearchText:
+    def test_strips_ascii_whitespace(self):
+        assert app.normalize_search_text("a b\tc\nd\r") == "abcd"
+
+    def test_strips_fullwidth_ideographic_space(self):
+        assert app.normalize_search_text("第一章　その名") == "第一章その名"
+
+    def test_leaves_non_whitespace_untouched(self):
+        assert app.normalize_search_text("第一章その名123abc") == "第一章その名123abc"
+
+    def test_empty_string(self):
+        assert app.normalize_search_text("") == ""
+
+
+def _fake_pymupdf_with_pages(page_texts: list[str]) -> mock.MagicMock:
+    """Builds a fake `pymupdf` module whose `.open(...)` context manager
+    yields an iterable of fake pages, each returning a fixed get_text()
+    value -- mirrors TestTitleHandling's fake_pymupdf pattern above."""
+    fake_doc = mock.MagicMock()
+    fake_doc.__iter__.return_value = iter(
+        types.SimpleNamespace(get_text=(lambda t=t: t)) for t in page_texts
+    )
+    fake_pymupdf = mock.MagicMock()
+    fake_pymupdf.open.return_value.__enter__.return_value = fake_doc
+    return fake_pymupdf
+
+
+class TestDetectChapterPages:
+    """Primary detection is by marker string. Name-based fallback only runs
+    at all once at least one chapter was located by marker (otherwise marker
+    detection is treated as broken for this document and no chapters are
+    returned -- see test_all_markers_missing_discards_fallback_entirely),
+    and a fallback candidate must additionally fall strictly between its
+    nearest marker-located neighbours (see
+    test_name_fallback_is_bounded_by_neighbouring_markers). Both searches
+    run against whitespace-stripped text (vertical-writing PDFs can inject
+    spurious whitespace/line breaks into pymupdf's text extraction)."""
+
+    def test_finds_by_marker(self):
+        pages = ["intro page", "XTCCH0001 chapter one text", "more", "XTCCH0002 chapter two"]
+        chapters = [
+            {"name": "第一章", "marker": "XTCCH0001"},
+            {"name": "第二章", "marker": "XTCCH0002"},
+        ]
+        with mock.patch.object(app, "pymupdf", _fake_pymupdf_with_pages(pages)):
+            located = app.detect_chapter_pages(b"fake", chapters)
+        assert located == [
+            {"name": "第一章", "start_page": 1},
+            {"name": "第二章", "start_page": 3},
+        ]
+
+    def test_marker_match_survives_injected_whitespace(self):
+        pages = ["intro", "X T C C H 0 0 0 1\n chapter one"]
+        chapters = [{"name": "第一章", "marker": "XTCCH0001"}]
+        with mock.patch.object(app, "pymupdf", _fake_pymupdf_with_pages(pages)):
+            located = app.detect_chapter_pages(b"fake", chapters)
+        assert located == [{"name": "第一章", "start_page": 1}]
+
+    def test_falls_back_to_name_when_one_markers_is_missing(self):
+        # Chapter 1's marker is found (so marker detection isn't considered
+        # "broken" overall); chapter 2's marker is missing, so it falls back
+        # to its own name, bounded above by nothing (it's the last chapter).
+        pages = ["intro", "XTCCH0001 first chapter", "第二章 その名\nbody text"]
+        chapters = [
+            {"name": "第一章", "marker": "XTCCH0001"},
+            {"name": "第二章 その名", "marker": "XTCCH_MISSING"},
+        ]
+        with mock.patch.object(app, "pymupdf", _fake_pymupdf_with_pages(pages)):
+            located = app.detect_chapter_pages(b"fake", chapters)
+        assert located == [
+            {"name": "第一章", "start_page": 1},
+            {"name": "第二章 その名", "start_page": 2},
+        ]
+
+    def test_name_fallback_survives_injected_whitespace(self):
+        pages = ["intro", "XTCCH0001 first chapter", "第\n二　章 その名"]
+        chapters = [
+            {"name": "第一章", "marker": "XTCCH0001"},
+            {"name": "第二章 その名", "marker": ""},
+        ]
+        with mock.patch.object(app, "pymupdf", _fake_pymupdf_with_pages(pages)):
+            located = app.detect_chapter_pages(b"fake", chapters)
+        assert located == [
+            {"name": "第一章", "start_page": 1},
+            {"name": "第二章 その名", "start_page": 2},
+        ]
+
+    def test_all_markers_missing_discards_fallback_entirely(self, caplog):
+        # None of the configured chapters' markers match anywhere -- e.g.
+        # Chromium dropped the invisible marker spans from the PDF text
+        # layer entirely. Trusting name-only matches in this situation is
+        # exactly what risks binding every chapter to an early table of
+        # contents (see test_name_fallback_does_not_match_a_table_of_
+        # contents_page below): both names appear, in order, right at the
+        # start of the document. The whole result must be discarded rather
+        # than silently accepted.
+        pages = ["第一章\n第二章", "intro", "real chapter one body", "real chapter two body"]
+        chapters = [
+            {"name": "第一章", "marker": "XTCCH0001"},
+            {"name": "第二章", "marker": "XTCCH0002"},
+        ]
+        with caplog.at_level(logging.WARNING, logger="converter"):
+            with mock.patch.object(app, "pymupdf", _fake_pymupdf_with_pages(pages)):
+                located = app.detect_chapter_pages(b"fake", chapters)
+        assert located == []
+        assert "marker matched none" in caplog.text
+
+    def test_name_fallback_does_not_match_a_table_of_contents_page(self):
+        # A table of contents on page 0 lists both chapter titles, in order,
+        # well before either real chapter starts. Chapter 1's marker is
+        # found normally; chapter 2's marker is missing, so it falls back to
+        # its name -- but the fallback search window is bounded to strictly
+        # after chapter 1's marker page, so the TOC (page 0, before chapter
+        # 1's marker at page 2) is never considered, and the real body text
+        # at page 3 is found instead.
+        pages = [
+            "目次\n第一章\n第二章",  # TOC page: both titles appear here too
+            "intro",
+            "XTCCH0001 第一章 real body",
+            "第二章 real body, marker dropped",
+        ]
+        chapters = [
+            {"name": "第一章", "marker": "XTCCH0001"},
+            {"name": "第二章", "marker": "XTCCH_MISSING"},
+        ]
+        with mock.patch.object(app, "pymupdf", _fake_pymupdf_with_pages(pages)):
+            located = app.detect_chapter_pages(b"fake", chapters)
+        assert located == [
+            {"name": "第一章", "start_page": 2},
+            {"name": "第二章", "start_page": 3},
+        ]
+
+    def test_name_fallback_is_bounded_by_neighbouring_markers(self):
+        # Chapter 2 (middle) has no marker hit; its name also happens to
+        # appear on an early TOC-like page, well before chapter 1's marker.
+        # The fallback window (strictly between chapter 1's and chapter 3's
+        # marker pages) must exclude that early page and find the real body
+        # text between the two markers instead.
+        pages = [
+            "TOC: 第二章 mentioned here too",  # page 0 -- outside the window
+            "intro",
+            "XTCCH0001 chapter one body",  # page 2
+            "filler",
+            "第二章 real body, marker dropped",  # page 4 -- inside the window
+            "filler",
+            "XTCCH0003 chapter three body",  # page 6
+        ]
+        chapters = [
+            {"name": "第一章", "marker": "XTCCH0001"},
+            {"name": "第二章", "marker": "XTCCH_MISSING"},
+            {"name": "第三章", "marker": "XTCCH0003"},
+        ]
+        with mock.patch.object(app, "pymupdf", _fake_pymupdf_with_pages(pages)):
+            located = app.detect_chapter_pages(b"fake", chapters)
+        assert located == [
+            {"name": "第一章", "start_page": 2},
+            {"name": "第二章", "start_page": 4},
+            {"name": "第三章", "start_page": 6},
+        ]
+
+    def test_chapter_not_found_by_either_method_is_dropped_and_logged(self, caplog):
+        # Chapter 1's marker is found (so fallback isn't discarded outright);
+        # chapter 2 is missing both its marker and any trace of its name.
+        pages = ["XTCCH0001 first chapter, nothing else relevant"]
+        chapters = [
+            {"name": "第一章", "marker": "XTCCH0001"},
+            {"name": "存在しない章", "marker": "XTCCH_GONE"},
+        ]
+        with caplog.at_level(logging.INFO, logger="converter"):
+            with mock.patch.object(app, "pymupdf", _fake_pymupdf_with_pages(pages)):
+                located = app.detect_chapter_pages(b"fake", chapters)
+        assert located == [{"name": "第一章", "start_page": 0}]
+        assert "not found" in caplog.text
+
+    def test_non_monotonic_detection_is_dropped_as_a_false_match(self, caplog):
+        # Chapter 2's marker actually appears on an EARLIER page than
+        # chapter 1's -- almost certainly a false positive -- so it must be
+        # dropped rather than silently reordered or accepted.
+        pages = ["intro", "XTCCH0002 mistaken early match", "XTCCH0001 real first chapter"]
+        chapters = [
+            {"name": "第一章", "marker": "XTCCH0001"},
+            {"name": "第二章", "marker": "XTCCH0002"},
+        ]
+        with caplog.at_level(logging.WARNING, logger="converter"):
+            with mock.patch.object(app, "pymupdf", _fake_pymupdf_with_pages(pages)):
+                located = app.detect_chapter_pages(b"fake", chapters)
+        assert located == [{"name": "第一章", "start_page": 2}]
+        assert "does not follow previous" in caplog.text
+
+    def test_no_pymupdf_returns_empty(self):
+        with mock.patch.object(app, "pymupdf", None):
+            assert app.detect_chapter_pages(b"fake", [{"name": "x", "marker": "y"}]) == []
+
+    def test_no_chapters_requested_returns_empty(self):
+        assert app.detect_chapter_pages(b"fake", []) == []
+
+    def test_read_failure_is_swallowed_and_logged(self, caplog):
+        fake_pymupdf = mock.MagicMock()
+        fake_pymupdf.open.side_effect = RuntimeError("broken pdf")
+        with caplog.at_level(logging.ERROR, logger="converter"):
+            with mock.patch.object(app, "pymupdf", fake_pymupdf):
+                located = app.detect_chapter_pages(b"fake", [{"name": "x", "marker": "y"}])
+        assert located == []
+        assert "failed to read PDF text" in caplog.text
+
+
+class TestBuildChapterEntries:
+    def test_end_page_is_next_start_minus_one(self):
+        located = [
+            {"name": "第一章", "start_page": 0},
+            {"name": "第二章", "start_page": 5},
+            {"name": "第三章", "start_page": 12},
+        ]
+        assert app.build_chapter_entries(located, total_pages=20) == [
+            {"name": "第一章", "start_page": 0, "end_page": 4},
+            {"name": "第二章", "start_page": 5, "end_page": 11},
+            {"name": "第三章", "start_page": 12, "end_page": 19},
+        ]
+
+    def test_last_chapter_end_page_is_total_pages_minus_one(self):
+        located = [{"name": "全部", "start_page": 0}]
+        assert app.build_chapter_entries(located, total_pages=7) == [
+            {"name": "全部", "start_page": 0, "end_page": 6}
+        ]
+
+    def test_out_of_uint16_range_entry_is_dropped_and_logged(self, caplog):
+        located = [{"name": "大きすぎる", "start_page": 0}]
+        with caplog.at_level(logging.WARNING, logger="converter"):
+            entries = app.build_chapter_entries(located, total_pages=70000)
+        assert entries == []
+        assert "out of uint16 range" in caplog.text
+
+    def test_name_is_truncated_utf8_safely(self):
+        long_name = "章" * 100  # 3 bytes/char in UTF-8 -> 300 bytes, way over the limit
+        (entry,) = app.build_chapter_entries(
+            [{"name": long_name, "start_page": 0}], total_pages=5
+        )
+        assert len(entry["name"].encode("utf-8")) <= app.MAX_CHAPTER_NAME_BYTES
+        assert long_name.startswith(entry["name"])
+        # A partial multi-byte character must never be written -- round-trip
+        # through UTF-8 must not raise or lose data.
+        assert entry["name"].encode("utf-8").decode("utf-8") == entry["name"]
+
+    def test_empty_located_returns_empty(self):
+        assert app.build_chapter_entries([], total_pages=10) == []
+
+    def test_unpaired_surrogate_in_name_is_skipped_not_raised(self, caplog):
+        # json.loads happily decodes an unpaired UTF-16 surrogate (e.g.
+        # "\ud800") into a plain str -- decode_chapters_header's
+        # isinstance(name, str) check passes it right through -- but it can
+        # never be UTF-8 encoded. This must drop just that chapter (logged),
+        # never raise all the way out to Handler.do_POST and fail the whole
+        # conversion (reproduction from the change-reviewer's report).
+        located = [{"name": "\ud800bad", "start_page": 0}]
+        with caplog.at_level(logging.WARNING, logger="converter"):
+            entries = app.build_chapter_entries(located, total_pages=10)
+        assert entries == []
+        assert "cannot be encoded as UTF-8" in caplog.text
+
+    def test_unpaired_surrogate_chapter_does_not_block_other_chapters(self):
+        located = [
+            {"name": "第一章", "start_page": 0},
+            {"name": "\ud800bad", "start_page": 5},
+            {"name": "第三章", "start_page": 8},
+        ]
+        entries = app.build_chapter_entries(located, total_pages=12)
+        assert entries == [
+            {"name": "第一章", "start_page": 0, "end_page": 4},
+            {"name": "第三章", "start_page": 8, "end_page": 11},
+        ]
+
+
+class TestTruncateUtf8Bytes:
+    def test_short_text_is_unchanged(self):
+        assert app.truncate_utf8_bytes("hello", 79) == "hello"
+
+    def test_truncates_without_splitting_a_multibyte_character(self):
+        text = "あ" * 30  # 3 bytes each = 90 bytes total, over the 79-byte budget
+        truncated = app.truncate_utf8_bytes(text, 79)
+        encoded = truncated.encode("utf-8")
+        assert len(encoded) <= 79
+        # A mid-character cut would raise UnicodeDecodeError here.
+        assert encoded.decode("utf-8") == truncated
+        assert text.startswith(truncated)
+
+    def test_exact_boundary_is_not_truncated_further(self):
+        text = "a" * 79
+        assert app.truncate_utf8_bytes(text, 79) == text
+
+    def test_empty_text(self):
+        assert app.truncate_utf8_bytes("", 79) == ""
+
+
+class TestResolveChapters:
+    def test_empty_spec_returns_empty(self):
+        assert app.resolve_chapters(b"pdf", [], 10) == []
+
+    def test_unknown_page_count_returns_empty_and_warns(self, caplog):
+        with caplog.at_level(logging.WARNING, logger="converter"):
+            result = app.resolve_chapters(b"pdf", [{"name": "x", "marker": "y"}], None)
+        assert result == []
+        assert "page count is unavailable" in caplog.text
+
+    def test_zero_page_count_returns_empty(self):
+        assert app.resolve_chapters(b"pdf", [{"name": "x", "marker": "y"}], 0) == []
+
+    def test_full_pipeline_with_real_pymupdf(self):
+        pymupdf = pytest.importorskip("pymupdf")
+        doc = pymupdf.open()
+        for i in range(4):
+            page = doc.new_page()
+            if i == 1:
+                page.insert_text((72, 72), "XTCCH0001 First Chapter")
+            if i == 3:
+                page.insert_text((72, 72), "XTCCH0002 Second Chapter")
+        pdf_bytes = doc.tobytes()
+        chapters_spec = [
+            {"name": "First Chapter", "marker": "XTCCH0001"},
+            {"name": "Second Chapter", "marker": "XTCCH0002"},
+        ]
+        result = app.resolve_chapters(pdf_bytes, chapters_spec, doc.page_count)
+        assert result == [
+            {"name": "First Chapter", "start_page": 1, "end_page": 2},
+            {"name": "Second Chapter", "start_page": 3, "end_page": 3},
+        ]
+
+    def test_no_chapters_located_returns_empty(self):
+        pages = ["nothing relevant"]
+        with mock.patch.object(app, "pymupdf", _fake_pymupdf_with_pages(pages)):
+            result = app.resolve_chapters(b"pdf", [{"name": "x", "marker": "y"}], 1)
+        assert result == []
+
+
+class TestTomlChaptersBlock:
+    def test_serializes_as_array_of_tables(self):
+        chapters = [
+            {"name": "第一章", "start_page": 0, "end_page": 4},
+            {"name": "第二章", "start_page": 5, "end_page": 9},
+        ]
+        text = app._toml_chapters_block(chapters)
+        parsed = tomllib.loads(text)
+        assert parsed == {"chapters": chapters}
+
+    def test_config_with_title_author_chapters_appends_valid_toml(self, tmp_path):
+        config_path = tmp_path / "config.toml"
+        config_path.write_text(SAMPLE_CONFIG, encoding="utf-8")
+        chapters = [
+            {"name": "第一章", "start_page": 0, "end_page": 4},
+            {"name": "第二章", "start_page": 5, "end_page": 9},
+        ]
+        with mock.patch.object(app, "CONFIG_PATH", str(config_path)):
+            merged = tomllib.loads(
+                app.config_with_title_author_chapters("タイトル", "著者", chapters)
+            )
+        assert merged["output"]["title"] == "タイトル"
+        assert merged["output"]["author"] == "著者"
+        # The rest of the base config survives untouched, types intact.
+        assert merged["output"]["width"] == 528
+        assert merged["xtg"]["dither_strength"] == 0.8
+        assert merged["chapters"] == chapters
+
+    def test_chapters_only_still_merges_without_title_or_author(self, tmp_path):
+        # A chapters-only call (title="" and author="") must still trigger
+        # the merge -- same "don't silently skip because title is falsy"
+        # stance as TestAuthorHandling's author-only case.
+        config_path = tmp_path / "config.toml"
+        config_path.write_text(SAMPLE_CONFIG, encoding="utf-8")
+        chapters = [{"name": "第一章", "start_page": 0, "end_page": 4}]
+        with mock.patch.object(app, "CONFIG_PATH", str(config_path)):
+            merged = tomllib.loads(
+                app.config_with_title_author_chapters("", "", chapters)
+            )
+        assert merged["chapters"] == chapters
+        assert "author" not in merged["output"]
+
+    def test_no_chapters_produces_no_chapters_key(self, tmp_path):
+        config_path = tmp_path / "config.toml"
+        config_path.write_text(SAMPLE_CONFIG, encoding="utf-8")
+        with mock.patch.object(app, "CONFIG_PATH", str(config_path)):
+            merged = tomllib.loads(app.config_with_title_author_chapters("T"))
+        assert "chapters" not in merged
+
+    def test_config_with_title_author_is_unaffected_alias(self, tmp_path):
+        # Byte-for-byte backward compatibility: the existing entry points
+        # must produce exactly what they did before chapters existed.
+        config_path = tmp_path / "config.toml"
+        config_path.write_text(SAMPLE_CONFIG, encoding="utf-8")
+        with mock.patch.object(app, "CONFIG_PATH", str(config_path)):
+            assert app.config_with_title_author("T", "A") == (
+                app.config_with_title_author_chapters("T", "A")
+            )
+
+
+class TestConvertPdfWithChapters:
+    """Chapters are only ever embedded into the FINAL xtctool invocation
+    (single-pass, or the chunk-repack call) -- never into an intermediate
+    per-chunk call, since those files are discarded once the repack step
+    produces the final container."""
+
+    def test_single_pass_config_includes_chapters(self, tmp_path):
+        config_path = tmp_path / "config.toml"
+        config_path.write_text(SAMPLE_CONFIG, encoding="utf-8")
+        chapters = [{"name": "第一章", "start_page": 0, "end_page": 3}]
+        seen = {}
+
+        def inspecting_run(cmd, **kwargs):
+            merged_path = Path(cmd[cmd.index("-c") + 1])
+            seen["config"] = tomllib.loads(merged_path.read_text(encoding="utf-8"))
+            return run_success(cmd, **kwargs)
+
+        with mock.patch.object(app, "CONFIG_PATH", str(config_path)):
+            with mock.patch.object(app.subprocess, "run", side_effect=inspecting_run):
+                assert app.convert_pdf(FAKE_PDF, chapters=chapters) == FAKE_XTC
+        assert seen["config"]["chapters"] == chapters
+
+    def test_no_chapters_uses_base_config_unaffected(self):
+        # Every existing /convert caller (no X-Xtc-Chapters header, or one
+        # that resolves to zero chapters) must stay byte-for-byte the prior
+        # behavior.
+        calls = []
+
+        def recording_run(cmd, **kwargs):
+            calls.append(cmd)
+            return run_success(cmd, **kwargs)
+
+        with mock.patch.object(app.subprocess, "run", side_effect=recording_run):
+            assert app.convert_pdf(FAKE_PDF, chapters=[]) == FAKE_XTC
+            assert app.convert_pdf(FAKE_PDF) == FAKE_XTC
+        assert calls[0][calls[0].index("-c") + 1] == app.CONFIG_PATH
+        assert calls[1][calls[1].index("-c") + 1] == app.CONFIG_PATH
+
+    def test_chunked_conversion_only_embeds_chapters_in_the_repack_call(self, tmp_path):
+        config_path = tmp_path / "config.toml"
+        config_path.write_text(SAMPLE_CONFIG, encoding="utf-8")
+        chapters = [
+            {"name": "第一章", "start_page": 0, "end_page": 79},
+            {"name": "第二章", "start_page": 80, "end_page": 80},
+        ]
+        configs_seen = []
+
+        def inspecting_run(cmd, **kwargs):
+            merged_path = Path(cmd[cmd.index("-c") + 1])
+            configs_seen.append(tomllib.loads(merged_path.read_text(encoding="utf-8")))
+            return run_success(cmd, **kwargs)
+
+        with mock.patch.object(app, "CONFIG_PATH", str(config_path)):
+            with mock.patch.object(app.subprocess, "run", side_effect=inspecting_run):
+                assert (
+                    app.convert_pdf(FAKE_PDF, page_count=81, chapters=chapters)
+                    == FAKE_XTC
+                )
+
+        # 2 chunks + 1 repack call, matching TestChunkedConversion's shape.
+        assert len(configs_seen) == 3
+        assert "chapters" not in configs_seen[0]
+        assert "chapters" not in configs_seen[1]
+        assert configs_seen[2]["chapters"] == chapters
+
+    def test_chapters_config_merge_failure_falls_back_without_chapters(self, caplog):
+        # An unreadable CONFIG_PATH must not block the conversion -- same
+        # stance as the pre-existing title/author merge-failure fallback.
+        calls = []
+
+        def recording_run(cmd, **kwargs):
+            calls.append(cmd)
+            return run_success(cmd, **kwargs)
+
+        with caplog.at_level(logging.ERROR, logger="converter"):
+            with mock.patch.object(app, "CONFIG_PATH", "/nonexistent/config.toml"):
+                with mock.patch.object(
+                    app.subprocess, "run", side_effect=recording_run
+                ):
+                    assert (
+                        app.convert_pdf(
+                            FAKE_PDF, chapters=[{"name": "x", "start_page": 0, "end_page": 0}]
+                        )
+                        == FAKE_XTC
+                    )
+        assert "chapters config merge failed" in caplog.text
+        # Falls back to CONFIG_PATH itself (no title/author either, in this
+        # test), exactly like the pre-existing title-merge-failure fallback.
+        assert calls[0][calls[0].index("-c") + 1] == "/nonexistent/config.toml"
+
+
+class TestHandleConvertWithChaptersHeader:
+    def test_chapters_header_resolves_and_merges_into_config(self, server, tmp_path):
+        config_path = tmp_path / "config.toml"
+        config_path.write_text(SAMPLE_CONFIG, encoding="utf-8")
+        seen = {}
+
+        def inspecting_run(cmd, **kwargs):
+            merged_path = Path(cmd[cmd.index("-c") + 1])
+            seen["config"] = tomllib.loads(merged_path.read_text(encoding="utf-8"))
+            return run_success(cmd, **kwargs)
+
+        pages = ["intro", "XTCCH0001 chapter one"]
+        chapters_header = _b64url_json([{"name": "第一章", "marker": "XTCCH0001"}])
+
+        with mock.patch.object(app, "CONFIG_PATH", str(config_path)):
+            with mock.patch.object(
+                app, "read_pdf_metadata", return_value=("", len(pages))
+            ):
+                with mock.patch.object(
+                    app, "pymupdf", _fake_pymupdf_with_pages(pages)
+                ):
+                    with mock.patch.object(
+                        app.subprocess, "run", side_effect=inspecting_run
+                    ):
+                        status, _, body = request(
+                            server,
+                            "POST",
+                            "/convert",
+                            body=FAKE_PDF,
+                            headers={"X-Xtc-Chapters": chapters_header},
+                        )
+        assert status == 200
+        assert body == FAKE_XTC
+        assert seen["config"]["chapters"] == [
+            {"name": "第一章", "start_page": 1, "end_page": 1}
+        ]
+
+    def test_missing_chapters_header_is_unaffected(self, server):
+        with mock.patch.object(app.subprocess, "run", side_effect=run_success):
+            status, _, body = request(server, "POST", "/convert", body=FAKE_PDF)
+        assert status == 200
+        assert body == FAKE_XTC
+
+    def test_malformed_chapters_header_does_not_fail_the_conversion(self, server):
+        with mock.patch.object(app.subprocess, "run", side_effect=run_success):
+            status, _, body = request(
+                server,
+                "POST",
+                "/convert",
+                body=FAKE_PDF,
+                headers={"X-Xtc-Chapters": "not valid base64url!!"},
+            )
+        assert status == 200
+        assert body == FAKE_XTC
+
+    def test_unpaired_surrogate_chapter_name_does_not_500_the_conversion(self, server):
+        # Regression test for the change-reviewer's report: json.loads
+        # happily decodes an unpaired UTF-16 surrogate into a plain str
+        # (isinstance(name, str) in decode_chapters_header passes it
+        # through), but truncate_utf8_bytes' text.encode("utf-8") previously
+        # raised UnicodeEncodeError for it, uncaught all the way out to this
+        # handler's generic `except Exception`, turning a should-have-
+        # succeeded conversion into a 500. The whole conversion must still
+        # succeed; only the offending chapter's metadata is dropped.
+        pages = ["XTCCH0001 chapter one"]
+        chapters_header = _b64url_json(
+            [{"name": "\ud800bad", "marker": "XTCCH0001"}]
+        )
+        with mock.patch.object(app, "read_pdf_metadata", return_value=("", len(pages))):
+            with mock.patch.object(app, "pymupdf", _fake_pymupdf_with_pages(pages)):
+                with mock.patch.object(app.subprocess, "run", side_effect=run_success):
+                    status, _, body = request(
+                        server,
+                        "POST",
+                        "/convert",
+                        body=FAKE_PDF,
+                        headers={"X-Xtc-Chapters": chapters_header},
+                    )
+        assert status == 200
+        assert body == FAKE_XTC
+
+
+class TestChapterDetectionTimeoutBudget:
+    """resolve_chapters runs a full-document pymupdf text-extraction pass
+    (when X-Xtc-Chapters is present) BEFORE convert_pdf is ever called, but
+    convert_pdf computes its own deadline as time.monotonic() + (whatever
+    timeout_seconds it's given), starting fresh the moment it's called. Time
+    spent on chapter detection must therefore come out of the budget handed
+    to convert_pdf, not be granted for free on top of
+    X-Convert-Timeout-Seconds."""
+
+    def test_chapter_detection_time_is_subtracted_from_convert_pdf_timeout(self, server):
+        clock = iter([0.0, 7.0])  # 7s "elapsed" during resolve_chapters
+        captured = {}
+
+        def fake_convert_pdf(pdf_bytes, title, timeout_seconds, page_count, author, chapters):
+            captured["timeout_seconds"] = timeout_seconds
+            return FAKE_XTC
+
+        chapters_header = _b64url_json([{"name": "第一章", "marker": "XTCCH0001"}])
+        with mock.patch.object(app.time, "monotonic", side_effect=lambda: next(clock)):
+            with mock.patch.object(app, "read_pdf_metadata", return_value=("", 5)):
+                with mock.patch.object(app, "resolve_chapters", return_value=[]):
+                    with mock.patch.object(app, "convert_pdf", side_effect=fake_convert_pdf):
+                        status, _, body = request(
+                            server,
+                            "POST",
+                            "/convert",
+                            body=FAKE_PDF,
+                            headers={
+                                "X-Xtc-Chapters": chapters_header,
+                                "X-Convert-Timeout-Seconds": "100",
+                            },
+                        )
+        assert status == 200
+        assert body == FAKE_XTC
+        assert captured["timeout_seconds"] == pytest.approx(93.0)
+
+    def test_detection_time_exceeding_budget_floors_timeout_at_zero(self, server):
+        clock = iter([0.0, 999.0])
+        captured = {}
+
+        def fake_convert_pdf(pdf_bytes, title, timeout_seconds, page_count, author, chapters):
+            captured["timeout_seconds"] = timeout_seconds
+            return FAKE_XTC
+
+        chapters_header = _b64url_json([{"name": "第一章", "marker": "XTCCH0001"}])
+        with mock.patch.object(app.time, "monotonic", side_effect=lambda: next(clock)):
+            with mock.patch.object(app, "read_pdf_metadata", return_value=("", 5)):
+                with mock.patch.object(app, "resolve_chapters", return_value=[]):
+                    with mock.patch.object(app, "convert_pdf", side_effect=fake_convert_pdf):
+                        status, _, body = request(
+                            server,
+                            "POST",
+                            "/convert",
+                            body=FAKE_PDF,
+                            headers={
+                                "X-Xtc-Chapters": chapters_header,
+                                "X-Convert-Timeout-Seconds": "10",
+                            },
+                        )
+        assert status == 200
+        assert captured["timeout_seconds"] == 0.0
+
+    def test_no_chapters_header_leaves_timeout_untouched(self, server):
+        # No detection pass runs at all, so the exact header-derived timeout
+        # is passed straight through -- unaffected by this budget
+        # accounting, and by extension every pre-existing (no
+        # X-Xtc-Chapters) /convert timeout test stays exact.
+        captured = {}
+
+        def fake_convert_pdf(pdf_bytes, title, timeout_seconds, page_count, author, chapters):
+            captured["timeout_seconds"] = timeout_seconds
+            return FAKE_XTC
+
+        with mock.patch.object(app, "convert_pdf", side_effect=fake_convert_pdf):
+            status, _, body = request(
+                server,
+                "POST",
+                "/convert",
+                body=FAKE_PDF,
+                headers={"X-Convert-Timeout-Seconds": "5"},
+            )
+        assert status == 200
+        assert body == FAKE_XTC
+        assert captured["timeout_seconds"] == 5
 
 
 class TestGracefulShutdown:

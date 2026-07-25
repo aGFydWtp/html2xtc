@@ -68,22 +68,74 @@ def _positive_env_int(name: str, default: int) -> int:
     return value
 
 
-# xtctool rasterizes every selected page into memory before packing (~1.7MB
-# per page measured), so long PDFs are converted in page-range chunks and the
-# chunk XTCs are repacked into the final container. PDFs at or below the
-# threshold use the original single-pass conversion.
-CHUNK_THRESHOLD_PAGES = _positive_env_int("XTC_CHUNK_THRESHOLD_PAGES", 150)
-CHUNK_SIZE_PAGES = _positive_env_int("XTC_CHUNK_SIZE_PAGES", 100)
+def _clamp_chunk_size_to_threshold(chunk_size: int, threshold: int) -> int:
+    """Clamp chunk_size to threshold, warning when it fires.
+
+    A single xtctool invocation rasterizes at most chunk_size pages at once,
+    so that value -- not the threshold -- actually bounds peak memory. If
+    XTC_CHUNK_SIZE_PAGES and XTC_CHUNK_THRESHOLD_PAGES are overridden
+    independently and the former ends up above the latter, a PDF between the
+    two values does take the chunked path, but convert_pdf's page ranges then
+    span the whole document in a single chunk -- so xtctool still rasterizes
+    every page in one call, and chunking bounds nothing. This clamp is what
+    actually keeps "a single xtctool call never rasterizes more than
+    CHUNK_THRESHOLD_PAGES pages" true regardless of which of the two env vars
+    is overridden."""
+    if chunk_size > threshold:
+        logger.warning(
+            "XTC_CHUNK_SIZE_PAGES (%d) exceeds XTC_CHUNK_THRESHOLD_PAGES (%d); "
+            "clamping the chunk size to the threshold",
+            chunk_size,
+            threshold,
+        )
+        return threshold
+    return chunk_size
+
+
+# xtctool rasterizes every selected page into memory before packing (~7.0MiB
+# per page + ~134MiB base, measured 2026-07 via `docker --memory=1g` binary
+# search: 128 pages succeeded, 130 pages OOM-killed), so long PDFs are
+# converted in page-range chunks and the chunk XTCs are repacked into the
+# final container. PDFs at or below the threshold use the original
+# single-pass conversion.
+#
+# Invariant: CHUNK_SIZE_PAGES never exceeds CHUNK_THRESHOLD_PAGES --
+# _clamp_chunk_size_to_threshold enforces it below, independently of env
+# overrides applied to only one of the two.
+CHUNK_THRESHOLD_PAGES = _positive_env_int("XTC_CHUNK_THRESHOLD_PAGES", 80)
+CHUNK_SIZE_PAGES = _clamp_chunk_size_to_threshold(
+    _positive_env_int("XTC_CHUNK_SIZE_PAGES", 80), CHUNK_THRESHOLD_PAGES
+)
 
 if pymupdf is None:  # pragma: no cover - always present in the container image
     logger.warning("pymupdf is unavailable; PDF title extraction is disabled")
 
 # Bounds concurrent xtctool subprocesses (each rasterizes up to
-# CHUNK_THRESHOLD_PAGES, or one chunk of a long PDF, into memory); excess
-# requests queue on their handler threads. Two concurrent chunked conversions
-# of the 665-page reference PDF peak at ~750MiB total (measured under
-# docker --memory=1g), leaving ~27% headroom on a basic (1GiB) instance, so
-# the chunked path needs no extra serialization beyond this semaphore.
+# CHUNK_SIZE_PAGES, or a whole short PDF up to CHUNK_THRESHOLD_PAGES, into
+# memory); excess requests queue on their handler threads.
+#
+# Current deployment target (wrangler.jsonc: standard-1, 4GiB), measured
+# 2026-07 via `docker --cpus=0.5 --memory=4g`: two concurrent chunked
+# conversions of a 135-page PDF (two chunks of 80+55 pages each, today's
+# CHUNK_THRESHOLD_PAGES/CHUNK_SIZE_PAGES defaults) both succeeded -- peak
+# container RSS 1345MiB of 4096MiB, 25.8s wall time. Separately, a single
+# (non-concurrent) 135-page conversion at the same chunk settings succeeded
+# even under `docker --memory=1g` (28.7s wall time), confirming the chunked
+# path, not just the larger instance, is what keeps this size safe.
+#
+# Older 1GiB-instance measurements, kept for context on why chunking exists
+# and no longer descriptive of what this semaphore runs on:
+#
+# - Two concurrent chunked conversions of the 665-page reference PDF were
+#   previously measured to peak at ~750MiB total (docker --memory=1g); the
+#   per-chunk size at that time is not recorded, so this figure cannot be
+#   directly compared to the measurements above.
+#
+# - Separately (2026-07, docker --memory=1g, ~7.0MiB/page + ~134MiB base):
+#   two concurrent single-pass conversions of a 100-page PDF (i.e. two
+#   subprocesses each rasterizing 100 pages at once, above the
+#   CHUNK_SIZE_PAGES default of 80) OOM-killed one of the two -- i.e.
+#   100-page chunks are unsafe two-at-a-time on a 1GiB instance.
 CONVERSION_SLOTS = threading.Semaphore(MAX_CONCURRENT_CONVERSIONS)
 
 

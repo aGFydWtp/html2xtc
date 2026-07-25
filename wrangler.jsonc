@@ -127,10 +127,12 @@
 			// src/container.ts の CONVERTER_POOL_SIZE と一致させること。
 			"max_instances": 4,
 			// Default is "lite" (256MiB); PyMuPDF rasterization needs more headroom.
-			// basic (1GiB) suffices: converter/app.py splits long PDFs into
-			// page-range chunks, so peak memory tracks the chunk size (100p ≈
-			// 380MB measured), not the document length.
-			"instance_type": "basic"
+			// Measured peak RSS: ~7.0 MiB/page + ~134 MiB base (e.g. 80p chunk
+			// ≈ 694MiB). converter/app.py splits long PDFs into page-range
+			// chunks (80p per chunk), so peak memory tracks the chunk size, not
+			// the document length. basic (1GiB) is too tight for 2 concurrent
+			// chunk conversions at that size, so use standard-1 (4GiB) instead.
+			"instance_type": "standard-1"
 		}
 	],
 	"workflows": [

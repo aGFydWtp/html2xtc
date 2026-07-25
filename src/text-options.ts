@@ -63,7 +63,7 @@ export const DEFAULT_TEXT_OPTIONS: TextConvertOptions = {
   encoding: "auto",
   layout: "horizontal",
   font: "BIZ UDPGothic",
-  fontSizePx: 18,
+  fontSizePx: 26,
   lineHeight: 1.8,
   paragraphSpacingEm: 0.9,
   margins: {

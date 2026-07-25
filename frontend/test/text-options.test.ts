@@ -29,7 +29,7 @@ describe("DEFAULT_TEXT_OPTIONS", () => {
       encoding: "auto",
       layout: "horizontal",
       font: "BIZ UDPGothic",
-      fontSizePx: 18,
+      fontSizePx: 26,
       lineHeight: 1.8,
       paragraphSpacingEm: 0.9,
       margins: { top: 36, right: 32, bottom: 40, left: 32 },
@@ -137,21 +137,21 @@ describe("isValidFontFamily", () => {
 
 describe("TEXT_PRESETS / applyTextPreset (§6.5)", () => {
   it("standard preset matches spec", () => {
-    expect(TEXT_PRESETS.standard).toEqual({ layout: "horizontal", font: "BIZ UDPGothic", fontSizePx: 18, lineHeight: 1.8 });
+    expect(TEXT_PRESETS.standard).toEqual({ layout: "horizontal", font: "BIZ UDPGothic", fontSizePx: 26, lineHeight: 1.8 });
   });
 
   it("vertical_novel preset matches spec", () => {
-    expect(TEXT_PRESETS.vertical_novel).toEqual({ layout: "vertical", font: "BIZ UDMincho", fontSizePx: 18, lineHeight: 1.9 });
+    expect(TEXT_PRESETS.vertical_novel).toEqual({ layout: "vertical", font: "BIZ UDMincho", fontSizePx: 26, lineHeight: 1.9 });
   });
 
   it("large_font preset matches spec", () => {
-    expect(TEXT_PRESETS.large_font).toEqual({ fontSizePx: 23, lineHeight: 1.8 });
+    expect(TEXT_PRESETS.large_font).toEqual({ fontSizePx: 30, lineHeight: 1.8 });
   });
 
   it("applyTextPreset merges the preset onto existing options without touching other fields", () => {
     const opts = { ...cloneDefaults(), title: "My Book" };
     const applied = applyTextPreset(opts, "large_font");
-    expect(applied.fontSizePx).toBe(23);
+    expect(applied.fontSizePx).toBe(30);
     expect(applied.lineHeight).toBe(1.8);
     expect(applied.title).toBe("My Book"); // untouched field preserved
     expect(applied.layout).toBe("horizontal"); // untouched field preserved
@@ -203,7 +203,7 @@ describe("isUntouchedForAozoraPreset / applyAozoraPresetIfUntouched (§15.3)", (
     expect(AOZORA_PRESET_OVERRIDES).toEqual({
       layout: "vertical",
       font: "BIZ UDMincho",
-      fontSizePx: 18,
+      fontSizePx: 26,
       lineHeight: 1.9,
       joinHardWrappedLines: false,
     });
@@ -217,7 +217,7 @@ describe("isUntouchedForAozoraPreset / applyAozoraPresetIfUntouched (§15.3)", (
     const applied = applyAozoraPresetIfUntouched(cloneDefaults());
     expect(applied.layout).toBe("vertical");
     expect(applied.font).toBe("BIZ UDMincho");
-    expect(applied.fontSizePx).toBe(18);
+    expect(applied.fontSizePx).toBe(26);
     expect(applied.lineHeight).toBe(1.9);
     expect(applied.joinHardWrappedLines).toBe(false);
   });

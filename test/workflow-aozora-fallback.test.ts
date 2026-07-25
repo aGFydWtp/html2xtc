@@ -290,6 +290,38 @@ describe.each([6002, 6003] as const)(
   },
 );
 
+describe("Aozora timeout fallback: XTC chapters survive the 4-chunk split", () => {
+  it("forwards extract-content's chapter list to convertInContainer even though the PDF was split and merged", async () => {
+    const bucket = new FakeR2Bucket();
+    const step = new FakeWorkflowStep();
+    const chapters = [
+      { name: "第一章", marker: "XTCCH0001" },
+      { name: "第二章", marker: "XTCCH0002" },
+    ];
+    mockedPrepareRenderInput.mockResolvedValue({
+      kind: "html",
+      html: aozoraArticleHtml(),
+      fontCss: null,
+      origin: "aozora",
+      chapters,
+    });
+    const chunkPdf = await onePagePdfBytes();
+    mockedRenderPdfFromHtml
+      .mockResolvedValueOnce(browserRunErrorResponse(6002))
+      .mockImplementation(async () => new Response(chunkPdf.slice(), { status: 200 }));
+
+    const result = await runUrl(fakeEnv(bucket, { AOZORA_TIMEOUT_FALLBACK_ENABLED: "true" }), step, AOZORA_URL);
+
+    expect(result.xtcKey).toBe(outputXtcKey(JOB_ID));
+    expect(mockedConvertInContainer).toHaveBeenCalledTimes(1);
+    // args: (env, jobId, body, timeoutMs, author, chapters) — the URL
+    // pipeline never has an author (container.ts's own doc comment).
+    const call = mockedConvertInContainer.mock.calls[0];
+    expect(call[4]).toBeUndefined();
+    expect(call[5]).toEqual(chapters);
+  });
+});
+
 describe("Aozora timeout fallback: ineligible cases fall through to existing behavior", () => {
   it("does nothing extra when the flag is off — code 6002 still exhausts render-pdf's retry budget and fails", async () => {
     const bucket = new FakeR2Bucket();

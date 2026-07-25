@@ -75,6 +75,7 @@ import type { TextConvertOptions } from "./text-options";
 import { textPrepareErrorMessage } from "./text-upload";
 import type { ConvertJobParams, ConvertSource, Env, PdfConvertOptions, RenderOptions } from "./types";
 import { AozoraAstLimitExceededError } from "../packages/aozora-text/src/index";
+import type { XtcChapter } from "../packages/aozora-text/src/index";
 
 // xtctool may run up to 600s (XTC_TIMEOUT_SECONDS in container.ts); allow a
 // 30s margin for transfer and container startup. Must stay below the step
@@ -319,6 +320,19 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
     // eligibility gate (spec §9 "青空文庫専用抽出が成功") reads this, not
     // isAozoraBunkoUrl(target) alone.
     let isAozoraOrigin = false;
+    // XTC chapter/table-of-contents metadata: set only when the dedicated
+    // Aozora extractor produced chapters (RenderInput.chapters) — stays []
+    // for every other input (no headings detected, or the generic/
+    // full-render path). Carried straight through to convert-xtc's
+    // convertInContainer call below regardless of whether the Aozora 4-chunk
+    // timeout fallback ran: the markers travel inside the article HTML
+    // itself (src/aozora.ts), so the chapter LIST doesn't need re-deriving
+    // whichever branch actually rendered the PDF. The extract-content step
+    // below also returns chapterHeadingLevel (RenderInput.chapterHeadingLevel,
+    // 1|2|null) purely for observability — visible in the step's own return
+    // value without needing an outer variable, since nothing downstream
+    // branches on it.
+    let chapters: XtcChapter[] = [];
     // Render options resolved deterministically from the params (explicit
     // layout/font win; blanks fall back to per-site defaults — Aozora
     // Bunko: vertical + BIZ UDMincho). Pure derivation, so it needs no step
@@ -329,7 +343,7 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
     // their dedicated extraction lives behind prepareRenderInput, which for
     // mode "full" degrades back to the plain URL render on any problem.
     if (mode === "extract" || isAozoraBunkoUrl(target)) {
-      ({ articleKey, fontsKey, isAozoraOrigin } = await step.do(
+      ({ articleKey, fontsKey, isAozoraOrigin, chapters } = await step.do(
         "extract-content",
         {
           retries: { limit: 1, delay: "5 seconds", backoff: "constant" },
@@ -350,7 +364,13 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
             options,
           );
           if (input.kind === "url") {
-            return { articleKey: null, fontsKey: null, isAozoraOrigin: false };
+            return {
+              articleKey: null,
+              fontsKey: null,
+              isAozoraOrigin: false,
+              chapters: [],
+              chapterHeadingLevel: null,
+            };
           }
           const key = articleHtmlKey(jobId);
           try {
@@ -365,7 +385,13 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
               `[${jobId}] R2 put ${key} failed; falling back to full render`,
               error,
             );
-            return { articleKey: null, fontsKey: null, isAozoraOrigin: false };
+            return {
+              articleKey: null,
+              fontsKey: null,
+              isAozoraOrigin: false,
+              chapters: [],
+              chapterHeadingLevel: null,
+            };
           }
           // The inlined font CSS rides a second key: it is injected via
           // addStyleTag at render time (the docs-supported custom-font path
@@ -390,6 +416,15 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
             articleKey: key,
             fontsKey: storedFontsKey,
             isAozoraOrigin: input.origin === "aozora",
+            // Small JSON (name+marker pairs only — never document body),
+            // well within step.do's 1 MiB output cap; rides this step's
+            // return value rather than a dedicated R2 key, same as
+            // isAozoraOrigin above.
+            chapters: input.chapters ?? [],
+            // Observability only (never read by any downstream branch): 1|2
+            // says which heading level `chapters` came from, null means
+            // neither 大見出し nor 中見出し was present.
+            chapterHeadingLevel: input.chapterHeadingLevel ?? null,
           };
         },
       ));
@@ -653,6 +688,13 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
               jobId,
               source.body.pipeThrough(new FixedLengthStream(source.size)),
               CONVERTER_FETCH_TIMEOUT_MS,
+              // No author on the URL pipeline (container.ts's own doc
+              // comment); `chapters` (outer-scope, from extract-content) is
+              // the same regardless of whether the Aozora 4-chunk fallback
+              // ran, since the markers travel inside the article HTML
+              // itself, not a separate per-branch value.
+              undefined,
+              chapters,
             );
           } catch (error) {
             if (error instanceof DOMException && error.name === "TimeoutError") {
@@ -1133,9 +1175,16 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
     // document's header-extracted author reaches the XTC metadata, not just
     // whatever textOptions.author the client happened to submit.
     let resolvedAuthor: string | undefined;
+    // XTC chapter/table-of-contents metadata: prepareTextDocument's
+    // PreparedTextDocument.chapters (`aozora` inputFormat only — always []
+    // for `plain`), forwarded to convert-xtc's convertInContainer call
+    // exactly like resolvedAuthor above. prepare-text's own return value
+    // also carries chapterHeadingLevel (1|2|null, observability only — see
+    // PreparedTextDocument's doc comment) alongside this.
+    let chapters: XtcChapter[] = [];
 
     try {
-      ({ articleKey, fontsKey, resolvedAuthor } = await step.do(
+      ({ articleKey, fontsKey, resolvedAuthor, chapters } = await step.do(
         "prepare-text",
         {
           // No retry budget beyond one extra attempt: every failure this step
@@ -1222,7 +1271,8 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
             `[${jobId}] text: inputFormat=${textOptions.inputFormat} chars=${prepared.characterCount} lines=${prepared.lineCount} ` +
               `recognizedAnnotations=${prepared.diagnostics.recognizedAnnotations} ` +
               `unsupportedAnnotations=${prepared.diagnostics.unsupportedAnnotations} ` +
-              `malformedAnnotations=${prepared.diagnostics.malformedAnnotations}`,
+              `malformedAnnotations=${prepared.diagnostics.malformedAnnotations} ` +
+              `chapterHeadingLevel=${prepared.chapterHeadingLevel ?? "none"} chapterCount=${prepared.chapters.length}`,
           );
 
           const htmlBytes = new TextEncoder().encode(prepared.html);
@@ -1273,6 +1323,13 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
             characterCount: prepared.characterCount,
             lineCount: prepared.lineCount,
             diagnostics: prepared.diagnostics,
+            // Small JSON (name+marker pairs only), well within step.do's
+            // 1 MiB output cap — same rationale as the URL pipeline's
+            // extract-content step.
+            chapters: prepared.chapters,
+            // Observability only (also logged above) — never read by any
+            // downstream branch.
+            chapterHeadingLevel: prepared.chapterHeadingLevel,
           };
         },
       ));
@@ -1398,6 +1455,14 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
               pdfSource.body.pipeThrough(new FixedLengthStream(pdfSource.size)),
               CONVERTER_FETCH_TIMEOUT_MS,
               resolvedAuthor,
+              // prepare-text's prepared.chapters (outer-scope `chapters`) —
+              // [] for `plain` inputFormat; for `aozora`, every heading at
+              // whichever level PreparedTextDocument.chapterHeadingLevel
+              // resolved to (大見出し if present anywhere in the document,
+              // else 中見出し — see extractChapters's doc comment in
+              // packages/aozora-text/src/render-html.ts for the selection
+              // rule; never level 1 unconditionally).
+              chapters,
             );
           } catch (error) {
             if (error instanceof DOMException && error.name === "TimeoutError") {

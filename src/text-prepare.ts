@@ -3,9 +3,11 @@
 
 import {
   countRecognizedAnnotations,
+  extractChapters,
   extractPlainText,
   parseAozoraDocument,
 } from "../packages/aozora-text/src/index";
+import type { XtcChapter } from "../packages/aozora-text/src/index";
 import {
   buildAozoraContentHtml,
   buildPlainTextContentHtml,
@@ -37,6 +39,23 @@ export interface PreparedTextDocument {
   /** Count only (spec §8.3/§17): the removed characters themselves are
    * never logged, only this count (src/workflow.ts's prepare-text step). */
   controlCharsRemoved: number;
+  /** XTC chapter/table-of-contents metadata: every heading at this
+   * document's chosen chapter level (chapterHeadingLevel below) whose
+   * normalized name is non-empty, {name, marker} in document order — always
+   * empty for `plain` inputFormat (no AST, no headings). Forwarded by
+   * src/workflow.ts's prepare-text step to convert-xtc's convertInContainer
+   * call, exactly like `author` above. */
+  chapters: XtcChapter[];
+  /** Which heading level `chapters` came from (1 = 大見出し, 2 = 中見出し,
+   * null = neither present in the document, so `chapters` is empty) —
+   * always null for `plain` inputFormat. Purely for observability:
+   * src/workflow.ts's prepare-text step folds this into its own return
+   * value so which level a document resolved to is visible without
+   * re-parsing anything. Read straight off extractChapters's own
+   * ExtractChaptersResult (packages/aozora-text/src/render-html.ts) —
+   * prepareAozora below never calls determineChapterHeadingLevel a second
+   * time itself, so there is only one place that decides this. */
+  chapterHeadingLevel: 1 | 2 | null;
   diagnostics: {
     recognizedAnnotations: number;
     unsupportedAnnotations: number;
@@ -109,6 +128,8 @@ function preparePlain(input: PrepareTextDocumentInput): PreparedTextDocument {
     characterCount: codePointLength(normalized.text),
     lineCount: lineCountOf(normalized.text),
     controlCharsRemoved: normalized.controlCharsRemoved,
+    chapters: [],
+    chapterHeadingLevel: null,
     diagnostics: EMPTY_DIAGNOSTICS,
   };
 }
@@ -147,6 +168,12 @@ function prepareAozora(input: PrepareTextDocumentInput): PreparedTextDocument {
   }
 
   const searchableText = extractPlainText(doc);
+  // Single call: extractChapters returns both the chapter list AND which
+  // heading level produced it (ExtractChaptersResult), so this is the only
+  // place that ever needs to know the answer to "which level does this
+  // document use" — no separate determineChapterHeadingLevel(doc) call here
+  // re-running the same scan.
+  const { chapters, headingLevel: chapterHeadingLevel } = extractChapters(doc);
 
   return {
     html,
@@ -156,6 +183,8 @@ function prepareAozora(input: PrepareTextDocumentInput): PreparedTextDocument {
     characterCount: codePointLength(normalized.text),
     lineCount: lineCountOf(normalized.text),
     controlCharsRemoved: normalized.controlCharsRemoved,
+    chapters,
+    chapterHeadingLevel,
     diagnostics: {
       recognizedAnnotations: countRecognizedAnnotations(doc),
       unsupportedAnnotations,

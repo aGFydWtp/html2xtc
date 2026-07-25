@@ -271,6 +271,206 @@ describe("extractAozoraArticle", () => {
   });
 });
 
+// Real Aozora heading markup, verified against
+// https://www.aozora.gr.jp/annotation/heading.html (通常の見出し / 同行見出し /
+// 窓見出し sections) — the spec page's own worked examples, reproduced
+// verbatim (class names, the <a class="midashi_anchor"> wrapper, the h3/h4
+// tags, and — for the gaiji-in-heading case in
+// AOZORA_HEADING_EMPTY_NAME_HTML below — the exact <img class="gaiji">
+// markup that page's own 中見出し example uses) so these fixtures are not a
+// guess about how Aozora's own converter renders ［＃「…」は…見出し］. A
+// second real file (夏目漱石『三四郎』
+// https://www.aozora.gr.jp/cards/000148/files/794_14946.html, fetched
+// 2026-07-25) confirms 中見出し's real-world shape (`<h4 class="naka-midashi">`)
+// matches this same convention; no publicly readable Aozora file checked
+// during this work happened to use 大見出し for its chapter numbers (see the
+// worker's final report for what that does and doesn't cover) — the 大見出し
+// shapes below are exactly the spec page's own worked examples, not
+// independently corpus-verified.
+//
+// This fixture has BOTH 大見出し (all 3 formats: 通常/同行/窓) and a
+// 中見出し, to prove A-1's "大 present → chapters come from 大 only, 中 stays
+// unmarked" rule with every 大 variant actually present at once.
+const AOZORA_HEADING_HTML = `<?xml version="1.0" encoding="Shift_JIS"?>
+<html xml:lang="ja" lang="ja">
+<head><title>夏目漱石 こころ</title></head>
+<body>
+<div class="metadata">
+<h1 class="title">こころ</h1>
+<h2 class="author">夏目漱石</h2>
+</div>
+<div class="main_text">
+<div class="jisage_2" style="margin-left: 2em"><h3 class="o-midashi"><a class="midashi_anchor" id="midashi560">上　先生と私</a></h3></div>
+<div class="jisage_5" style="margin-left: 5em"><h4 class="naka-midashi"><a class="midashi_anchor" id="midashi570">一</a></h4></div>
+　私《わたくし》はその人を常に先生と呼んでいた。<br />
+<h3 class="dogyo-o-midashi"><a class="midashi_anchor" id="midashi932">下　先生と遺書</a></h3>　ここから同行見出しの本文が続く。<br />
+<div class="jisage_1" style="margin-left: 1em"><h3 class="mado-o-midashi"><a class="midashi_anchor" id="midashi1295">両 親と私</a></h3></div>　ここから窓見出しの本文が続く。<br />
+</div>
+</body>
+</html>`;
+
+// No 大見出し anywhere — only 中見出し, in all 3 documented formats (通常/
+// 同行/窓), verified against the same heading.html spec page. Tests A-1's
+// fallback branch: 中 becomes the chapter level document-wide.
+const AOZORA_MINOR_ONLY_HTML = `<?xml version="1.0" encoding="Shift_JIS"?>
+<html xml:lang="ja" lang="ja">
+<head><title>青空文庫作品</title></head>
+<body>
+<div class="metadata">
+<h1 class="title">短編集</h1>
+<h2 class="author">著者名</h2>
+</div>
+<div class="main_text">
+<div class="jisage_5" style="margin-left: 5em"><h4 class="naka-midashi"><a class="midashi_anchor" id="midashi10">一</a></h4></div>
+　通常の中見出しの本文。<br />
+<h4 class="dogyo-naka-midashi"><a class="midashi_anchor" id="midashi20">二</a></h4>　同行中見出しの本文が続く。<br />
+<div class="jisage_1" style="margin-left: 1em"><h4 class="mado-naka-midashi"><a class="midashi_anchor" id="midashi30">三</a></h4></div>　窓中見出しの本文が続く。<br />
+</div>
+</body>
+</html>`;
+
+// B-4 boundary cases: headings whose normalized chapter name comes out
+// empty — an empty midashi_anchor, a ruby whose rb (base) is itself empty
+// (rt/rp stripped before reading textContent, same as insertChapterMarkers'
+// own clone-and-strip step), and a 外字 image-only heading (the
+// heading.html spec page's own worked example for a gaiji INSIDE a
+// 中見出し: "&lt;h4 class=&quot;naka-midashi&quot;&gt;...&lt;img
+// src=&quot;.../gaiji/1-13/1-13-21.png&quot; .../&gt;...&lt;/h4&gt;" — an
+// <img> contributes no textContent at all, so this heading's name is
+// empty too) — sandwiched between two real headings, to prove numbering
+// stays contiguous across a skipped one.
+const AOZORA_HEADING_EMPTY_NAME_HTML = `<?xml version="1.0" encoding="Shift_JIS"?>
+<html xml:lang="ja" lang="ja">
+<head><title>境界条件テスト</title></head>
+<body>
+<div class="main_text">
+<h3 class="o-midashi"><a class="midashi_anchor" id="midashi1">序</a></h3>
+　最初の章の本文。<br />
+<h3 class="o-midashi"><a class="midashi_anchor" id="midashi2"></a></h3>
+　空の見出しの後に続く本文。<br />
+<h3 class="o-midashi"><a class="midashi_anchor" id="midashi3"><ruby><rb></rb><rp>（</rp><rt>からのみだし</rt><rp>）</rp></ruby></a></h3>
+　ルビのみ（base空）の見出しの後に続く本文。<br />
+<h3 class="o-midashi"><a class="midashi_anchor" id="midashi4"><img src="../../../gaiji/1-13/1-13-21.png" alt="※(ローマ数字1、1-13-21)" class="gaiji" /></a></h3>
+　外字のみの見出しの後に続く本文。<br />
+<h3 class="o-midashi"><a class="midashi_anchor" id="midashi5">　</a></h3>
+　空白のみの見出しの後に続く本文。<br />
+<h3 class="o-midashi"><a class="midashi_anchor" id="midashi6">結び</a></h3>
+　最後の章の本文。<br />
+</div>
+</body>
+</html>`;
+
+describe("extractAozoraArticle — XTC chapter markers: 大見出し present", () => {
+  it("inserts a numbered marker span as the heading's own first child, for every 大見出し format (通常/同行/窓)", () => {
+    const article = extractAozoraArticle(AOZORA_HEADING_HTML, AOZORA_URL);
+    expect(article).not.toBeNull();
+    expect(article?.contentHtml).toContain(
+      '<h3 class="o-midashi"><span aria-hidden="true" class="xtc-chapter-marker">XTCCH0001</span><a class="midashi_anchor" id="midashi560">上　先生と私</a></h3>',
+    );
+    expect(article?.contentHtml).toContain(
+      '<h3 class="dogyo-o-midashi"><span aria-hidden="true" class="xtc-chapter-marker">XTCCH0002</span><a class="midashi_anchor" id="midashi932">下　先生と遺書</a></h3>',
+    );
+    expect(article?.contentHtml).toContain(
+      '<h3 class="mado-o-midashi"><span aria-hidden="true" class="xtc-chapter-marker">XTCCH0003</span><a class="midashi_anchor" id="midashi1295">両 親と私</a></h3>',
+    );
+    // Exactly 3 markers — one per 大見出し, never one for the 中見出し.
+    expect(article?.contentHtml.match(/xtc-chapter-marker/g)).toHaveLength(3);
+  });
+
+  it("never marks a 中見出し (naka-midashi) as a chapter when 大見出し is present (A-1)", () => {
+    const article = extractAozoraArticle(AOZORA_HEADING_HTML, AOZORA_URL);
+    expect(article?.contentHtml).toContain(
+      '<h4 class="naka-midashi"><a class="midashi_anchor" id="midashi570">一</a></h4>',
+    );
+  });
+
+  it("returns the matching {name, marker} chapter list (all 3 大見出し formats), ruby-anchor text preserved verbatim", () => {
+    const article = extractAozoraArticle(AOZORA_HEADING_HTML, AOZORA_URL);
+    expect(article?.chapters).toEqual([
+      { name: "上 先生と私", marker: "XTCCH0001" },
+      { name: "下 先生と遺書", marker: "XTCCH0002" },
+      { name: "両 親と私", marker: "XTCCH0003" },
+    ]);
+  });
+
+  it("reports chapterHeadingLevel: 1", () => {
+    const article = extractAozoraArticle(AOZORA_HEADING_HTML, AOZORA_URL);
+    expect(article?.chapterHeadingLevel).toBe(1);
+  });
+
+  it("leaves the midashi_anchor id attribute (contents.js navigation) untouched", () => {
+    const article = extractAozoraArticle(AOZORA_HEADING_HTML, AOZORA_URL);
+    expect(article?.contentHtml).toContain('id="midashi560"');
+    expect(article?.contentHtml).toContain('id="midashi932"');
+    expect(article?.contentHtml).toContain('id="midashi1295"');
+  });
+});
+
+describe("extractAozoraArticle — XTC chapter markers: no 大見出し, falls back to 中見出し (A-1)", () => {
+  it("inserts a numbered marker span for every 中見出し format (通常/同行/窓) when no 大見出し exists", () => {
+    const article = extractAozoraArticle(AOZORA_MINOR_ONLY_HTML, AOZORA_URL);
+    expect(article).not.toBeNull();
+    expect(article?.contentHtml).toContain(
+      '<h4 class="naka-midashi"><span aria-hidden="true" class="xtc-chapter-marker">XTCCH0001</span><a class="midashi_anchor" id="midashi10">一</a></h4>',
+    );
+    expect(article?.contentHtml).toContain(
+      '<h4 class="dogyo-naka-midashi"><span aria-hidden="true" class="xtc-chapter-marker">XTCCH0002</span><a class="midashi_anchor" id="midashi20">二</a></h4>',
+    );
+    expect(article?.contentHtml).toContain(
+      '<h4 class="mado-naka-midashi"><span aria-hidden="true" class="xtc-chapter-marker">XTCCH0003</span><a class="midashi_anchor" id="midashi30">三</a></h4>',
+    );
+    expect(article?.contentHtml.match(/xtc-chapter-marker/g)).toHaveLength(3);
+  });
+
+  it("returns the matching {name, marker} chapter list (all 3 中見出し formats)", () => {
+    const article = extractAozoraArticle(AOZORA_MINOR_ONLY_HTML, AOZORA_URL);
+    expect(article?.chapters).toEqual([
+      { name: "一", marker: "XTCCH0001" },
+      { name: "二", marker: "XTCCH0002" },
+      { name: "三", marker: "XTCCH0003" },
+    ]);
+  });
+
+  it("reports chapterHeadingLevel: 2", () => {
+    const article = extractAozoraArticle(AOZORA_MINOR_ONLY_HTML, AOZORA_URL);
+    expect(article?.chapterHeadingLevel).toBe(2);
+  });
+});
+
+describe("extractAozoraArticle — XTC chapter markers: no heading at all", () => {
+  it("returns an empty chapter list (not an error) and chapterHeadingLevel: null", () => {
+    const article = extractAozoraArticle(AOZORA_HTML, AOZORA_URL);
+    expect(article?.chapters).toEqual([]);
+    expect(article?.chapterHeadingLevel).toBeNull();
+    expect(article?.contentHtml).not.toContain("xtc-chapter-marker");
+  });
+});
+
+describe("extractAozoraArticle — XTC chapter markers: empty-name boundary cases (B-4)", () => {
+  it("skips an empty midashi_anchor, a ruby-only heading with an empty base, an image(外字)-only heading, and a whitespace-only heading — numbering stays contiguous across all of them", () => {
+    const article = extractAozoraArticle(AOZORA_HEADING_EMPTY_NAME_HTML, AOZORA_URL);
+    expect(article).not.toBeNull();
+    // Only the two REAL headings (序/結び) are numbered/marked/listed —
+    // never 4 (empty-anchor, empty-ruby-base, gaiji-only, whitespace-only).
+    expect(article?.chapters).toEqual([
+      { name: "序", marker: "XTCCH0001" },
+      { name: "結び", marker: "XTCCH0002" },
+    ]);
+    expect(article?.contentHtml.match(/xtc-chapter-marker/g)).toHaveLength(2);
+    expect(article?.contentHtml).toContain(
+      '<h3 class="o-midashi"><span aria-hidden="true" class="xtc-chapter-marker">XTCCH0001</span><a class="midashi_anchor" id="midashi1">序</a></h3>',
+    );
+    expect(article?.contentHtml).toContain(
+      '<h3 class="o-midashi"><span aria-hidden="true" class="xtc-chapter-marker">XTCCH0002</span><a class="midashi_anchor" id="midashi6">結び</a></h3>',
+    );
+    // The 4 empty-name headings are left entirely unmarked.
+    expect(article?.contentHtml).toContain('<a class="midashi_anchor" id="midashi2"></a>');
+    expect(article?.contentHtml).toContain('id="midashi3">');
+    expect(article?.contentHtml).toContain('id="midashi4">');
+    expect(article?.contentHtml).toContain('id="midashi5">');
+  });
+});
+
 describe("AOZORA_DOCUMENT_CSS", () => {
   it("re-expresses 字下げ/地付き along the logical inline axis", () => {
     expect(AOZORA_DOCUMENT_CSS).toContain(
@@ -293,6 +493,13 @@ describe("AOZORA_DOCUMENT_CSS", () => {
 
   it("sizes 外字 like a kanji", () => {
     expect(AOZORA_DOCUMENT_CSS).toMatch(/img\.gaiji\s*\{[^}]*width: 1em/);
+  });
+
+  it("keeps the XTC chapter marker invisible via color/font-size only, never display/visibility/opacity", () => {
+    expect(AOZORA_DOCUMENT_CSS).toMatch(/\.xtc-chapter-marker\s*\{[^}]*color: transparent/);
+    expect(AOZORA_DOCUMENT_CSS).toMatch(/\.xtc-chapter-marker\s*\{[^}]*font-size: 1px/);
+    expect(AOZORA_DOCUMENT_CSS).not.toContain("display: none");
+    expect(AOZORA_DOCUMENT_CSS).not.toContain("visibility: hidden");
   });
 });
 
@@ -335,6 +542,60 @@ describe("prepareAozoraRenderInput", () => {
     // Colophon identifies the source.
     expect(input.html).toContain("青空文庫");
     expect(input.html).toContain(AOZORA_URL);
+    // No heading at all in this fixture (AOZORA_HTML) —
+    // RenderInput.chapters/chapterHeadingLevel stay empty/null, exactly
+    // matching extractAozoraArticle's own result for it.
+    expect(input.chapters).toEqual([]);
+    expect(input.chapterHeadingLevel).toBeNull();
+  });
+
+  it("carries extractAozoraArticle's chapter list and level through onto RenderInput (大見出し present)", async () => {
+    const sourceWithHeadings: SourceHtmlFetcher = async () => ({
+      html: AOZORA_HEADING_HTML,
+      finalUrl: new URL(AOZORA_URL),
+    });
+    const input = await prepareAozoraRenderInput(
+      new URL(AOZORA_URL),
+      JOB_ID,
+      sourceWithHeadings,
+      fontFetchFail,
+      VERTICAL_MINCHO,
+    );
+    expect(input?.kind).toBe("html");
+    if (input?.kind !== "html") {
+      return;
+    }
+    expect(input.chapters).toEqual([
+      { name: "上 先生と私", marker: "XTCCH0001" },
+      { name: "下 先生と遺書", marker: "XTCCH0002" },
+      { name: "両 親と私", marker: "XTCCH0003" },
+    ]);
+    expect(input.chapterHeadingLevel).toBe(1);
+    expect(input.html).toContain("xtc-chapter-marker");
+  });
+
+  it("carries the 中見出し fallback (A-1) through onto RenderInput when there is no 大見出し", async () => {
+    const sourceMinorOnly: SourceHtmlFetcher = async () => ({
+      html: AOZORA_MINOR_ONLY_HTML,
+      finalUrl: new URL(AOZORA_URL),
+    });
+    const input = await prepareAozoraRenderInput(
+      new URL(AOZORA_URL),
+      JOB_ID,
+      sourceMinorOnly,
+      fontFetchFail,
+      VERTICAL_MINCHO,
+    );
+    expect(input?.kind).toBe("html");
+    if (input?.kind !== "html") {
+      return;
+    }
+    expect(input.chapters).toEqual([
+      { name: "一", marker: "XTCCH0001" },
+      { name: "二", marker: "XTCCH0002" },
+      { name: "三", marker: "XTCCH0003" },
+    ]);
+    expect(input.chapterHeadingLevel).toBe(2);
   });
 
   it("subsets the font the options selected", async () => {

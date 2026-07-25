@@ -3,14 +3,26 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  determineChapterHeadingLevel,
+  extractChapters,
   extractPlainText,
   renderBibliographyToHtml,
   renderDocumentToHtml,
 } from "../src/render-html";
+import type { XtcChapter } from "../src/chapters";
 import type { AozoraBlock, AozoraDocument } from "../src/types";
 
 function doc(blocks: AozoraBlock[], bibliography: AozoraBlock[] = []): AozoraDocument {
   return { blocks, bibliography, diagnostics: [] };
+}
+
+/** extractChapters returns { chapters, headingLevel } (its own doc comment
+ * explains why: a caller that also needs the level, e.g.
+ * src/text-prepare.ts's prepareAozora, reads it off this one call instead of
+ * separately calling determineChapterHeadingLevel again). Most assertions
+ * below only care about the chapter list itself. */
+function chaptersOf(document: AozoraDocument): XtcChapter[] {
+  return extractChapters(document).chapters;
 }
 
 describe("renderDocumentToHtml — paragraph", () => {
@@ -79,18 +91,181 @@ describe("renderDocumentToHtml — heading", () => {
         { type: "heading", level: 3, variant: "normal", children: [{ type: "text", value: "小" }] },
       ]),
     );
-    expect(html).toContain('<h2 class="aozora-heading aozora-heading-large">大</h2>');
+    // Level 1 (大見出し) is present, so it — not level 2 — is this
+    // document's chapter level (A-1) and gets an XTC chapter-marker span
+    // prepended; see the "chapter granularity" describe block below for
+    // dedicated coverage of that either/or contract.
+    expect(html).toContain(
+      '<h2 class="aozora-heading aozora-heading-large"><span class="xtc-chapter-marker" aria-hidden="true">XTCCH0001</span>大</h2>',
+    );
     expect(html).toContain('<h3 class="aozora-heading aozora-heading-medium">中</h3>');
     expect(html).toContain('<h4 class="aozora-heading aozora-heading-small">小</h4>');
   });
 
-  it("adds aozora-heading-inline for the inline variant", () => {
+  it("adds aozora-heading-inline for the inline variant (and a marker, since level 2 is this document's ONLY heading level)", () => {
     const html = renderDocumentToHtml(
       doc([{ type: "heading", level: 2, variant: "inline", children: [{ type: "text", value: "見出し" }] }]),
     );
+    // No level-1 heading anywhere in this document, so level 2 is the
+    // fallback chapter level (A-1) — this heading DOES get a marker.
     expect(html).toContain(
-      '<h3 class="aozora-heading aozora-heading-medium aozora-heading-inline">見出し</h3>',
+      '<h3 class="aozora-heading aozora-heading-medium aozora-heading-inline"><span class="xtc-chapter-marker" aria-hidden="true">XTCCH0001</span>見出し</h3>',
     );
+  });
+});
+
+describe("determineChapterHeadingLevel / renderDocumentToHtml / extractChapters — chapter granularity (A-1: 大 if present, else 中, never both, 小 never a source)", () => {
+  function levelsDoc(levels: Array<1 | 2 | 3>): AozoraDocument {
+    return doc(
+      levels.map((level, i) => ({
+        type: "heading" as const,
+        level,
+        variant: "normal" as const,
+        children: [{ type: "text" as const, value: `見出し${i + 1}` }],
+      })),
+    );
+  }
+
+  it("大 present (with 中/小 also present): only 大 becomes the chapter level, 中/小 stay unmarked/unlisted", () => {
+    const document = levelsDoc([1, 2, 3, 1]);
+    expect(determineChapterHeadingLevel(document)).toBe(1);
+    const html = renderDocumentToHtml(document);
+    expect(html.match(/xtc-chapter-marker/g)).toHaveLength(2); // one per 大, none for 中/小
+    expect(chaptersOf(document)).toEqual([
+      { name: "見出し1", marker: "XTCCH0001" },
+      { name: "見出し4", marker: "XTCCH0002" },
+    ]);
+    // extractChapters's own headingLevel must agree with the standalone
+    // determineChapterHeadingLevel call above — the two are never allowed
+    // to drift apart (this is exactly what folding the level into
+    // extractChapters's return value guards against).
+    expect(extractChapters(document).headingLevel).toBe(determineChapterHeadingLevel(document));
+  });
+
+  it("中 present, no 大 (小 also present): 中 becomes the chapter level, 小 stays unmarked/unlisted", () => {
+    const document = levelsDoc([2, 3, 2]);
+    expect(determineChapterHeadingLevel(document)).toBe(2);
+    const html = renderDocumentToHtml(document);
+    expect(html.match(/xtc-chapter-marker/g)).toHaveLength(2); // one per 中, none for 小
+    expect(chaptersOf(document)).toEqual([
+      { name: "見出し1", marker: "XTCCH0001" },
+      { name: "見出し3", marker: "XTCCH0002" },
+    ]);
+    expect(extractChapters(document).headingLevel).toBe(determineChapterHeadingLevel(document));
+  });
+
+  it("only 小 present: null (小 is never a chapter source, no fallback below it)", () => {
+    const document = levelsDoc([3, 3]);
+    expect(determineChapterHeadingLevel(document)).toBeNull();
+    const html = renderDocumentToHtml(document);
+    expect(html).not.toContain("xtc-chapter-marker");
+    expect(chaptersOf(document)).toEqual([]);
+    expect(extractChapters(document).headingLevel).toBeNull();
+  });
+
+  it("no heading at all: null", () => {
+    const document = doc([{ type: "paragraph", children: [{ type: "text", value: "本文" }] }]);
+    expect(determineChapterHeadingLevel(document)).toBeNull();
+    expect(chaptersOf(document)).toEqual([]);
+    expect(extractChapters(document).headingLevel).toBeNull();
+  });
+
+  it("never numbers a bibliography heading (renderBibliographyToHtml never embeds a marker)", () => {
+    const html = renderBibliographyToHtml([
+      { type: "heading", level: 1, variant: "normal", children: [{ type: "text", value: "底本" }] },
+    ]);
+    expect(html).not.toContain("xtc-chapter-marker");
+  });
+});
+
+describe("extractChapters — name normalization and empty-name boundary cases (B-4)", () => {
+  it("normalizes the chapter name: collapses embedded newlines and ruby readings are excluded", () => {
+    const withRubyAndNewline = doc([
+      {
+        type: "heading",
+        level: 1,
+        variant: "normal",
+        children: [
+          { type: "text", value: "第\n一" },
+          { type: "ruby", base: [{ type: "text", value: "章" }], reading: "しょう" },
+        ],
+      },
+    ]);
+    expect(chaptersOf(withRubyAndNewline)).toEqual([{ name: "第 一章", marker: "XTCCH0001" }]);
+  });
+
+  it("excludes rawAnnotation notation from the chapter name", () => {
+    const withRawAnnotation = doc([
+      {
+        type: "heading",
+        level: 1,
+        variant: "normal",
+        children: [
+          { type: "text", value: "序" },
+          { type: "rawAnnotation", text: "［＃未対応の注記］" },
+        ],
+      },
+    ]);
+    expect(chaptersOf(withRawAnnotation)).toEqual([{ name: "序", marker: "XTCCH0001" }]);
+  });
+
+  it("skips a heading with no children at all (empty name) — neither numbered, marked, nor listed", () => {
+    const document = doc([
+      { type: "heading", level: 1, variant: "normal", children: [] },
+      { type: "heading", level: 1, variant: "normal", children: [{ type: "text", value: "実在の章" }] },
+    ]);
+    // The empty heading is skipped outright: the surviving chapter keeps
+    // marker 1 (numbering is never "reserved" for a skipped heading), and
+    // its marker is the only one embedded in the HTML.
+    expect(chaptersOf(document)).toEqual([{ name: "実在の章", marker: "XTCCH0001" }]);
+    const html = renderDocumentToHtml(document);
+    expect(html.match(/xtc-chapter-marker/g)).toHaveLength(1);
+    expect(html).toContain(
+      '<h2 class="aozora-heading aozora-heading-large"><span class="xtc-chapter-marker" aria-hidden="true">XTCCH0001</span>実在の章</h2>',
+    );
+  });
+
+  it("skips a heading built only from an empty ruby base (whitespace-only or absent text)", () => {
+    const document = doc([
+      {
+        type: "heading",
+        level: 1,
+        variant: "normal",
+        children: [{ type: "ruby", base: [{ type: "text", value: "" }], reading: "からのみだし" }],
+      },
+    ]);
+    expect(chaptersOf(document)).toEqual([]);
+    expect(renderDocumentToHtml(document)).not.toContain("xtc-chapter-marker");
+  });
+
+  it("skips a heading built only from a rawAnnotation (notation-only, no readable text at all)", () => {
+    const document = doc([
+      { type: "heading", level: 1, variant: "normal", children: [{ type: "rawAnnotation", text: "［＃未対応の注記］" }] },
+    ]);
+    expect(chaptersOf(document)).toEqual([]);
+    expect(renderDocumentToHtml(document)).not.toContain("xtc-chapter-marker");
+  });
+
+  it("skips a heading whose only text is whitespace", () => {
+    const document = doc([
+      { type: "heading", level: 1, variant: "normal", children: [{ type: "text", value: "　\n　" }] },
+    ]);
+    expect(chaptersOf(document)).toEqual([]);
+    expect(renderDocumentToHtml(document)).not.toContain("xtc-chapter-marker");
+  });
+
+  it("numbering stays contiguous across a skipped empty heading sandwiched between two real ones", () => {
+    const document = doc([
+      { type: "heading", level: 1, variant: "normal", children: [{ type: "text", value: "序" }] },
+      { type: "heading", level: 1, variant: "normal", children: [] },
+      { type: "heading", level: 1, variant: "normal", children: [{ type: "text", value: "結び" }] },
+    ]);
+    expect(chaptersOf(document)).toEqual([
+      { name: "序", marker: "XTCCH0001" },
+      { name: "結び", marker: "XTCCH0002" },
+    ]);
+    const html = renderDocumentToHtml(document);
+    expect(html.match(/xtc-chapter-marker/g)).toHaveLength(2);
   });
 });
 

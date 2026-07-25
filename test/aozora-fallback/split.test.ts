@@ -80,6 +80,26 @@ function chapterTitle(n: number): string {
   return `　　　第${n}章`;
 }
 
+/** Same shape as flatLine, but with no sentence-ending punctuation, so it
+ * never scores as a (legitimate) "line ends in 。" candidate itself — used
+ * only by the mid-line trap test below, to isolate the ONE deliberately
+ * mid-line "。" (the trap) as the sole sentence-end candidate in the whole
+ * fixture. Without this, the surrounding body's own "それN。<br>" line-ends
+ * are indistinguishable, at the old scorer's tier granularity, from the
+ * trap, and whichever happens to be closest to a 25/50/75% target wins —
+ * which is not reliably the trap, and is exactly why the previous version of
+ * this test passed against the pre-fix scorer too (see change-reviewer
+ * feedback on the first revision of this test). */
+function flatLineNoPeriod(seed: number): string {
+  return `${"あ".repeat(20)}${rubyWord()}${"い".repeat(20)}それ${seed}<br />`;
+}
+
+function flatLinesNoPeriod(count: number, startSeed: number): string {
+  let html = "";
+  for (let i = 0; i < count; i++) html += flatLineNoPeriod(startSeed + i);
+  return html;
+}
+
 // Deliberately [ \t\r\n] rather than \s: \s also matches U+3000 IDEOGRAPHIC
 // SPACE, which Aozora text uses for genuine indentation (e.g. chapterTitle
 // below) — matching it here would strip real content, not just filler.
@@ -358,10 +378,17 @@ describe("splitContentIntoChunks — flat (div-less, heading-less) Aozora reader
   it("does not cut mid-line: a sentence-ending punctuation mark followed by more content on the same line stays together", () => {
     // Mirrors the actual failure from spec §3.3: "…彼我に。" ends a sentence
     // but the same line continues with a <ruby> gloss and more text before
-    // the real (br-terminated) line end.
-    const before = flatLines(60, 0);
-    const midLineTrap = `…とどむるなかれ。 八二—八四<br>彼我に。${rubyWord()}を愛する愛、その義務に缺くる。<br />`;
-    const after = flatLines(60, 100);
+    // the real (br-terminated) line end. Surrounding filler uses
+    // flatLinesNoPeriod (no sentence-ending punctuation anywhere else) so
+    // this trap is the ONLY prev.endsSentence candidate in the whole
+    // fixture — old scoreBoundary's tier 4 (score 4, better than every
+    // other fallback-tier candidate in this fixture) therefore has no
+    // competing candidate and must pick this exact mid-line spot wherever
+    // it falls in-band. `before`/`after` are sized symmetrically so the
+    // trap sits close to the 50% target (±20% band easily covers it).
+    const before = flatLinesNoPeriod(100, 0);
+    const midLineTrap = `…とどむるなかれ。 八二—八四<br>彼我に。${rubyWord()}を愛する愛、その義務に缺くる<br />`;
+    const after = flatLinesNoPeriod(100, 200);
     const content = before + midLineTrap + after;
 
     const chunks = splitContentIntoChunks(content);

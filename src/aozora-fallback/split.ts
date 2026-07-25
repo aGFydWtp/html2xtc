@@ -28,7 +28,10 @@ import type { ContentMetrics } from "./metrics";
  *      hide it.
  *   2. 次が見出し        -> segment.isHeading (h1-h4), unchanged.
  *   3. 次がdiv/section   -> segment.isBlock, unchanged (collapses spec tiers
- *      3 and 5; see original rationale below).
+ *      3 and 5 into one selector: Aozora's main_text has no separate
+ *      "section" wrapper distinct from its indentation
+ *      <div class="jisage_N"> blocks, so a dedicated tier would duplicate
+ *      this one's selector).
  *   4. 連続br（2本以上） -> `precedingBreakRun()` counts consecutive `<br>`
  *      segments before the boundary, skipping whitespace-only text-node
  *      fillers in between (Aozora reader HTML emits `<br>\r\n<br>`, where the
@@ -72,14 +75,14 @@ import type { ContentMetrics } from "./metrics";
  * enough segments when the content is naturally low in top-level children.
  */
 
+/** 青空文庫リーダーHTMLに <span class="notes"> として残る改ページ注記。
+ * TXT経路の parse-document.ts が認識する記法集合と同じもの。 */
+const AOZORA_PAGE_BREAK_NOTE = /^［＃(改ページ|改丁|改見開き|改段)］$/;
 const CHUNK_COUNT = 4;
 const DOMINANT_FRACTION = 0.4;
 const MAX_RECURSION_DEPTH = 6;
 /** ±20% of the target position, per spec §14 "通常は目標位置±20%から選ぶ". */
 const TARGET_BAND_FRACTION = 0.2;
-/** 青空文庫リーダーHTMLに <span class="notes"> として残る改ページ注記。
- * TXT経路の parse-document.ts が認識する記法集合と同じもの。 */
-const AOZORA_PAGE_BREAK_NOTE = /^［＃(改ページ|改丁|改見開き|改段)］$/;
 
 export interface DomChunk extends ContentMetrics {
   html: string;

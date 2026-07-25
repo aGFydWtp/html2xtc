@@ -6,6 +6,7 @@ import { encodeBase64Url } from "./base64url";
 import { resolveMaxPdfBytes } from "./jobs";
 import { resolveMaxUploadPdfBytes } from "./pdf-upload";
 import type { Env, PdfConvertOptions } from "./types";
+import type { XtcChapter } from "../packages/aozora-text/src/index";
 
 export class XtcConverterContainer extends Container {
   // Requests block until the container listens on this port (app.py).
@@ -29,6 +30,49 @@ const CONVERTER_POOL_SIZE = 4;
 const CONVERTER_TIMEOUT_MARGIN_MS = 30_000;
 
 /**
+ * Hard cap on how many chapters ever reach the Container via X-Xtc-Chapters.
+ * Measured motivation: a real-world sample of long-form Aozora works found a
+ * 中見出し count as high as 584 in a single document — the device holds
+ * every chapter name as a string in heap memory, and 584 names would use
+ * roughly 30KB, worsening the device's known "52KB page-buffer allocation
+ * can fail" issue (claudedocs/deploy-guide.md). The excess is simply
+ * dropped, never sent — see capChapters below, which also logs the drop
+ * (never silent).
+ *
+ * Deliberately kept ONLY here (the Worker), not duplicated in converter/:
+ * which headings become chapters is an editorial decision the Worker owns
+ * end to end (it already decided the heading LEVEL —
+ * determineChapterHeadingLevel / determineAozoraChapterHeadingLevel); the
+ * Container's job is only to resolve page numbers for whatever chapter list
+ * it is handed, never to second-guess how many of them there should be.
+ * Duplicating this constant on the Python side would just be two numbers
+ * that can silently drift apart.
+ */
+const MAX_XTC_CHAPTERS = 200;
+
+/**
+ * Applies MAX_XTC_CHAPTERS: returns `chapters` unchanged when it already
+ * fits, otherwise the first MAX_XTC_CHAPTERS entries (document order is
+ * already chapter order, so "first" means "earliest in the book") — and
+ * ALWAYS logs the drop, with both the original count and how many were
+ * dropped, so a truncation is never silent. `undefined` (no chapters at
+ * all) passes through untouched.
+ */
+function capChapters(
+  jobId: string,
+  chapters: XtcChapter[] | undefined,
+): XtcChapter[] | undefined {
+  if (chapters === undefined || chapters.length <= MAX_XTC_CHAPTERS) {
+    return chapters;
+  }
+  const dropped = chapters.length - MAX_XTC_CHAPTERS;
+  console.error(
+    `[${jobId}] chapters truncated: ${chapters.length} exceeds the ${MAX_XTC_CHAPTERS}-chapter limit; sending only the first ${MAX_XTC_CHAPTERS} (dropped ${dropped})`,
+  );
+  return chapters.slice(0, MAX_XTC_CHAPTERS);
+}
+
+/**
  * Sends the PDF to the converter container and returns its response.
  * timeoutMs bounds the whole fetch: the sync /convert path passes a short
  * budget, the Workflow passes one sized for the 600s xtctool limit.
@@ -48,6 +92,18 @@ const CONVERTER_TIMEOUT_MARGIN_MS = 30_000;
  * request instead. Omitted for URL-render jobs, which never have one; the
  * Container's own config-x3.toml default (`[output].author = ""`) governs
  * exactly as it always has.
+ *
+ * `chapters` (optional) is forwarded as X-Xtc-Chapters, base64url-encoded
+ * UTF-8 JSON — same encoding convention as `author` above, for the same
+ * reason (headers are Latin-1 only, chapter names are arbitrary UTF-8). Set
+ * by every caller whose rendered HTML embedded the invisible chapter-marker
+ * spans (the AST-based TXT-upload pipeline via src/text-prepare.ts, and the
+ * Aozora Bunko URL-extraction path via src/aozora.ts, including its 4-chunk
+ * timeout fallback) — omitted (not merely an empty array) when there are no
+ * chapters, so the Container never has to distinguish "no header" from "an
+ * empty array" itself. Capped at MAX_XTC_CHAPTERS (capChapters above) right
+ * here, the one chokepoint every caller funnels through, rather than in each
+ * caller separately.
  */
 export function convertInContainer(
   env: Env,
@@ -55,6 +111,7 @@ export function convertInContainer(
   pdfBody: ArrayBuffer | ReadableStream,
   timeoutMs: number,
   author?: string,
+  chapters?: XtcChapter[],
 ): Promise<Response> {
   const container = getContainer(env.XTC_CONVERTER, converterInstanceName(jobId));
   // Per-request subprocess timeout for app.py, kept below this fetch's budget
@@ -63,6 +120,7 @@ export function convertInContainer(
   const subprocessTimeoutSeconds = String(
     Math.max(1, Math.floor((timeoutMs - CONVERTER_TIMEOUT_MARGIN_MS) / 1000)),
   );
+  const cappedChapters = capChapters(jobId, chapters);
   return container.fetch(
     new Request("http://converter/convert", {
       method: "POST",
@@ -74,6 +132,9 @@ export function convertInContainer(
         "X-Max-Pdf-Bytes": String(resolveMaxPdfBytes(env)),
         ...(author !== undefined && author.length > 0
           ? { "X-Xtc-Author": encodeBase64Url(author) }
+          : {}),
+        ...(cappedChapters !== undefined && cappedChapters.length > 0
+          ? { "X-Xtc-Chapters": encodeBase64Url(JSON.stringify(cappedChapters)) }
           : {}),
       },
       body: pdfBody,

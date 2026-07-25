@@ -1,0 +1,251 @@
+xtctool build-time feature patch: XTC chapter (table-of-contents) metadata
+
+Applied by converter/Dockerfile with `git apply` after cloning xtctool at
+commit d7bff34ff835889e158ca8ff2253de06a3e825cf, before `pip install` (same
+mechanism as xtctool-packbits.patch; both patches apply cleanly together, in
+either order).
+
+What: adds a working chapter (table-of-contents) write/read path to
+xtctool/core/xtc.py's XTCWriter/XTCReader, and wires cfg['chapters'] (a TOML
+[[chapters]] array-of-tables) through xtctool/cli/convert.py's write_xtc()
+into XTCWriter's existing (but previously unused) chapters= constructor
+argument.
+
+Why: the real Xteink X3 firmware (iori7295/crosspoint-jp,
+lib/Xtc/Xtc/XtcParser.cpp -- the same parser as upstream crosspoint-reader)
+only recognizes an XTC's chapters when ALL of the following hold:
+
+  1. header hasChapters (offset 0x0B, uint8) == 1
+  2. header pageTableOffset (offset 0x18, uint64) >= 56 (sizeof(XtcHeader))
+  3. header chapterOffset (offset 0x30, uint64) != 0 and
+     56 <= chapterOffset < fileSize
+  4. the chapter COUNT is never read from any stored metadata field -- it is
+     derived as (pageTableOffset - chapterOffset) / 96 (the fixed 96-byte
+     chapter entry size), so the chapter section must sit immediately before
+     the page table with no gap
+
+xtctool's xtc.py at this commit has HEADER_SIZE = 48 (no chapterOffset field
+at all -- chapter placement is only ever implied, never written to the
+header), so condition 2/3 could never be satisfied and the firmware would
+never recognize any chapters xtctool wrote. Separately, cli/convert.py's
+write_xtc() never passed a chapters= list to XTCWriter in the first place,
+so chapters were always empty regardless. XTCReader also had a bug
+independent of the firmware: it passed has_chapters (the 0/1 presence flag)
+as the chapter count to _read_chapters(), so at most one chapter was ever
+recovered from a file that actually had more.
+
+This patch:
+  - grows XTCWriter/XTCReader.HEADER_SIZE from 48 to 56, adding chapterOffset
+    (uint64) right after the existing header's thumbOffset -- purely
+    additive; every pre-existing field keeps its original byte offset, so
+    the firmware's own back-compat guard for old 48-byte-header files is
+    unaffected
+  - has XTCWriter._write_header()/write() compute and write that
+    chapterOffset (0 when there are no chapters), with the on-disk layout
+    kept exactly as it already was: header(56) -> metadata(256, optional)
+    -> chapters(96*N, optional) -> index(16*pageCount) -> data. Since
+    chapterOffset is computed as the exact byte position of the chapters
+    section and index_offset immediately follows it with no added slack,
+    condition 4 above (no gap between chapters and the page table) holds by
+    construction
+  - has XTCReader.decode() read chapterOffset and derive the chapter count
+    from (pageTableOffset - chapterOffset) / CHAPTER_SIZE (falling back to
+    dataOffset when indexOffset isn't actually past chapterOffset), matching
+    the firmware's own counting rule instead of trusting any stored count --
+    this also happens to fix the has_chapters/chapter-count bug described
+    above, since the flag byte is no longer used as a count anywhere
+  - has cli/convert.py's write_xtc() read cfg['chapters'] (a TOML
+    [[chapters]] array-of-tables: name/start_page/end_page per entry) and
+    turn well-formed entries into XTCChapter objects passed to
+    XTCWriter(chapters=...); malformed entries are skipped with a logged
+    warning rather than raising, matching this function's existing stance on
+    optional metadata (title/author)
+
+Verified (2026-07, throwaway venv, this commit + this patch): a
+struct-level round trip through the patched XTCWriter/XTCReader for a
+13-page, 3-chapter file confirms hasChapters==1, pageTableOffset>=56, a
+valid non-zero chapterOffset in [56, fileSize), zero gap between the
+chapters section and the page table ((pageTableOffset - chapterOffset) % 96
+== 0), a firmware-style page-table-size chapter count of 3 (matching the
+input), and a full XTCReader round trip recovering all 3 chapters with their
+original name/start_page/end_page. A parallel no-chapters-requested file was
+confirmed to keep hasChapters==0 and chapterOffset==0 (i.e. this patch is a
+no-op for every existing conversion that never sets chapters). Applying this
+patch together with xtctool-packbits.patch (in the Dockerfile's order) was
+also confirmed to apply cleanly with `git apply`.
+
+License note: xtctool is upstream-licensed; this repo is AGPL-3.0-or-later.
+Keeping the modification as a patch applied at image build time keeps the
+modified Corresponding Source reproducible from this repo (Dockerfile +
+pinned commit + this patch), same rationale as xtctool-packbits.patch.
+
+diff --git a/xtctool/cli/convert.py b/xtctool/cli/convert.py
+index d895991..8a9b418 100644
+--- a/xtctool/cli/convert.py
++++ b/xtctool/cli/convert.py
+@@ -218,7 +218,7 @@ def convert(sources: tuple[str, ...], output: str, config: Optional[str]):
+
+ def write_xtc(output: str, frames: list[XTFrameAsset], cfg: dict[str, Any]) -> None:
+     """Write frames as XTC file."""
+-    from ..core.xtc import XTCWriter, XTCMetadata
++    from ..core.xtc import XTCWriter, XTCMetadata, XTCChapter
+     import time
+
+     if not frames:
+@@ -251,12 +251,40 @@ def write_xtc(output: str, frames: list[XTFrameAsset], cfg: dict[str, Any]) -> N
+     direction_map = {'ltr': 0, 'rtl': 1, 'ttb': 2}
+     reading_direction = direction_map.get(output_cfg.get('direction', 'ltr'), 0)
+
++    # Chapters (optional): [[chapters]] array-of-tables in the config, e.g.
++    #
++    #   [[chapters]]
++    #   name = "Chapter One"
++    #   start_page = 0
++    #   end_page = 5
++    #
++    # Entries missing a field, or with a non-int start_page/end_page, are
++    # skipped rather than raising -- a malformed chapters config must not
++    # block the whole conversion, matching this module's general stance on
++    # optional metadata (see the title/author handling above).
++    chapters: list[XTCChapter] = []
++    for entry in cfg.get('chapters', []) or []:
++        if not isinstance(entry, dict):
++            continue
++        name = entry.get('name')
++        start_page = entry.get('start_page')
++        end_page = entry.get('end_page')
++        if (
++            not isinstance(name, str)
++            or not isinstance(start_page, int) or isinstance(start_page, bool)
++            or not isinstance(end_page, int) or isinstance(end_page, bool)
++        ):
++            logger.warning(f"Skipping malformed chapter entry: {entry!r}")
++            continue
++        chapters.append(XTCChapter(name=name, start_page=start_page, end_page=end_page))
++
+     # Create XTC writer and write frames
+     writer = XTCWriter(
+         width=width,
+         height=height,
+         reading_direction=reading_direction,
+         metadata=metadata,
++        chapters=chapters or None,
+         page_format=page_format
+     )
+
+diff --git a/xtctool/core/xtc.py b/xtctool/core/xtc.py
+index 014594a..d158b88 100644
+--- a/xtctool/core/xtc.py
++++ b/xtctool/core/xtc.py
+@@ -32,7 +32,17 @@ class XTCWriter:
+
+     MAGIC = 0x00435458  # "XTC\0" in little-endian
+     VERSION = 0x0100     # Version 1.0
+-    HEADER_SIZE = 48
++    # 56, not 48: adds a chapterOffset (uint64 @0x30) field after the
++    # original header's thumbOffset. The firmware parser (crosspoint-reader,
++    # XtcParser.cpp) only recognizes chapters when pageTableOffset >= 56
++    # (sizeof(XtcHeader)) and reads a non-zero chapterOffset from that same
++    # position, and it counts chapters by (pageTableOffset - chapterOffset)
++    # / CHAPTER_SIZE rather than trusting any stored chapter count -- see
++    # xtctool-chapters.patch's header comment for the full citation. All
++    # fields before offset 0x30 keep their original byte positions, so this
++    # is purely additive: the firmware's own back-compat guard for
++    # 48-byte-header files is unaffected.
++    HEADER_SIZE = 56
+     METADATA_SIZE = 256
+     CHAPTER_SIZE = 96
+     INDEX_ENTRY_SIZE = 16
+@@ -80,7 +90,8 @@ class XTCWriter:
+         page_count: int,
+         metadata_offset: int,
+         index_offset: int,
+-        data_offset: int
++        data_offset: int,
++        chapter_offset: int = 0
+     ) -> None:
+         """Write XTC header.
+
+@@ -90,6 +101,8 @@ class XTCWriter:
+             metadata_offset: Offset to metadata section
+             index_offset: Offset to index table
+             data_offset: Offset to data area
++            chapter_offset: Offset to chapter section (0 when there are no
++                chapters)
+         """
+         has_metadata = bool(self.metadata.title or self.metadata.author)
+         has_chapters = len(self.chapters) > 0
+@@ -106,6 +119,7 @@ class XTCWriter:
+         f.write(struct.pack('<Q', index_offset))            # indexOffset (8 bytes)
+         f.write(struct.pack('<Q', data_offset))             # dataOffset (8 bytes)
+         f.write(struct.pack('<Q', 0))                       # thumbOffset (8 bytes)
++        f.write(struct.pack('<Q', chapter_offset if has_chapters else 0))  # chapterOffset (8)
+
+     def _write_metadata(self, f: io.BufferedWriter) -> None:
+         """Write metadata section.
+@@ -190,6 +204,14 @@ class XTCWriter:
+         if has_metadata:
+             current_offset += self.METADATA_SIZE
+
++        # chapter_offset must immediately precede index_offset with no gap:
++        # the firmware parser counts chapters as
++        # (pageTableOffset - chapterOffset) / CHAPTER_SIZE rather than
++        # trusting any stored count (see HEADER_SIZE's comment), so any slack
++        # between the chapter section and the index table would corrupt that
++        # count.
++        chapter_offset = current_offset if has_chapters else 0
++
+         if has_chapters:
+             current_offset += self.CHAPTER_SIZE * len(self.chapters)
+
+@@ -199,7 +221,10 @@ class XTCWriter:
+         # Write XTC file
+         with open(output_path, 'wb') as f:
+             # Write header
+-            self._write_header(f, page_count, metadata_offset, index_offset, data_offset)
++            self._write_header(
++                f, page_count, metadata_offset, index_offset, data_offset,
++                chapter_offset
++            )
+
+             # Write metadata if present
+             if has_metadata:
+@@ -228,7 +253,7 @@ class XTCReader:
+     """Reader for XTC format files (comic container)."""
+
+     MAGIC = 0x00435458  # "XTC\0" in little-endian
+-    HEADER_SIZE = 48
++    HEADER_SIZE = 56  # see XTCWriter.HEADER_SIZE's comment
+     METADATA_SIZE = 256
+     CHAPTER_SIZE = 96
+     INDEX_ENTRY_SIZE = 16
+@@ -280,15 +305,25 @@ class XTCReader:
+         index_offset = struct.unpack('<Q', data[24:32])[0]
+         data_offset = struct.unpack('<Q', data[32:40])[0]
+         thumb_offset = struct.unpack('<Q', data[40:48])[0]
++        chapter_offset = struct.unpack('<Q', data[48:56])[0]
+
+         # Read metadata if present
+         if has_metadata and metadata_offset > 0:
+             self._read_metadata(data, metadata_offset)
+
+-        # Read chapters if present
+-        if has_chapters:
+-            chapter_offset = metadata_offset + self.METADATA_SIZE if has_metadata else self.HEADER_SIZE
+-            self._read_chapters(data, chapter_offset, has_chapters)
++        # Read chapters if present. The chapter count is never trusted from
++        # any stored value (has_chapters is only a 0/1 presence flag, and a
++        # separately stored count is easy to get out of sync) -- instead it
++        # is derived from the chapter section's byte size, exactly like the
++        # firmware parser does: (pageTableOffset - chapterOffset) /
++        # CHAPTER_SIZE, falling back to dataOffset when indexOffset isn't
++        # actually past chapterOffset. Previously this passed has_chapters
++        # itself (the 0/1 flag) as the chapter count, so only ever the first
++        # chapter (or none) was ever recovered on read.
++        if has_chapters and chapter_offset:
++            end_offset = index_offset if index_offset > chapter_offset else data_offset
++            chapter_count = max(0, (end_offset - chapter_offset) // self.CHAPTER_SIZE)
++            self._read_chapters(data, chapter_offset, chapter_count)
+
+         # Read index table and extract frames
+         frames = []

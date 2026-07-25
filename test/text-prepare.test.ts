@@ -201,4 +201,79 @@ describe("prepareTextDocument — aozora branch", () => {
     // 1 ruby + 1 pageBreak + 1 heading = 3.
     expect(prepared.diagnostics.recognizedAnnotations).toBe(3);
   });
+
+  it("extracts XTC chapters from 大見出し when present (中見出し in the same document stays unmarked — A-1)", () => {
+    const prepared = prepareTextDocument({
+      decodedText: "序［＃「序」は大見出し］\n\n本文一。\n\n一［＃「一」は中見出し］\n\n本文二。\n\n結び［＃「結び」は大見出し］",
+      filename: "novel.txt",
+      options: aozoraOptions,
+    });
+    expect(prepared.chapterHeadingLevel).toBe(1);
+    expect(prepared.chapters).toEqual([
+      { name: "序", marker: "XTCCH0001" },
+      { name: "結び", marker: "XTCCH0002" },
+    ]);
+    expect(prepared.html).toContain('<span class="xtc-chapter-marker" aria-hidden="true">XTCCH0001</span>');
+    expect(prepared.html).toContain('<span class="xtc-chapter-marker" aria-hidden="true">XTCCH0002</span>');
+    // "一" (中見出し) never gets a marker span, since this document's chapter
+    // level resolved to 大 (only 2 marker SPANS total: 序/結び — matched via
+    // the opening span tag specifically, since AOZORA_DOCUMENT_CSS's own
+    // `.xtc-chapter-marker { ... }` rule also contains the class name once,
+    // which a bare substring count would wrongly include).
+    expect(prepared.html.match(/<span class="xtc-chapter-marker"/g)).toHaveLength(2);
+  });
+
+  it("falls back to 中見出し chapters when the document has no 大見出し at all (A-1)", () => {
+    const prepared = prepareTextDocument({
+      decodedText: "一［＃「一」は中見出し］\n\n本文一。\n\n二［＃「二」は中見出し］\n\n本文二。",
+      filename: "novel.txt",
+      options: aozoraOptions,
+    });
+    expect(prepared.chapterHeadingLevel).toBe(2);
+    expect(prepared.chapters).toEqual([
+      { name: "一", marker: "XTCCH0001" },
+      { name: "二", marker: "XTCCH0002" },
+    ]);
+    expect(prepared.html).toContain('<span class="xtc-chapter-marker" aria-hidden="true">XTCCH0001</span>');
+    expect(prepared.html).toContain('<span class="xtc-chapter-marker" aria-hidden="true">XTCCH0002</span>');
+  });
+
+  it("has no chapters and chapterHeadingLevel: null for a document with no heading at all", () => {
+    const prepared = prepareTextDocument({
+      decodedText: "見出しのない本文一。\n\n見出しのない本文二。",
+      filename: "novel.txt",
+      options: aozoraOptions,
+    });
+    expect(prepared.chapterHeadingLevel).toBeNull();
+    expect(prepared.chapters).toEqual([]);
+    // AOZORA_DOCUMENT_CSS (embedded for every aozora-format document) itself
+    // names the .xtc-chapter-marker class, so a bare substring check would
+    // false-positive here — the span element itself is what must be absent.
+    expect(prepared.html).not.toContain("xtc-chapter-marker</span>");
+    expect(prepared.html).not.toMatch(/<span class="xtc-chapter-marker"/);
+  });
+
+  it("has no chapters for a document with only 小見出し (小 is never a chapter source, and there is no fallback below it)", () => {
+    const prepared = prepareTextDocument({
+      decodedText: "節一［＃「節一」は小見出し］\n\n本文。",
+      filename: "novel.txt",
+      options: aozoraOptions,
+    });
+    expect(prepared.chapterHeadingLevel).toBeNull();
+    expect(prepared.chapters).toEqual([]);
+    expect(prepared.html).not.toMatch(/<span class="xtc-chapter-marker"/);
+  });
+});
+
+describe("prepareTextDocument — plain inputFormat never produces chapters", () => {
+  it("always returns chapters: [] and chapterHeadingLevel: null (no AST, no heading detection)", () => {
+    const prepared = prepareTextDocument({
+      decodedText: "見出し風の一行\n\n本文段落。",
+      filename: "novel.txt",
+      options: DEFAULT_TEXT_OPTIONS,
+    });
+    expect(prepared.chapters).toEqual([]);
+    expect(prepared.chapterHeadingLevel).toBeNull();
+    expect(prepared.html).not.toContain("xtc-chapter-marker");
+  });
 });

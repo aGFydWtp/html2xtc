@@ -12,6 +12,7 @@ import { buildPrintHtml, printableText } from "./printhtml";
 import { isAozoraBunkoUrl } from "./sitepresets";
 import type { ConvertMode, Env, RenderOptions } from "./types";
 import { validatePublicUrl } from "./validate";
+import type { XtcChapter } from "../packages/aozora-text/src/index";
 
 /**
  * Extract mode: pull the main article content out of the target page and
@@ -49,6 +50,20 @@ export interface ExtractedArticle {
   contentHtml: string;
   /** Plain text of the article body, for the quality check. */
   textContent: string;
+  /** XTC chapter/table-of-contents metadata: set only by the dedicated
+   * Aozora extractor (extractAozoraArticle, src/aozora.ts), which is also
+   * the only producer that embeds the matching invisible marker spans into
+   * contentHtml. Always absent for the generic Readability path
+   * (extractArticle below), which never detects headings at all. */
+  chapters?: XtcChapter[];
+  /** Which heading level `chapters` came from (1 = 大見出し, 2 = 中見出し,
+   * null = neither present, so `chapters` is empty) — see
+   * src/aozora.ts's determineAozoraChapterHeadingLevel for the selection
+   * rule. Set alongside `chapters` by the same producer; absent wherever
+   * `chapters` is absent. Exists purely for observability (src/workflow.ts's
+   * extract-content step folds it into its own return value so which level
+   * a document resolved to is visible without re-parsing anything). */
+  chapterHeadingLevel?: 1 | 2 | null;
 }
 
 export interface SourceHtml {
@@ -75,7 +90,20 @@ export interface SourceHtml {
  * src/workflow.ts's extract-content step.
  */
 export type RenderInput =
-  | { kind: "html"; html: string; fontCss: string | null; origin: "aozora" | "extract" }
+  | {
+      kind: "html";
+      html: string;
+      fontCss: string | null;
+      origin: "aozora" | "extract";
+      /** XTC chapter/table-of-contents metadata: set only when origin is
+       * "aozora" (buildPrintInput below never sets it for the generic
+       * Readability path). Absent and "no chapters" are the same thing to
+       * every consumer (src/workflow.ts, src/index.ts's handleConvert). */
+      chapters?: XtcChapter[];
+      /** Mirrors ExtractedArticle.chapterHeadingLevel — see that field's
+       * doc comment. */
+      chapterHeadingLevel?: 1 | 2 | null;
+    }
   | { kind: "url"; url: string };
 
 /** Injection point for tests, mirroring validate.ts's DnsResolver pattern. */

@@ -99,12 +99,40 @@ export const XTC_CHAPTER_MARKER_CLASS = "xtc-chapter-marker";
  * (`pdfOptions.printBackground: false` in src/pdf.ts means Chromium never
  * paints ANY CSS background — the canvas is simply blank/white — so white
  * text blends into it regardless of what background color a document's own
- * CSS requests) and, unlike a near-transparent gray, `white` dithers to 0%
- * ink under the Container's 1-bit e-ink conversion with no risk of stray
- * pixels. If a future engineer is tempted to go back to `color: transparent`
- * for "more surely invisible," re-run the A/B test against the actual
- * BROWSER binding first — a local Chrome pass alone is not sufficient
- * evidence (see below).
+ * CSS requests).
+ *
+ * IMPORTANT CAVEAT, also measured against the production BROWSER binding:
+ * an opaque color requested here does NOT reach the PDF exactly as
+ * specified. Cloudflare Browser Rendering's PDF export applies a fixed,
+ * per-channel darkening to any sufficiently light opaque text color,
+ * independent of font-size or which of `color`/`-webkit-text-fill-color`
+ * carries it: `color: white` (255,255,255) is actually painted as
+ * `#ababab` (171,171,171) in the exported PDF's text layer, not literal
+ * white. Confirmed as a fixed per-channel `-84` shift, not a proportional
+ * one, by sweeping several opaque input colors and reading each glyph's
+ * actual fill color back out of the rendered PDF: 255→171, 240→156,
+ * 224→140, 204→120, 153→69 (every pair differs by exactly 84). This is a
+ * property of the renderer, not of anything this codebase controls, and
+ * `white` remains the right choice specifically BECAUSE it is the lightest
+ * possible opaque input — the highest input value (255) yields the
+ * highest reachable output (171); any darker requested color only makes
+ * the marker MORE visible, never less. Do not re-derive "closer to
+ * invisible" reasoning from the requested CSS value alone — always check
+ * the actually-painted color against the real binding.
+ *
+ * Whether this `#ababab` glyph (roughly 1 CSS px tall/wide, so a few
+ * device pixels at most) produces any visible ink after the Container's
+ * 1-bit e-ink dithering is UNVERIFIED as of this writing — 171 sits above
+ * a naive mid-gray threshold, but this codebase does not verify the
+ * Container's actual dithered output, and `converter/` is deliberately out
+ * of scope for the change that added this comment. If that gets verified
+ * later (in either direction), update this paragraph to match — do not
+ * leave a stale "should be fine" claim here once real data exists.
+ *
+ * If a future engineer is tempted to go back to `color: transparent` for
+ * "more surely invisible," re-run the A/B test against the actual BROWSER
+ * binding first — a local Chrome pass alone is not sufficient evidence
+ * (see below).
  *
  * Measured, not just reasoned about — but ONLY ONE of these two measurement
  * passes reflects this service's real renderer:

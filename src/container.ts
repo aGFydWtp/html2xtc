@@ -103,7 +103,10 @@ function parseChapterCountHeader(raw: string | null): number | undefined {
 
 /** Parses X-Xtc-Page-Count: per the contract an empty string means
  * read_pdf_metadata failed (distinct from the header being absent, e.g. an
- * older Container image that doesn't send it at all). */
+ * older Container image that doesn't send it at all). Anything else reaches
+ * the log only after the same digits-only + safe-integer check
+ * parseChapterCountHeader applies, so this side never echoes a header value
+ * it hasn't vetted. */
 function formatPageCountHeader(raw: string | null): string {
   if (raw === null) {
     return "missing";
@@ -111,13 +114,18 @@ function formatPageCountHeader(raw: string | null): string {
   if (raw === "") {
     return "failed";
   }
-  return /^\d+$/.test(raw) ? raw : "invalid";
+  if (!/^\d+$/.test(raw) || !Number.isSafeInteger(Number(raw))) {
+    return "invalid";
+  }
+  return raw;
 }
 
 /**
  * Logs the chapter-detection diagnostic headers the Container's /convert
- * response carries (see the module-level contract doc — Worker and
- * Container sides are implemented independently, this is the Worker half).
+ * response carries. The header contract itself lives in converter/app.py's
+ * module docstring, NOT in this file — the two sides are implemented
+ * independently and this is only the Worker half, so change neither without
+ * the other.
  * `sentChaptersCount` is the post-capChapters count actually placed in the
  * X-Xtc-Chapters request header, so a single log line lets Workers Logs
  * answer "how many chapters did the Worker send → how many did the

@@ -213,9 +213,25 @@ describe("parsePackageDocument: missing package (spec §17.1 MISSING_PACKAGE)", 
   });
 });
 
-describe("parsePackageDocument: DOCTYPE / ENTITY (design decision D3)", () => {
-  it("rejects a DOCTYPE declaration in the OPF", () => {
-    const xml = `<?xml version="1.0"?><!DOCTYPE package><package version="3.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>X</dc:title></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>`;
+describe("parsePackageDocument: DOCTYPE / ENTITY (design decision D3, narrowed — see src/epub/errors.ts#assertNoXxeMarkers)", () => {
+  it("rejects a DOCTYPE with an external SYSTEM identifier in the OPF", () => {
+    const xml = `<?xml version="1.0"?><!DOCTYPE package SYSTEM "file:///etc/passwd"><package version="3.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>X</dc:title></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>`;
     expect(() => parsePackageDocument(entriesWithOpf(xml), OPF_PATH)).toThrow(EpubError);
+  });
+
+  it("rejects a DOCTYPE with an internal subset in the OPF", () => {
+    const xml = `<?xml version="1.0"?><!DOCTYPE package [ <!ENTITY xxe "pwned"> ]><package version="3.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>X</dc:title></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>`;
+    expect(() => parsePackageDocument(entriesWithOpf(xml), OPF_PATH)).toThrow(EpubError);
+  });
+
+  it("rejects a bare ENTITY declaration in the OPF", () => {
+    const xml = `<?xml version="1.0"?><!ENTITY xxe SYSTEM "file:///etc/passwd"><package version="3.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>X</dc:title></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>`;
+    expect(() => parsePackageDocument(entriesWithOpf(xml), OPF_PATH)).toThrow(EpubError);
+  });
+
+  it("ACCEPTS a bare DOCTYPE declaration in the OPF — real-world repro: 青空文庫-conversion-toolchain EPUBs ship a plain <!DOCTYPE html> even on the OPF", () => {
+    const xml = `<?xml version="1.0"?>\n<!DOCTYPE package>\n<package version="3.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>X</dc:title></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>`;
+    const pkg = parsePackageDocument(entriesWithOpf(xml), OPF_PATH);
+    expect(pkg.metadata.title).toBe("X");
   });
 });

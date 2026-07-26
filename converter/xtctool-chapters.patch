@@ -54,6 +54,24 @@ This patch:
     the firmware's own counting rule instead of trusting any stored count --
     this also happens to fix the has_chapters/chapter-count bug described
     above, since the flag byte is no longer used as a count anywhere
+  - has _write_chapters()/_read_chapters() convert start_page/end_page
+    between the 0-based numbering used everywhere else in this repo
+    (XTCChapter itself, detect_chapter_pages, build_chapter_entries, the
+    TOML [[chapters]] block) and the 1-based numbering the on-disk XTC
+    chapter entry actually uses: the firmware parser (crosspoint-reader,
+    XtcParser.cpp readChapters()) does `if (startPage > 0) startPage--;`
+    (same for endPage) on every chapter it reads, unconditionally, before
+    ever using the value -- so a 0-based value written as-is lands the
+    firmware exactly one page before the intended page. _write_chapters()
+    adds 1 before packing each field (0xFFFE and below only -- see
+    converter/app.py's build_chapter_entries, which enforces this bound so
+    the +1 can never overflow the on-disk uint16), and _read_chapters()
+    subtracts 1 back out (leaving 0 as 0, mirroring the firmware's own
+    `> 0` guard), so a write/read round trip through this module alone
+    stays 0-based. This also means real chapters can no longer collide
+    with the firmware's start/end-both-zero terminator sentinel: a 0-based
+    start_page of 0 is now written as 1, so an actual chapter's disk value
+    is never 0
   - has cli/convert.py's write_xtc() read cfg['chapters'] (a TOML
     [[chapters]] array-of-tables: name/start_page/end_page per entry) and
     turn well-formed entries into XTCChapter objects passed to
@@ -68,7 +86,11 @@ valid non-zero chapterOffset in [56, fileSize), zero gap between the
 chapters section and the page table ((pageTableOffset - chapterOffset) % 96
 == 0), a firmware-style page-table-size chapter count of 3 (matching the
 input), and a full XTCReader round trip recovering all 3 chapters with their
-original name/start_page/end_page. A parallel no-chapters-requested file was
+original name/start_page/end_page -- confirming the writer's 0-based ->
+1-based +1 and the reader's 1-based -> 0-based -1 round-trip losslessly (a
+chapter constructed with start_page=0 was independently confirmed, by
+inspecting the raw bytes at the chapter entry's 0x50/0x52 offsets, to be
+written on disk as 1, not 0). A parallel no-chapters-requested file was
 confirmed to keep hasChapters==0 and chapterOffset==0 (i.e. this patch is a
 no-op for every existing conversion that never sets chapters). Applying this
 patch together with xtctool-packbits.patch (in the Dockerfile's order) was
@@ -134,11 +156,11 @@ index d895991..8a9b418 100644
      )
 
 diff --git a/xtctool/core/xtc.py b/xtctool/core/xtc.py
-index 014594a..d158b88 100644
+index 014594a..4c5ea93 100644
 --- a/xtctool/core/xtc.py
 +++ b/xtctool/core/xtc.py
 @@ -32,7 +32,17 @@ class XTCWriter:
-
+ 
      MAGIC = 0x00435458  # "XTC\0" in little-endian
      VERSION = 0x0100     # Version 1.0
 -    HEADER_SIZE = 48
@@ -165,7 +187,7 @@ index 014594a..d158b88 100644
 +        chapter_offset: int = 0
      ) -> None:
          """Write XTC header.
-
+ 
 @@ -90,6 +101,8 @@ class XTCWriter:
              metadata_offset: Offset to metadata section
              index_offset: Offset to index table
@@ -180,13 +202,51 @@ index 014594a..d158b88 100644
          f.write(struct.pack('<Q', data_offset))             # dataOffset (8 bytes)
          f.write(struct.pack('<Q', 0))                       # thumbOffset (8 bytes)
 +        f.write(struct.pack('<Q', chapter_offset if has_chapters else 0))  # chapterOffset (8)
-
+ 
      def _write_metadata(self, f: io.BufferedWriter) -> None:
          """Write metadata section.
-@@ -190,6 +204,14 @@ class XTCWriter:
+@@ -146,17 +160,33 @@ class XTCWriter:
+ 
+         Args:
+             f: File object
++
++        XTCChapter.start_page/end_page are 0-based (see the dataclass), but
++        the on-disk XTC chapter entry is 1-based: the firmware parser
++        (crosspoint-reader, XtcParser.cpp readChapters()) does
++        `if (startPage > 0) startPage--;` (and the same for endPage) after
++        reading these two fields, unconditionally, for every chapter it
++        parses -- so a 0-based value written as-is is read back off by one
++        page. +1 here is the only place that 0-based -> 1-based conversion
++        happens; every producer upstream of this (detect_chapter_pages,
++        build_chapter_entries, the TOML [[chapters]] block, XTCChapter
++        itself) stays 0-based throughout.
+         """
+         for chapter in self.chapters:
+             # Chapter name (80 bytes)
+             name_bytes = chapter.name.encode('utf-8')[:79]
+             f.write(name_bytes + b'\x00' * (80 - len(name_bytes)))
+ 
+-            # Start page (2 bytes)
+-            f.write(struct.pack('<H', chapter.start_page))
++            # Start page (2 bytes) -- +1: see docstring above. Callers must
++            # keep chapter.start_page <= 0xFFFE so this never overflows the
++            # on-disk uint16 (converter/app.py's build_chapter_entries
++            # enforces this bound before ever constructing a chapters TOML
++            # entry).
++            f.write(struct.pack('<H', chapter.start_page + 1))
+ 
+-            # End page (2 bytes)
+-            f.write(struct.pack('<H', chapter.end_page))
++            # End page (2 bytes) -- +1: see docstring above; same 0xFFFE
++            # bound as start_page.
++            f.write(struct.pack('<H', chapter.end_page + 1))
+ 
+             # Reserved (12 bytes)
+             f.write(b'\x00' * 12)
+@@ -190,6 +220,14 @@ class XTCWriter:
          if has_metadata:
              current_offset += self.METADATA_SIZE
-
+ 
 +        # chapter_offset must immediately precede index_offset with no gap:
 +        # the firmware parser counts chapters as
 +        # (pageTableOffset - chapterOffset) / CHAPTER_SIZE rather than
@@ -197,8 +257,8 @@ index 014594a..d158b88 100644
 +
          if has_chapters:
              current_offset += self.CHAPTER_SIZE * len(self.chapters)
-
-@@ -199,7 +221,10 @@ class XTCWriter:
+ 
+@@ -199,7 +237,10 @@ class XTCWriter:
          # Write XTC file
          with open(output_path, 'wb') as f:
              # Write header
@@ -207,28 +267,28 @@ index 014594a..d158b88 100644
 +                f, page_count, metadata_offset, index_offset, data_offset,
 +                chapter_offset
 +            )
-
+ 
              # Write metadata if present
              if has_metadata:
-@@ -228,7 +253,7 @@ class XTCReader:
+@@ -228,7 +269,7 @@ class XTCReader:
      """Reader for XTC format files (comic container)."""
-
+ 
      MAGIC = 0x00435458  # "XTC\0" in little-endian
 -    HEADER_SIZE = 48
 +    HEADER_SIZE = 56  # see XTCWriter.HEADER_SIZE's comment
      METADATA_SIZE = 256
      CHAPTER_SIZE = 96
      INDEX_ENTRY_SIZE = 16
-@@ -280,15 +305,25 @@ class XTCReader:
+@@ -280,15 +321,25 @@ class XTCReader:
          index_offset = struct.unpack('<Q', data[24:32])[0]
          data_offset = struct.unpack('<Q', data[32:40])[0]
          thumb_offset = struct.unpack('<Q', data[40:48])[0]
 +        chapter_offset = struct.unpack('<Q', data[48:56])[0]
-
+ 
          # Read metadata if present
          if has_metadata and metadata_offset > 0:
              self._read_metadata(data, metadata_offset)
-
+ 
 -        # Read chapters if present
 -        if has_chapters:
 -            chapter_offset = metadata_offset + self.METADATA_SIZE if has_metadata else self.HEADER_SIZE
@@ -246,6 +306,39 @@ index 014594a..d158b88 100644
 +            end_offset = index_offset if index_offset > chapter_offset else data_offset
 +            chapter_count = max(0, (end_offset - chapter_offset) // self.CHAPTER_SIZE)
 +            self._read_chapters(data, chapter_offset, chapter_count)
-
+ 
          # Read index table and extract frames
          frames = []
+@@ -359,6 +410,13 @@ class XTCReader:
+             data: Complete file data
+             offset: Offset to chapter section
+             count: Number of chapters
++
++        Mirrors the firmware's own decode step (crosspoint-reader,
++        XtcParser.cpp readChapters(): `if (startPage > 0) startPage--;`,
++        same for endPage) so XTCChapter stays 0-based on read, matching what
++        XTCWriter._write_chapters accepts on write (see its docstring for
++        the full citation) -- a write/read round trip through this reader
++        and writer reproduces the original 0-based start_page/end_page.
+         """
+         for i in range(count):
+             chapter_offset = offset + (i * self.CHAPTER_SIZE)
+@@ -367,11 +425,16 @@ class XTCReader:
+             name_bytes = data[chapter_offset:chapter_offset+80]
+             name = name_bytes.split(b'\x00', 1)[0].decode('utf-8', errors='ignore')
+ 
+-            # Start page (2 bytes)
++            # Start page (2 bytes), 1-based on disk -> 0-based; 0 is left
++            # alone (matches the firmware's own `if (startPage > 0)` guard).
+             start_page = struct.unpack('<H', data[chapter_offset+80:chapter_offset+82])[0]
++            if start_page > 0:
++                start_page -= 1
+ 
+-            # End page (2 bytes)
++            # End page (2 bytes), same 1-based -> 0-based rule as start_page.
+             end_page = struct.unpack('<H', data[chapter_offset+82:chapter_offset+84])[0]
++            if end_page > 0:
++                end_page -= 1
+ 
+             self.chapters.append(XTCChapter(
+                 name=name,

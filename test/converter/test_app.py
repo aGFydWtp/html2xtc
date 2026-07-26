@@ -962,15 +962,16 @@ def _fake_pymupdf_with_pages(page_texts: list[str]) -> mock.MagicMock:
 
 
 class TestDetectChapterPages:
-    """Primary detection is by marker string. Name-based fallback only runs
-    at all once at least one chapter was located by marker (otherwise marker
-    detection is treated as broken for this document and no chapters are
-    returned -- see test_all_markers_missing_discards_fallback_entirely),
-    and a fallback candidate must additionally fall strictly between its
-    nearest marker-located neighbours (see
-    test_name_fallback_is_bounded_by_neighbouring_markers). Both searches
-    run against whitespace-stripped text (vertical-writing PDFs can inject
-    spurious whitespace/line breaks into pymupdf's text extraction)."""
+    """Detection is by marker string only -- a chapter whose marker is not
+    found on any page is simply dropped (see
+    test_missing_marker_is_not_matched_by_name), never falling back to a
+    name-based text search (an unrelated page, such as an early table of
+    contents that lists every chapter title, matching a chapter's heading
+    name by coincidence is a real risk for short/generic headings, and
+    binding a chapter to the wrong page is a worse outcome than dropping
+    that chapter's metadata entirely). The search runs against
+    whitespace-stripped text (vertical-writing PDFs can inject spurious
+    whitespace/line breaks into pymupdf's text extraction)."""
 
     def test_finds_by_marker(self):
         pages = ["intro page", "XTCCH0001 chapter one text", "more", "XTCCH0002 chapter two"]
@@ -992,111 +993,37 @@ class TestDetectChapterPages:
             located = app.detect_chapter_pages(b"fake", chapters)
         assert located == [{"name": "第一章", "start_page": 1}]
 
-    def test_falls_back_to_name_when_one_markers_is_missing(self):
-        # Chapter 1's marker is found (so marker detection isn't considered
-        # "broken" overall); chapter 2's marker is missing, so it falls back
-        # to its own name, bounded above by nothing (it's the last chapter).
+    def test_missing_marker_is_not_matched_by_name(self):
+        # Chapter 1's marker is found normally. Chapter 2's marker is
+        # missing/empty, but its name DOES appear in the page text -- this
+        # must NOT be used to locate it (no name-based fallback), so chapter
+        # 2 is simply dropped from the result.
         pages = ["intro", "XTCCH0001 first chapter", "第二章 その名\nbody text"]
-        chapters = [
-            {"name": "第一章", "marker": "XTCCH0001"},
-            {"name": "第二章 その名", "marker": "XTCCH_MISSING"},
-        ]
-        with mock.patch.object(app, "pymupdf", _fake_pymupdf_with_pages(pages)):
-            located = app.detect_chapter_pages(b"fake", chapters)
-        assert located == [
-            {"name": "第一章", "start_page": 1},
-            {"name": "第二章 その名", "start_page": 2},
-        ]
-
-    def test_name_fallback_survives_injected_whitespace(self):
-        pages = ["intro", "XTCCH0001 first chapter", "第\n二　章 その名"]
         chapters = [
             {"name": "第一章", "marker": "XTCCH0001"},
             {"name": "第二章 その名", "marker": ""},
         ]
         with mock.patch.object(app, "pymupdf", _fake_pymupdf_with_pages(pages)):
             located = app.detect_chapter_pages(b"fake", chapters)
-        assert located == [
-            {"name": "第一章", "start_page": 1},
-            {"name": "第二章 その名", "start_page": 2},
-        ]
+        assert located == [{"name": "第一章", "start_page": 1}]
 
-    def test_all_markers_missing_discards_fallback_entirely(self, caplog):
+    def test_all_markers_missing_returns_empty(self):
         # None of the configured chapters' markers match anywhere -- e.g.
         # Chromium dropped the invisible marker spans from the PDF text
-        # layer entirely. Trusting name-only matches in this situation is
-        # exactly what risks binding every chapter to an early table of
-        # contents (see test_name_fallback_does_not_match_a_table_of_
-        # contents_page below): both names appear, in order, right at the
-        # start of the document. The whole result must be discarded rather
-        # than silently accepted.
+        # layer entirely. Both chapter names happen to appear, in order, on
+        # an early table-of-contents-like page; since there is no name-based
+        # fallback, none of that matters and the whole result is empty.
         pages = ["第一章\n第二章", "intro", "real chapter one body", "real chapter two body"]
         chapters = [
             {"name": "第一章", "marker": "XTCCH0001"},
             {"name": "第二章", "marker": "XTCCH0002"},
         ]
-        with caplog.at_level(logging.WARNING, logger="converter"):
-            with mock.patch.object(app, "pymupdf", _fake_pymupdf_with_pages(pages)):
-                located = app.detect_chapter_pages(b"fake", chapters)
+        with mock.patch.object(app, "pymupdf", _fake_pymupdf_with_pages(pages)):
+            located = app.detect_chapter_pages(b"fake", chapters)
         assert located == []
-        assert "marker matched none" in caplog.text
 
-    def test_name_fallback_does_not_match_a_table_of_contents_page(self):
-        # A table of contents on page 0 lists both chapter titles, in order,
-        # well before either real chapter starts. Chapter 1's marker is
-        # found normally; chapter 2's marker is missing, so it falls back to
-        # its name -- but the fallback search window is bounded to strictly
-        # after chapter 1's marker page, so the TOC (page 0, before chapter
-        # 1's marker at page 2) is never considered, and the real body text
-        # at page 3 is found instead.
-        pages = [
-            "目次\n第一章\n第二章",  # TOC page: both titles appear here too
-            "intro",
-            "XTCCH0001 第一章 real body",
-            "第二章 real body, marker dropped",
-        ]
-        chapters = [
-            {"name": "第一章", "marker": "XTCCH0001"},
-            {"name": "第二章", "marker": "XTCCH_MISSING"},
-        ]
-        with mock.patch.object(app, "pymupdf", _fake_pymupdf_with_pages(pages)):
-            located = app.detect_chapter_pages(b"fake", chapters)
-        assert located == [
-            {"name": "第一章", "start_page": 2},
-            {"name": "第二章", "start_page": 3},
-        ]
-
-    def test_name_fallback_is_bounded_by_neighbouring_markers(self):
-        # Chapter 2 (middle) has no marker hit; its name also happens to
-        # appear on an early TOC-like page, well before chapter 1's marker.
-        # The fallback window (strictly between chapter 1's and chapter 3's
-        # marker pages) must exclude that early page and find the real body
-        # text between the two markers instead.
-        pages = [
-            "TOC: 第二章 mentioned here too",  # page 0 -- outside the window
-            "intro",
-            "XTCCH0001 chapter one body",  # page 2
-            "filler",
-            "第二章 real body, marker dropped",  # page 4 -- inside the window
-            "filler",
-            "XTCCH0003 chapter three body",  # page 6
-        ]
-        chapters = [
-            {"name": "第一章", "marker": "XTCCH0001"},
-            {"name": "第二章", "marker": "XTCCH_MISSING"},
-            {"name": "第三章", "marker": "XTCCH0003"},
-        ]
-        with mock.patch.object(app, "pymupdf", _fake_pymupdf_with_pages(pages)):
-            located = app.detect_chapter_pages(b"fake", chapters)
-        assert located == [
-            {"name": "第一章", "start_page": 2},
-            {"name": "第二章", "start_page": 4},
-            {"name": "第三章", "start_page": 6},
-        ]
-
-    def test_chapter_not_found_by_either_method_is_dropped_and_logged(self, caplog):
-        # Chapter 1's marker is found (so fallback isn't discarded outright);
-        # chapter 2 is missing both its marker and any trace of its name.
+    def test_chapter_not_found_by_marker_is_dropped_and_logged(self, caplog):
+        # Chapter 1's marker is found; chapter 2's marker matches nothing.
         pages = ["XTCCH0001 first chapter, nothing else relevant"]
         chapters = [
             {"name": "第一章", "marker": "XTCCH0001"},
@@ -1106,7 +1033,7 @@ class TestDetectChapterPages:
             with mock.patch.object(app, "pymupdf", _fake_pymupdf_with_pages(pages)):
                 located = app.detect_chapter_pages(b"fake", chapters)
         assert located == [{"name": "第一章", "start_page": 0}]
-        assert "not found" in caplog.text
+        assert "marker not found" in caplog.text
 
     def test_non_monotonic_detection_is_dropped_as_a_false_match(self, caplog):
         # Chapter 2's marker actually appears on an EARLIER page than
@@ -1159,12 +1086,29 @@ class TestBuildChapterEntries:
             {"name": "全部", "start_page": 0, "end_page": 6}
         ]
 
-    def test_out_of_uint16_range_entry_is_dropped_and_logged(self, caplog):
+    def test_out_of_range_entry_is_dropped_and_logged(self, caplog):
         located = [{"name": "大きすぎる", "start_page": 0}]
         with caplog.at_level(logging.WARNING, logger="converter"):
             entries = app.build_chapter_entries(located, total_pages=70000)
         assert entries == []
-        assert "out of uint16 range" in caplog.text
+        assert "out of the" in caplog.text
+
+    def test_end_page_at_0xfffe_boundary_is_kept(self):
+        # 0xFFFE is the largest 0-based value xtctool-chapters.patch's +1
+        # on-disk conversion can represent (0xFFFE + 1 == 0xFFFF, the max
+        # uint16); total_pages=0xFFFF means end_page == total_pages - 1 ==
+        # 0xFFFE exactly.
+        located = [{"name": "境界", "start_page": 0}]
+        entries = app.build_chapter_entries(located, total_pages=0xFFFF)
+        assert entries == [{"name": "境界", "start_page": 0, "end_page": 0xFFFE}]
+
+    def test_end_page_at_0xffff_is_dropped(self):
+        # One page beyond the 0xFFFE boundary: total_pages=0x10000 would
+        # make end_page == 0xFFFF, which would overflow the on-disk uint16
+        # after xtctool-chapters.patch's +1 -- must be dropped, not written.
+        located = [{"name": "境界超え", "start_page": 0}]
+        entries = app.build_chapter_entries(located, total_pages=0x10000)
+        assert entries == []
 
     def test_name_is_truncated_utf8_safely(self):
         long_name = "章" * 100  # 3 bytes/char in UTF-8 -> 300 bytes, way over the limit

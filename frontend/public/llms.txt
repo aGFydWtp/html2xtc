@@ -1,0 +1,64 @@
+# html2xtc
+
+> Public HTTP API that converts a URL, an uploaded PDF, a plain-text file, or
+> an EPUB into an XTC file for the Xteink X3 e-reader. The conversion
+> endpoints require no authentication and no API key. They are rate-limited
+> per client IP (see api.md). Everything else on this domain (library sync,
+> device pairing, OPDS) requires a logged-in session and is out of scope for
+> unauthenticated agents — do not call `/api/library/*`, `/api/devices/*`,
+> `/opds/*`, or `/internal/*`; they will return 401.
+
+Full reference: [api.md](https://xtc.hr20k.com/api.md). Machine-readable
+schema: [openapi.json](https://xtc.hr20k.com/openapi.json). Human WebUI and
+usage policy: [about](https://xtc.hr20k.com/about).
+
+## Quick start
+
+Submit a conversion job, poll until it completes, then download the XTC file.
+`POST /jobs` is asynchronous and is the recommended entry point (`POST
+/convert` is synchronous, times out around 150 seconds, and is only suitable
+for short pages).
+
+```sh
+# 1. Create a job; abort if jobId didn't come back (400/429/503/500 body has
+# no jobId field, so job_id ends up empty)
+job=$(curl -s --max-time 15 -X POST https://xtc.hr20k.com/jobs \
+  -H 'Content-Type: application/json' \
+  -d '{"url": "https://example.com/article", "mode": "extract"}')
+job_id=$(echo "$job" | sed -n 's/.*"jobId":"\([^"]*\)".*/\1/p')
+[ -n "$job_id" ] || { echo "job creation failed: $job" >&2; exit 1; }
+
+# 2. Poll every few seconds until status is "completed" or "failed" (bounded
+# attempts, so a stuck job or network trouble can't loop forever)
+status=queued
+for _ in $(seq 1 150); do
+  status=$(curl -s --max-time 15 "https://xtc.hr20k.com/jobs/$job_id" | sed -n 's/.*"status":"\([^"]*\)".*/\1/p')
+  { [ "$status" = completed ] || [ "$status" = failed ]; } && break
+  sleep 4
+done
+
+# 3. Download the XTC file only if the job actually completed
+[ "$status" = completed ] || { echo "job did not complete (status: $status)" >&2; exit 1; }
+curl -s --max-time 15 -o output.xtc "https://xtc.hr20k.com/jobs/$job_id/download"
+```
+
+## Docs
+
+- [API reference (api.md)](https://xtc.hr20k.com/api.md): job lifecycle,
+  upload endpoints (PDF/TXT/EPUB), request/response shapes, status codes,
+  rate limits, and size limits for the unauthenticated conversion API.
+- [OpenAPI 3.1 schema (openapi.json)](https://xtc.hr20k.com/openapi.json):
+  machine-readable definitions of the same endpoints.
+
+## Notes for agents
+
+- Default to `POST /jobs` (async) over `POST /convert` (sync, short-page
+  only). Poll `GET /jobs/{jobId}` every 4-5 seconds; it is not rate-limited.
+- The conversion-starting endpoints (`POST /convert`, `/jobs`, `/jobs/pdf`,
+  `/jobs/text`, `/jobs/epub`) share one IP-based rate limit budget (default
+  50 requests/hour). A 429 response includes `Retry-After` in seconds — wait
+  that long before retrying, don't busy-loop.
+- When fetching a target page yourself (rather than passing a URL to this
+  service), note that this service's own Browser Rendering step identifies
+  itself as `xtc-converter/1.0 (+https://xtc.hr20k.com/about)`; site owners
+  may block or allow that user agent independently of yours.

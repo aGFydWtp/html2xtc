@@ -539,9 +539,9 @@ text/html
 
 原則として `linear="no"` の item は除外する。
 
-ただし `includeTableOfContents=true` の場合、navigation document を別途目次として挿入するため、spine 内の目次ページを二重挿入しない。
+EPUB3 の navigation document（manifest item の `properties="nav"`）は、それが spine item としても宣言されていた場合、`includeTableOfContents` の値に関わらず常に本文候補から除外する（2026-07-26 バグ修正で仕様変更。旧仕様は `includeTableOfContents=true` の場合のみ除外していたが、これだと `false`（目次を含めない）を選んでも nav.xhtml がそのまま本文ページとして出力されてしまい、設定の意味と実際の挙動が食い違っていた）。nav.xhtml は本文ではなくナビゲーション用の成果物であり、XTC 上ではリンクも機能しないため、`includeTableOfContents=false` は「ナビゲーション由来のコンテンツを一切出さない」、`true` は「ツールが生成した目次セクション（8.7 参照）に置き換える」という、両方とも一貫した意味になる。EPUB2 の NCX はそもそも spine item になり得ない（media-type が XHTML 系でないため、本文候補の絞り込みで自動的に除外される）ので、この除外は EPUB3 の nav にのみ適用される。
 
-spine が空の場合は 422 とする。
+この除外の結果 spine が空になった場合も含め、spine が空の場合は 422 とする（`EMPTY_SPINE`）。壊れた EPUB（linear な本文候補が nav.xhtml だけ、など）でない限り実際には起こらない。
 
 ## 8.7 Navigation
 

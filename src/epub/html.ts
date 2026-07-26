@@ -681,8 +681,20 @@ export function prepareEpubDocument(
 
   const nav = parseEpubNavigation(entries, pkg);
   const navLocation = locateNavigationDocument(pkg);
-  const excludedNavPath =
-    options.includeTableOfContents && navLocation?.kind === "nav" ? navLocation.path : undefined;
+  // Spec §8.6 (revised — bug report "目次を含めないでも目次ページが本文に
+  // 残る"): the EPUB3 navigation document is excluded from renderedSpine
+  // UNCONDITIONALLY now, not only when includeTableOfContents=true. nav.xhtml
+  // is a navigation artifact, not book text — its links don't function once
+  // rendered as a plain XTC page — so both settings now mean what they say:
+  // includeTableOfContents=false means no navigation content at all (not
+  // "the EPUB's own nav page, verbatim"), and =true means "buildTocSection's
+  // generated <nav class=epub-generated-toc>", never a duplicate of the
+  // original. Deliberately does NOT extend to an EPUB2 NCX (navLocation?.kind
+  // === "ncx"): the NCX is never itself a spine item (it has no
+  // application/xhtml+xml-family media type, so isRenderableSpineMediaType
+  // already excludes it below regardless), so there is nothing analogous to
+  // exclude here for EPUB2.
+  const excludedNavPath = navLocation?.kind === "nav" ? navLocation.path : undefined;
 
   const renderedSpine = pkg.spine.filter(
     (item) =>
@@ -691,6 +703,15 @@ export function prepareEpubDocument(
       isRenderableSpineMediaType(item.manifestItem.mediaType),
   );
   if (renderedSpine.length === 0) {
+    // Reachable in practice only for a malformed/degenerate EPUB whose sole
+    // linear, renderable spine item(s) ARE the nav document itself (e.g. a
+    // one-page book whose only spine entry is nav.xhtml) — a real book
+    // always has at least one non-nav chapter. Same EMPTY_SPINE code/message
+    // opf.ts's own "spine has zero itemref" case uses (spec §8.6 "spine が
+    // 空の場合は422"); this is that same client-facing outcome, just
+    // detected one filtering step later, so there is no separate error code
+    // to invent for "spine became empty only after excluding nav" versus
+    // "spine was empty from the start".
     throw new EpubError("EMPTY_SPINE", "no linear XHTML spine items after filtering");
   }
 

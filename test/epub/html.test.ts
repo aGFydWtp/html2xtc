@@ -321,6 +321,59 @@ describe("prepareEpubDocument: table of contents (spec §19.1 目次)", () => {
     // is not double-inserted as ordinary body content.
     expect(result.spineItemCount).toBe(1);
   });
+
+  // Bug report "目次を含めないでも目次ページが本文に残る": nav.xhtml is now
+  // excluded from renderedSpine regardless of includeTableOfContents (spec
+  // §8.6, revised) — previously only the includeTableOfContents=true branch
+  // excluded it, so choosing "false" (which reads as "no navigation content
+  // at all") still rendered the EPUB's own non-functional nav page as if it
+  // were an ordinary chapter.
+  it("also excludes the nav document from spine rendering when it is a spine item and TOC is NOT included", () => {
+    const files = minimalEpub3Files();
+    const zip = buildEpubZip({
+      ...files,
+      "OEBPS/content.opf": (files["OEBPS/content.opf"] as string).replace(
+        "<spine>",
+        '<spine><itemref idref="nav"/>',
+      ),
+    });
+    const result = prepareEpubDocument(zip, options({ includeTableOfContents: false }), context());
+    expect(result.spineItemCount).toBe(1);
+    expect(result.html).not.toContain('class="epub-generated-toc"');
+    // The nav document's own distinguishing text never made it into the
+    // rendered body at all (not present as a generated TOC, and not present
+    // as a plain spine chapter either).
+    expect(result.html).not.toContain(">Chapter 1</a>");
+  });
+
+  // A TOC entry that targets the nav document itself (a malformed-but-real
+  // shape: some tools emit a self-referential "目次" entry in the nav) can
+  // never resolve to a rendered spine section once nav.xhtml is
+  // unconditionally excluded — buildXtcChapterPlan's existing
+  // spineIndexByPath lookup already handles "target not in the rendered
+  // spine" by dropping the candidate and counting it as unresolved; this
+  // pins that this is what actually happens for a self-referencing nav
+  // entry specifically, rather than the chapter surviving as a broken link.
+  it("drops a TOC entry that targets the nav document itself, as an unresolved target", () => {
+    const files = minimalEpub3Files();
+    const zip = buildEpubZip({
+      ...files,
+      "OEBPS/nav.xhtml": `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+<body>
+  <nav epub:type="toc">
+    <ol>
+      <li><a href="nav.xhtml">目次</a></li>
+      <li><a href="chapter1.xhtml">Chapter 1</a></li>
+    </ol>
+  </nav>
+</body>
+</html>`,
+    });
+    const result = prepareEpubDocument(zip, options({ includeTableOfContents: false }), context());
+    expect(result.chapters).toEqual([{ name: "Chapter 1", marker: expect.any(String) }]);
+    expect(result.warnings.map((w) => w.code)).toContain("XTC_CHAPTER_TOC_TARGET_UNRESOLVED");
+  });
 });
 
 describe("prepareEpubDocument: horizontal layout (spec §19.1 横書き)", () => {

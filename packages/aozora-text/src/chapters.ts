@@ -120,14 +120,43 @@ export const XTC_CHAPTER_MARKER_CLASS = "xtc-chapter-marker";
  * invisible" reasoning from the requested CSS value alone — always check
  * the actually-painted color against the real binding.
  *
- * Whether this `#ababab` glyph (roughly 1 CSS px tall/wide, so a few
- * device pixels at most) produces any visible ink after the Container's
- * 1-bit e-ink dithering is UNVERIFIED as of this writing — 171 sits above
- * a naive mid-gray threshold, but this codebase does not verify the
- * Container's actual dithered output, and `converter/` is deliberately out
- * of scope for the change that added this comment. If that gets verified
- * later (in either direction), update this paragraph to match — do not
- * leave a stale "should be fine" claim here once real data exists.
+ * Whether this `#ababab` glyph produces any visible ink after the
+ * Container's 1-bit e-ink dithering has been measured end-to-end: a PDF
+ * rendered by the production BROWSER binding (same renderer as above) was
+ * run through the actual Container pipeline (converter/app.py's
+ * convert_pdf -> the xtctool subprocess, converter/config-x3.toml's real
+ * values — `[pdf] resolution = 200`, `[xtg] threshold = 128, dither = true,
+ * dither_strength = 0.8`, Floyd-Steinberg in xtctool/algo/dithering.py) and
+ * the final 1-bit output was inspected at the marker's own coordinates. The
+ * glyph's actual rendered grayscale there measured 225-253 (255 = white) —
+ * lighter than the `#ababab` (171) figure above, because `font-size: 1px`
+ * anti-aliases the already-tiny glyph down to roughly 25-35% pixel
+ * coverage, which blends with the white page background and dilutes the
+ * effective density further. That leaves 30-97 points of headroom under
+ * the 128 threshold — enough that Floyd-Steinberg's diffused error never
+ * reached it: the final 1-bit output at the marker's coordinates was 100%
+ * white, 0 black pixels, in this test. (The only pixel differences measured
+ * between a "with marker" and "without marker" render were ~10,500 pixels
+ * of unrelated heading-text reflow — the marker span consumes a sliver of
+ * line-box height, shifting everything below it, exactly as documented
+ * above — split almost evenly between newly-black and newly-white pixels,
+ * with the "with marker" render actually having 17 FEWER black pixels
+ * overall than "without".)
+ *
+ * Two things to weigh before trusting this as a permanent guarantee:
+ * - This was a minimal, controlled test page, not a real document — it has
+ *   not been re-run against a dense, realistic document (many chapters,
+ *   heavier surrounding text) where different anti-aliasing or dithering
+ *   error accumulation is conceivable. A production `.xtc` fetched after
+ *   deploy is the intended follow-up check, not yet done as of this
+ *   writing.
+ * - The 25-35% coverage that keeps this under threshold comes from
+ *   `font-size: 1px` specifically. If a future change enlarges the marker's
+ *   font-size (for any reason) or lengthens the marker string, glyph
+ *   coverage rises back toward the `#ababab` (171) figure — well within
+ *   striking distance of the 128 threshold — and this whole measurement
+ *   needs re-doing. Do not assume the headroom above scales with font-size;
+ *   re-measure.
  *
  * If a future engineer is tempted to go back to `color: transparent` for
  * "more surely invisible," re-run the A/B test against the actual BROWSER

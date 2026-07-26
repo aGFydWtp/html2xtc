@@ -1,0 +1,479 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "html2xtc conversion API",
+    "version": "1.0.0",
+    "description": "Public, unauthenticated API that converts a URL, an uploaded PDF, a plain-text file, or an EPUB into an XTC file for the Xteink X3 e-reader. Only the endpoints documented here are unauthenticated; every other route on this domain (/api/library/*, /api/devices/*, /opds/*, /internal/*, /api/auth/*) requires a session or shared secret and is intentionally omitted from this schema."
+  },
+  "servers": [
+    { "url": "https://xtc.hr20k.com" }
+  ],
+  "paths": {
+    "/jobs": {
+      "post": {
+        "summary": "Create an asynchronous conversion job from a URL (recommended entry point)",
+        "operationId": "createUrlJob",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CreateUrlJobRequest" },
+              "example": {
+                "url": "https://example.com/article",
+                "mode": "extract",
+                "layout": "vertical",
+                "font": "BIZ UDMincho"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Job created",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/JobCreated" }
+              }
+            }
+          },
+          "400": { "description": "Body is not JSON, url is missing, mode is invalid, or the URL failed SSRF validation", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "429": { "description": "Rate limit exceeded (shared with /convert, /jobs/pdf, /jobs/text, /jobs/epub)", "headers": { "Retry-After": { "schema": { "type": "integer" }, "description": "Seconds until the rate-limit window resets" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "503": { "description": "Conversion is temporarily disabled by the operator", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "500": { "description": "Job creation failed", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/jobs/{jobId}": {
+      "get": {
+        "summary": "Poll job status",
+        "operationId": "getJobStatus",
+        "parameters": [
+          { "name": "jobId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current job status",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/JobStatus" }
+              }
+            }
+          },
+          "400": { "description": "jobId is not a UUID", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "404": { "description": "Unknown jobId, or past retention (~1 day)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/jobs/{jobId}/download": {
+      "get": {
+        "summary": "Download the finished XTC file",
+        "operationId": "downloadJobResult",
+        "parameters": [
+          { "name": "jobId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "XTC file bytes",
+            "content": {
+              "application/octet-stream": {
+                "schema": { "type": "string", "contentEncoding": "binary" }
+              }
+            }
+          },
+          "400": { "description": "jobId is not a UUID", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "409": {
+            "description": "Job exists but has not finished yet",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "status": { "$ref": "#/components/schemas/JobStatusValue" }
+                  },
+                  "required": ["error", "status"]
+                }
+              }
+            }
+          },
+          "404": { "description": "Unknown jobId, job failed, or the output expired (~24 hours)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/jobs/pdf": {
+      "post": {
+        "summary": "Upload a PDF file for direct conversion (no page rendering)",
+        "operationId": "createPdfJob",
+        "parameters": [
+          { "name": "Content-Type", "in": "header", "required": true, "schema": { "type": "string", "enum": ["application/pdf", "application/x-pdf"] } },
+          { "name": "Content-Length", "in": "header", "required": true, "schema": { "type": "integer", "minimum": 1 }, "description": "Declared byte size of the request body; default upload limit is 48 MiB" },
+          { "name": "X-File-Name", "in": "header", "required": false, "schema": { "type": "string" }, "description": "base64url encoding of the UTF-8 display filename. Used only for display/title purposes; a bad value falls back to a default filename rather than erroring." },
+          { "name": "X-Pdf-Options", "in": "header", "required": false, "schema": { "type": "string" }, "description": "base64url encoding of a PdfConvertOptions JSON object. Omit to use defaults. Values are validated strictly; out-of-range fields are rejected with 400, never silently clamped." }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/pdf": {
+              "schema": { "type": "string", "contentEncoding": "binary" }
+            }
+          }
+        },
+        "responses": {
+          "202": { "description": "Job created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/JobCreated" } } } },
+          "400": { "description": "Bad Content-Length, bad X-Pdf-Options, missing body, or upload/declared size mismatch", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "411": { "description": "Content-Length header missing", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "413": { "description": "Declared size exceeds the upload limit (48 MiB default)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "415": { "description": "Content-Type is not application/pdf or application/x-pdf", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "429": { "description": "Rate limit exceeded (shared with /convert, /jobs, /jobs/text, /jobs/epub)", "headers": { "Retry-After": { "schema": { "type": "integer" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "503": { "description": "Conversion is temporarily disabled by the operator", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "500": { "description": "Storage or job creation failure", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/jobs/text": {
+      "post": {
+        "summary": "Upload a plain-text (.txt) file, reflow it, then convert",
+        "operationId": "createTextJob",
+        "parameters": [
+          { "name": "Content-Type", "in": "header", "required": true, "schema": { "type": "string", "enum": ["text/plain", "application/octet-stream"] } },
+          { "name": "Content-Length", "in": "header", "required": true, "schema": { "type": "integer", "minimum": 1 }, "description": "Declared byte size of the request body; fixed upload limit is 5 MiB (not operator-configurable)" },
+          { "name": "X-File-Name", "in": "header", "required": false, "schema": { "type": "string" }, "description": "base64url encoding of the UTF-8 display filename" },
+          { "name": "X-Text-Options", "in": "header", "required": false, "schema": { "type": "string" }, "description": "base64url encoding of a TextConvertOptions JSON object. Omit to use defaults." }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "text/plain": {
+              "schema": { "type": "string", "contentEncoding": "binary" }
+            }
+          }
+        },
+        "responses": {
+          "202": { "description": "Job created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/JobCreated" } } } },
+          "400": { "description": "Bad Content-Length, bad X-Text-Options, or upload/declared size mismatch", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "411": { "description": "Content-Length header missing", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "413": { "description": "Declared size exceeds 5 MiB", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "415": { "description": "Content-Type is not text/plain or application/octet-stream", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "429": { "description": "Rate limit exceeded (shared with /convert, /jobs, /jobs/pdf, /jobs/epub)", "headers": { "Retry-After": { "schema": { "type": "integer" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "503": { "description": "Conversion is temporarily disabled by the operator", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "500": { "description": "Storage or job creation failure", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/jobs/epub": {
+      "post": {
+        "summary": "Upload an EPUB file, split it into per-chapter HTML, then convert",
+        "operationId": "createEpubJob",
+        "parameters": [
+          { "name": "Content-Type", "in": "header", "required": true, "schema": { "type": "string" }, "description": "application/epub+zip, or application/octet-stream when X-File-Name decodes to a filename ending in .epub" },
+          { "name": "Content-Length", "in": "header", "required": true, "schema": { "type": "integer", "minimum": 1 }, "description": "Declared byte size of the request body; default upload limit is 48 MiB" },
+          { "name": "X-File-Name", "in": "header", "required": false, "schema": { "type": "string" }, "description": "base64url encoding of the UTF-8 display filename" },
+          { "name": "X-Epub-Options", "in": "header", "required": false, "schema": { "type": "string" }, "description": "base64url encoding of an EpubConvertOptions JSON object. Omit to use defaults." }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/epub+zip": {
+              "schema": { "type": "string", "contentEncoding": "binary" }
+            }
+          }
+        },
+        "responses": {
+          "202": { "description": "Job created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/JobCreated" } } } },
+          "400": { "description": "Bad Content-Length, bad X-Epub-Options, missing body, request body does not start with a ZIP magic number, or upload/declared size mismatch", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "411": { "description": "Content-Length header missing", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "413": { "description": "Declared size exceeds the upload limit (48 MiB default)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "415": { "description": "Content-Type not accepted", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "429": { "description": "Rate limit exceeded (shared with /convert, /jobs, /jobs/pdf, /jobs/text)", "headers": { "Retry-After": { "schema": { "type": "integer" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "503": { "description": "Conversion is temporarily disabled by the operator", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "500": { "description": "Storage or job creation failure", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/preview/text": {
+      "post": {
+        "summary": "Synchronously preview the first part of a plain-text body as XTC (nothing saved server-side)",
+        "operationId": "previewText",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/PreviewTextRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "XTC bytes for the previewed portion of the text",
+            "headers": {
+              "X-Xtc-Page-Count": { "schema": { "type": "integer" } },
+              "X-Preview-Character-Count": { "schema": { "type": "integer" } },
+              "X-Preview-Font-Fallback": { "schema": { "type": "string" }, "description": "\"true\" when the requested font could not be fetched and a fallback was used" }
+            },
+            "content": {
+              "application/octet-stream": {
+                "schema": { "type": "string", "contentEncoding": "binary" }
+              }
+            }
+          },
+          "400": { "description": "Bad JSON, missing text, or invalid options", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PreviewErrorResponse" } } } },
+          "413": { "description": "text too long (>4000 code points or >32 KiB UTF-8), or request body over 64 KiB", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PreviewErrorResponse" } } } },
+          "415": { "description": "Content-Type is not application/json", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PreviewErrorResponse" } } } },
+          "422": { "description": "Normalized text is empty, or the generated PDF is too large", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PreviewErrorResponse" } } } },
+          "429": { "description": "Rate limit exceeded (own budget, default 20/hour/IP, separate from the /jobs family)", "headers": { "Retry-After": { "schema": { "type": "integer" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PreviewErrorResponse" } } } },
+          "502": { "description": "Rendering or XTC conversion failed upstream", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PreviewErrorResponse" } } } },
+          "504": { "description": "Conversion timed out", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PreviewErrorResponse" } } } },
+          "500": { "description": "Internal error", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PreviewErrorResponse" } } } }
+        }
+      }
+    },
+    "/convert": {
+      "post": {
+        "summary": "Synchronously convert a URL to XTC (short pages only; prefer POST /jobs)",
+        "operationId": "convertSync",
+        "description": "The whole request must complete within roughly 150 seconds server-side. Use POST /jobs instead for anything but very short pages.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CreateUrlJobRequest" },
+              "example": { "url": "https://example.com/article", "mode": "extract" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Conversion finished",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "jobId": { "type": "string", "format": "uuid" },
+                    "downloadUrl": { "type": "string" }
+                  },
+                  "required": ["jobId", "downloadUrl"]
+                },
+                "example": { "jobId": "3fa2...", "downloadUrl": "/download/3fa2..." }
+              }
+            }
+          },
+          "400": { "description": "Body is not JSON, url is missing, or the URL failed SSRF validation", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "405": { "description": "Wrong HTTP method", "headers": { "Allow": { "schema": { "type": "string" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "422": { "description": "Generated PDF too large, or XTC conversion failed", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "429": { "description": "Rate limit exceeded (shared budget with /jobs, /jobs/pdf, /jobs/text, /jobs/epub)", "headers": { "Retry-After": { "schema": { "type": "integer" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "500": { "description": "Internal error", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "502": { "description": "Upstream page-rendering failure", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "503": { "description": "Conversion is temporarily disabled by the operator", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/download/{jobId}": {
+      "get": {
+        "summary": "Download the XTC file produced by POST /convert",
+        "operationId": "downloadConvertResult",
+        "parameters": [
+          { "name": "jobId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "XTC file bytes",
+            "content": {
+              "application/octet-stream": {
+                "schema": { "type": "string", "contentEncoding": "binary" }
+              }
+            }
+          },
+          "400": { "description": "jobId is not a UUID", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "404": { "description": "Unknown jobId or expired output", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/api/books": {
+      "get": {
+        "summary": "Search the synced Aozora Bunko (public-domain Japanese literature) catalog",
+        "operationId": "searchBooks",
+        "description": "Not rate-limited. htmlUrl (when present) can be passed directly as the url field to POST /jobs.",
+        "parameters": [
+          { "name": "q", "in": "query", "required": false, "schema": { "type": "string" }, "description": "Title or author search text. Empty/blank returns an empty list." },
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 50, "default": 50 } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Matching catalog entries",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "books": {
+                      "type": "array",
+                      "items": { "$ref": "#/components/schemas/AozoraBook" }
+                    }
+                  },
+                  "required": ["books"]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "error": { "type": "string" }
+        },
+        "required": ["error"]
+      },
+      "PreviewErrorResponse": {
+        "type": "object",
+        "properties": {
+          "error": { "type": "string" },
+          "code": {
+            "type": "string",
+            "description": "Machine-readable error code",
+            "enum": ["TEXT_TOO_LONG", "EMPTY_TEXT", "INVALID_OPTIONS", "PDF_TOO_LARGE", "CONTAINER_UNAVAILABLE", "XTC_CONVERSION_FAILED", "TIMEOUT", "RATE_LIMITED"]
+          }
+        },
+        "required": ["error", "code"]
+      },
+      "JobCreated": {
+        "type": "object",
+        "properties": {
+          "jobId": { "type": "string", "format": "uuid" },
+          "statusUrl": { "type": "string", "description": "Relative path, e.g. /jobs/<uuid>" }
+        },
+        "required": ["jobId", "statusUrl"]
+      },
+      "JobStatusValue": {
+        "type": "string",
+        "enum": ["queued", "preparing", "rendering", "converting", "completed", "failed"],
+        "description": "URL jobs: queued -> rendering -> converting -> completed|failed. Uploaded-PDF jobs: queued -> converting -> completed|failed (no rendering phase). Uploaded-TXT/EPUB jobs: queued -> preparing -> rendering -> converting -> completed|failed."
+      },
+      "JobStatus": {
+        "type": "object",
+        "properties": {
+          "jobId": { "type": "string", "format": "uuid" },
+          "status": { "$ref": "#/components/schemas/JobStatusValue" },
+          "downloadUrl": { "type": "string", "description": "Present only when status is \"completed\"" },
+          "error": { "type": "string", "description": "Present only when status is \"failed\"" }
+        },
+        "required": ["jobId", "status"]
+      },
+      "CreateUrlJobRequest": {
+        "type": "object",
+        "properties": {
+          "url": { "type": "string", "format": "uri", "description": "Public http(s) URL. Non-routable/loopback/link-local addresses and this service's own domain are rejected." },
+          "mode": {
+            "type": "string",
+            "enum": ["full", "extract"],
+            "description": "\"full\" (default for /convert and /jobs when omitted): render the page as-is. \"extract\": pull the main article content out first, degrading back to \"full\" automatically if extraction fails."
+          },
+          "layout": {
+            "type": "string",
+            "enum": ["horizontal", "vertical"],
+            "description": "Invalid or omitted values silently fall back to a per-site default (never a 400)."
+          },
+          "font": {
+            "type": "string",
+            "description": "A Google Fonts family name (letters, digits, spaces, hyphens; max 64 characters). Invalid or unavailable values silently fall back to a default."
+          }
+        },
+        "required": ["url"]
+      },
+      "PreviewTextRequest": {
+        "type": "object",
+        "properties": {
+          "text": { "type": "string", "description": "Max 4,000 Unicode code points and 32 KiB of UTF-8 bytes. Only the leading portion of a document is meant to be sent here." },
+          "options": { "$ref": "#/components/schemas/TextConvertOptions" }
+        },
+        "required": ["text"]
+      },
+      "PdfConvertOptions": {
+        "type": "object",
+        "description": "Applied in this fixed order: page selection -> rotation -> crop -> contain/cover -> margin -> grayscale -> 528x792 resample -> invert -> threshold/dithering -> XTC. Validated strictly: out-of-range values are rejected with 400, never silently clamped.",
+        "properties": {
+          "pages": { "type": "string", "description": "Page-range syntax, e.g. \"1-\", \"1-3,5\". Default \"1-\" (all pages)." },
+          "rotation": { "type": "integer", "enum": [0, 90, 180, 270], "default": 0 },
+          "crop": {
+            "type": "object",
+            "description": "Fraction removed from each edge after rotation. Each side in [0.0, 0.4]; left+right and top+bottom must each stay below 0.8.",
+            "properties": {
+              "top": { "type": "number", "minimum": 0, "maximum": 0.4, "default": 0 },
+              "right": { "type": "number", "minimum": 0, "maximum": 0.4, "default": 0 },
+              "bottom": { "type": "number", "minimum": 0, "maximum": 0.4, "default": 0 },
+              "left": { "type": "number", "minimum": 0, "maximum": 0.4, "default": 0 }
+            },
+            "required": ["top", "right", "bottom", "left"]
+          },
+          "fit": { "type": "string", "enum": ["contain", "cover"], "default": "contain" },
+          "marginPx": { "type": "integer", "minimum": 0, "maximum": 64, "default": 0 },
+          "threshold": { "type": "integer", "minimum": 0, "maximum": 255, "default": 128 },
+          "dither": { "type": "boolean", "default": true },
+          "ditherStrength": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.8 },
+          "invert": { "type": "boolean", "default": false }
+        }
+      },
+      "TextConvertOptions": {
+        "type": "object",
+        "description": "Validated strictly: out-of-range values are rejected with 400, never silently clamped.",
+        "properties": {
+          "inputFormat": { "type": "string", "enum": ["plain", "aozora"], "default": "plain", "description": "\"plain\": the body is treated as plain text only (no Markdown/HTML interpretation). \"aozora\": parsed as Aozora Bunko notation (ruby, emphasis marks, headings, indentation, etc.)." },
+          "encoding": { "type": "string", "enum": ["auto", "utf-8", "shift_jis"], "default": "auto" },
+          "layout": { "type": "string", "enum": ["horizontal", "vertical"], "default": "horizontal" },
+          "font": { "type": "string", "default": "BIZ UDPGothic", "description": "Google Fonts family name." },
+          "fontSizePx": { "type": "number", "minimum": 12, "maximum": 32, "default": 26 },
+          "lineHeight": { "type": "number", "minimum": 1.2, "maximum": 2.5, "default": 1.8 },
+          "paragraphSpacingEm": { "type": "number", "minimum": 0, "maximum": 3, "default": 0.9 },
+          "margins": {
+            "type": "object",
+            "properties": {
+              "top": { "type": "number", "minimum": 0, "maximum": 120, "default": 36 },
+              "right": { "type": "number", "minimum": 0, "maximum": 120, "default": 32 },
+              "bottom": { "type": "number", "minimum": 0, "maximum": 120, "default": 40 },
+              "left": { "type": "number", "minimum": 0, "maximum": 120, "default": 32 }
+            },
+            "required": ["top", "right", "bottom", "left"]
+          },
+          "textAlign": { "type": "string", "enum": ["start", "justify"], "default": "start" },
+          "maxConsecutiveBlankLines": { "type": "integer", "minimum": 0, "maximum": 5, "default": 2 },
+          "preserveSpaces": { "type": "boolean", "default": false },
+          "joinHardWrappedLines": { "type": "boolean", "default": true, "description": "Ignored (always treated as false) when inputFormat is \"aozora\"." },
+          "showPageNumbers": { "type": "boolean", "default": false, "description": "Always forced to false by POST /preview/text regardless of the submitted value." },
+          "title": { "type": "string", "maxLength": 100, "default": "" },
+          "author": { "type": "string", "maxLength": 100, "default": "" }
+        }
+      },
+      "EpubConvertOptions": {
+        "type": "object",
+        "description": "Validated strictly: out-of-range values are rejected with 400, never silently clamped.",
+        "properties": {
+          "layout": { "type": "string", "enum": ["auto", "horizontal", "vertical"], "default": "auto" },
+          "font": { "type": "string", "default": "BIZ UDMincho", "description": "Google Fonts family name." },
+          "fontSizePx": { "type": "integer", "minimum": 12, "maximum": 40, "default": 24 },
+          "marginPx": { "type": "integer", "minimum": 0, "maximum": 120, "default": 40 },
+          "chapterPageBreak": { "type": "boolean", "default": true },
+          "includeCover": { "type": "boolean", "default": true },
+          "includeTableOfContents": { "type": "boolean", "default": false }
+        }
+      },
+      "AozoraBook": {
+        "type": "object",
+        "properties": {
+          "workId": { "type": "string" },
+          "title": { "type": "string" },
+          "subtitle": { "type": ["string", "null"] },
+          "author": { "type": "string" },
+          "htmlUrl": { "type": "string", "description": "Pass this directly as the url field to POST /jobs" },
+          "cardUrl": { "type": "string" },
+          "copyrighted": { "type": "boolean" }
+        },
+        "required": ["workId", "title", "subtitle", "author", "htmlUrl", "cardUrl", "copyrighted"]
+      }
+    }
+  }
+}

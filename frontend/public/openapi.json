@@ -336,7 +336,7 @@
           "code": {
             "type": "string",
             "description": "Machine-readable error code",
-            "enum": ["TEXT_TOO_LONG", "EMPTY_TEXT", "INVALID_OPTIONS", "PDF_TOO_LARGE", "CONTAINER_UNAVAILABLE", "XTC_CONVERSION_FAILED", "TIMEOUT", "RATE_LIMITED"]
+            "enum": ["INVALID_REQUEST", "TEXT_TOO_LONG", "EMPTY_TEXT", "INVALID_OPTIONS", "PDF_GENERATION_FAILED", "PDF_TOO_LARGE", "CONTAINER_UNAVAILABLE", "XTC_CONVERSION_FAILED", "TIMEOUT", "RATE_LIMITED", "INTERNAL_ERROR"]
           }
         },
         "required": ["error", "code"]
@@ -367,7 +367,7 @@
       "CreateUrlJobRequest": {
         "type": "object",
         "properties": {
-          "url": { "type": "string", "format": "uri", "description": "Public http(s) URL. Non-routable/loopback/link-local addresses and this service's own domain are rejected." },
+          "url": { "type": "string", "format": "uri", "description": "Public http(s) URL. Loopback, private (RFC 1918), link-local, CGNAT, and other reserved/non-public IP ranges (resolved via DNS if the host isn't a literal IP) are rejected, as is this service's own domain." },
           "mode": {
             "type": "string",
             "enum": ["full", "extract"],

@@ -10,6 +10,10 @@ it without credentials, it will return 401.
 
 Machine-readable schema: [openapi.json](https://xtc.hr20k.com/openapi.json).
 
+Every endpoint below returns `405` (with an `Allow` header) if called with
+the wrong HTTP method; that case is omitted from each endpoint's status
+table to avoid repetition — use the method shown in its heading.
+
 ## Recommended path: async jobs
 
 1. `POST /jobs` (or `/jobs/pdf`, `/jobs/text`, `/jobs/epub` for file uploads)
@@ -69,7 +73,7 @@ Creates an asynchronous conversion job from a URL.
 
 | Field | Required | Notes |
 |---|---|---|
-| `url` | yes | Must be a public http(s) URL. Non-routable/loopback/link-local addresses and this service's own domain are rejected. |
+| `url` | yes | Must be a public http(s) URL. Loopback, private (RFC 1918), link-local, CGNAT, and other reserved/non-public IP ranges (resolved via DNS if the host isn't a literal IP) are rejected, as is this service's own domain. |
 | `mode` | no | `"full"` (default: render the page as-is) or `"extract"` (extract main article content first, degrading back to `"full"` automatically if extraction fails — always produces some output). Any other value is a `400`. |
 | `layout` | no | `"horizontal"` or `"vertical"`. Invalid/omitted values silently fall back to a default (never a `400`). |
 | `font` | no | A Google Fonts family name (letters, digits, spaces, hyphens; max 64 chars). Invalid or unavailable fonts silently fall back to a default. |
@@ -279,6 +283,7 @@ job object), with `Content-Disposition: inline` and headers
 | 429 | rate limit exceeded (own budget, `Retry-After` header) |
 | 502 | rendering or conversion failed upstream |
 | 504 | conversion timed out |
+| 500 | internal error |
 
 ### `POST /convert` (short pages only, synchronous)
 

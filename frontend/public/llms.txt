@@ -20,19 +20,26 @@ Submit a conversion job, poll until it completes, then download the XTC file.
 for short pages).
 
 ```sh
-# 1. Create a job
-job=$(curl -s -X POST https://xtc.hr20k.com/jobs \
+# 1. Create a job; abort if jobId didn't come back (400/429/503/500 body has
+# no jobId field, so job_id ends up empty)
+job=$(curl -s --max-time 15 -X POST https://xtc.hr20k.com/jobs \
   -H 'Content-Type: application/json' \
   -d '{"url": "https://example.com/article", "mode": "extract"}')
 job_id=$(echo "$job" | sed -n 's/.*"jobId":"\([^"]*\)".*/\1/p')
+[ -n "$job_id" ] || { echo "job creation failed: $job" >&2; exit 1; }
 
-# 2. Poll every few seconds until status is "completed" or "failed"
-until [ "$(curl -s https://xtc.hr20k.com/jobs/$job_id | sed -n 's/.*"status":"\([^"]*\)".*/\1/p')" = completed ]; do
+# 2. Poll every few seconds until status is "completed" or "failed" (bounded
+# attempts, so a stuck job or network trouble can't loop forever)
+status=queued
+for _ in $(seq 1 150); do
+  status=$(curl -s --max-time 15 "https://xtc.hr20k.com/jobs/$job_id" | sed -n 's/.*"status":"\([^"]*\)".*/\1/p')
+  { [ "$status" = completed ] || [ "$status" = failed ]; } && break
   sleep 4
 done
 
-# 3. Download the XTC file
-curl -s -o output.xtc https://xtc.hr20k.com/jobs/$job_id/download
+# 3. Download the XTC file only if the job actually completed
+[ "$status" = completed ] || { echo "job did not complete (status: $status)" >&2; exit 1; }
+curl -s --max-time 15 -o output.xtc "https://xtc.hr20k.com/jobs/$job_id/download"
 ```
 
 ## Docs

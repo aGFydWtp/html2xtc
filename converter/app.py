@@ -244,9 +244,9 @@ def decode_chapters_header(raw_header: str) -> list[dict[str, str]]:
     matching X-Xtc-Author/X-Xtc-Title's stance on bad headers.
 
     marker is optional per entry (missing/non-string falls back to "", which
-    makes detect_chapter_pages skip straight to the name-based fallback
-    search); name is required -- entries missing a non-empty string name are
-    dropped rather than raising."""
+    makes detect_chapter_pages treat that chapter as never found -- see its
+    docstring); name is required -- entries missing a non-empty string name
+    are dropped rather than raising."""
     decoded = decode_base64url_utf8(raw_header)
     if not decoded:
         return []
@@ -308,11 +308,11 @@ def count_pdf_pages(pdf_bytes: bytes) -> int | None:
 def normalize_search_text(text: str) -> str:
     """Strips every whitespace character (space, tab, newline, full-width
     U+3000 IDEOGRAPHIC SPACE -- str.isspace() covers all of these) from text
-    before chapter marker/name search. Vertical-writing PDFs can have
-    pymupdf's text extraction inject spurious whitespace/line breaks between
+    before chapter marker search. Vertical-writing PDFs can have pymupdf's
+    text extraction inject spurious whitespace/line breaks between
     characters that read contiguously on the rendered page, so both the
-    haystack (page text) and the needle (marker/name) are normalized the
-    same way before substring search. A local test (2026-07, headless
+    haystack (page text) and the needle (marker) are normalized the same
+    way before substring search. A local test (2026-07, headless
     Chrome 150.0.7871.182 + pymupdf, vertical writing-mode) found no such
     fragmentation for the marker span specifically -- see
     detect_chapter_pages' docstring -- but this normalization is kept as
@@ -323,49 +323,36 @@ def normalize_search_text(text: str) -> str:
 
 def detect_chapter_pages(pdf_bytes: bytes, chapters: list[dict[str, str]]) -> list[dict]:
     """Locates each configured chapter's starting page (0-indexed) in
-    document order, in two passes against whitespace-stripped page text (see
-    normalize_search_text, which guards against vertical-writing layouts
-    injecting spurious whitespace/line breaks into extracted text):
+    document order, by searching for its marker string (the invisible
+    <span class="xtc-chapter-marker"> the Worker embeds just before each
+    heading -- see this module's docstring for the X-Xtc-Chapters contract)
+    against whitespace-stripped page text (see normalize_search_text, which
+    guards against vertical-writing layouts injecting spurious
+    whitespace/line breaks into extracted text). Verified locally (2026-07,
+    headless Chrome 150.0.7871.182 + pymupdf, a 30-page vertical-writing
+    document -- `writing-mode: vertical-rl`, `@page { size: 528px 792px }`):
+    a `color: transparent; font-size: 1px` marker span DOES survive in the
+    PDF's text layer, including with the Worker's `user-select: none` +
+    `aria-hidden="true"` added on top, and it matched even in raw
+    (non-whitespace-stripped) extracted text -- vertical writing did not
+    fragment it. `display:none`, `visibility:hidden`, `opacity:0`,
+    `font-size:0`, and collapsing the box to zero size were all confirmed to
+    strip the text instead, which is why the marker uses the
+    transparent/1px approach specifically. That said, this was a local test
+    against a specific Chromium build -- production runs on Cloudflare
+    Browser Rendering, a different Chromium build, so it is not a guarantee
+    for every document there. A chapter whose marker is not found (e.g.
+    Chromium dropped the invisible marker span from this document's PDF
+    text layer) is simply skipped rather than falling back to a name-based
+    text search -- an unrelated page (such as an early table of contents
+    that lists every chapter title) matching a chapter's heading name is a
+    real risk for short, generic headings, and binding a chapter to the
+    wrong page is a worse outcome than dropping that one chapter's metadata
+    entirely.
 
-    1. Marker pass: every chapter is searched for by its marker string (the
-       invisible <span class="xtc-chapter-marker"> the Worker embeds just
-       before each heading -- see this module's docstring for the
-       X-Xtc-Chapters contract). Verified locally (2026-07, headless Chrome
-       150.0.7871.182 + pymupdf, a 30-page vertical-writing document --
-       `writing-mode: vertical-rl`, `@page { size: 528px 792px }`): a
-       `color: transparent; font-size: 1px` marker span DOES survive in the
-       PDF's text layer, including with the Worker's `user-select: none` +
-       `aria-hidden="true"` added on top, and it matched even in raw
-       (non-whitespace-stripped) extracted text -- vertical writing did not
-       fragment it. `display:none`, `visibility:hidden`, `opacity:0`,
-       `font-size:0`, and collapsing the box to zero size were all
-       confirmed to strip the text instead, which is why the marker uses
-       the transparent/1px approach specifically. That said, this was a
-       local test against a specific Chromium build -- production runs on
-       Cloudflare Browser Rendering, a different Chromium build, so it is
-       not a guarantee for every document there. The discard-everything
-       behavior below exists precisely for the case where markers are
-       nonetheless dropped: if NOT A SINGLE chapter is located this way,
-       marker detection is treated as broken for this document and
-       name-based fallback is skipped altogether -- trusting it anyway
-       risks binding every chapter to an early table-of-contents page that
-       lists every chapter title in already-monotonic order, which would
-       otherwise sail through the monotonic check below. In that case this
-       returns [] (no chapter metadata), which is a strictly better outcome
-       than a chapter table that is entirely wrong.
-
-    2. Name-fallback pass (only reached when at least one marker was found
-       above): each chapter without a marker hit is searched for by name,
-       but the search window is restricted to strictly between its nearest
-       marker-located neighbours (the closest preceding and following
-       configured chapter that WAS found by marker) -- both a lower and an
-       upper bound, not just "after the previous accepted chapter". This
-       keeps an early table of contents out of the window whenever a real
-       marker hit exists on either side of the gap.
-
-    Finally, a monotonic pass drops any chapter (marker- or name-located)
-    whose page does not strictly increase over the previous *accepted*
-    chapter's page, as a last-resort safety net.
+    Finally, a monotonic pass drops any located chapter whose page does not
+    strictly increase over the previous *accepted* chapter's page, as a
+    last-resort safety net against any marker match ending up out of order.
 
     Returns [{"name": str, "start_page": int}, ...] for the located
     chapters only, still in chapter order."""
@@ -386,49 +373,14 @@ def detect_chapter_pages(pdf_bytes: bytes, chapters: list[dict[str, str]]) -> li
                 return i
         return None
 
-    marker_hits: list[int | None] = []
-    for chapter in chapters:
-        marker = normalize_search_text(chapter.get("marker") or "")
-        marker_hits.append(find_first(marker, 0, len(page_texts) - 1) if marker else None)
-
-    if not any(hit is not None for hit in marker_hits):
-        logger.warning(
-            "chapter detection: marker matched none of the %d configured "
-            "chapters; discarding name-based fallback matches entirely and "
-            "proceeding without chapter metadata (marker detection appears "
-            "broken for this document -- e.g. Chromium may have dropped the "
-            "invisible marker spans from the PDF text layer -- so trusting "
-            "name-only matches risks binding every chapter to an unrelated "
-            "page, such as an early table of contents)",
-            len(chapters),
-        )
-        return []
-
-    candidates: list[int | None] = []
-    for index, chapter in enumerate(chapters):
-        if marker_hits[index] is not None:
-            candidates.append(marker_hits[index])
-            continue
-        needle_name = normalize_search_text(chapter["name"])
-        if not needle_name:
-            candidates.append(None)
-            continue
-        # Bound the search to strictly between the nearest marker-located
-        # neighbours on either side (by configured chapter order, not by
-        # page number) -- an unbounded search would happily match an early
-        # table of contents that lists this chapter's name too.
-        lower = next((h for h in reversed(marker_hits[:index]) if h is not None), None)
-        upper = next((h for h in marker_hits[index + 1 :] if h is not None), None)
-        start = lower + 1 if lower is not None else 0
-        end = upper - 1 if upper is not None else len(page_texts) - 1
-        candidates.append(find_first(needle_name, start, end) if start <= end else None)
-
     located: list[dict] = []
     last_page = -1
-    for chapter, page_index in zip(chapters, candidates):
+    for chapter in chapters:
         name = chapter["name"]
+        marker = normalize_search_text(chapter.get("marker") or "")
+        page_index = find_first(marker, 0, len(page_texts) - 1) if marker else None
         if page_index is None:
-            logger.info("chapter %r: not found by marker or name; skipping", name)
+            logger.info("chapter %r: marker not found; skipping", name)
             continue
         if page_index <= last_page:
             logger.warning(
@@ -452,14 +404,19 @@ def build_chapter_entries(located: list[dict], total_pages: int) -> list[dict]:
     {"name", "start_page", "end_page"} triples for the XTC chapter table:
     each chapter's end_page is the next chapter's start_page - 1 (inclusive
     end), and the last chapter's end_page is total_pages - 1. Entries whose
-    start_page/end_page would not fit a uint16 are dropped (and logged) --
-    should not happen in practice (total_pages already bounds them) but the
-    XTC chapter entry format cannot represent anything else. Chapter names
-    are truncated to a UTF-8-safe MAX_CHAPTER_NAME_BYTES here, once, right
-    before their only consumer (the TOML chapters block); a name containing
-    an unpaired UTF-16 surrogate (json.loads happily decodes one from a
-    header into a plain str, even though it can never be UTF-8 encoded) also
-    drops just that chapter here, rather than raising all the way out to
+    start_page/end_page would not fit in [0, 0xFFFE] are dropped (and
+    logged) -- should not happen in practice (total_pages already bounds
+    them) but xtctool-chapters.patch's _write_chapters adds 1 to both fields
+    before packing them into the on-disk uint16 (the on-disk XTC chapter
+    entry is 1-based; see that patch's citation of the firmware's
+    XtcParser.cpp readChapters()), so 0xFFFE is the largest 0-based value
+    that still fits after the +1 -- 0xFFFF here would silently become
+    0x10000 and raise inside xtctool instead. Chapter names are truncated to
+    a UTF-8-safe MAX_CHAPTER_NAME_BYTES here, once, right before their only
+    consumer (the TOML chapters block); a name containing an unpaired
+    UTF-16 surrogate (json.loads happily decodes one from a header into a
+    plain str, even though it can never be UTF-8 encoded) also drops just
+    that chapter here, rather than raising all the way out to
     Handler.do_POST and failing the whole conversion -- chapters are always
     best-effort, never a hard requirement for a successful conversion, same
     as every other drop-and-log case in this module."""
@@ -470,10 +427,11 @@ def build_chapter_entries(located: list[dict], total_pages: int) -> list[dict]:
             end_page = located[index + 1]["start_page"] - 1
         else:
             end_page = total_pages - 1
-        if not (0 <= start_page <= 0xFFFF and 0 <= end_page <= 0xFFFF):
+        if not (0 <= start_page <= 0xFFFE and 0 <= end_page <= 0xFFFE):
             logger.warning(
-                "chapter %r: start_page=%d end_page=%d out of uint16 range; "
-                "skipping",
+                "chapter %r: start_page=%d end_page=%d out of the "
+                "[0, 0xFFFE] range xtctool-chapters.patch's on-disk +1 can "
+                "represent; skipping",
                 chapter["name"],
                 start_page,
                 end_page,

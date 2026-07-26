@@ -376,6 +376,44 @@ describe("prepareEpubDocument: table of contents (spec §19.1 目次)", () => {
   });
 });
 
+// Bug report "目次解析の失敗が無警告" (spec §8.7): manifest declares a TOC
+// document, but parseEpubNavigation's own catch-all (spec §8.7's "目次解析
+// に失敗しても本文変換は継続する") degrades to source:"none"/entries:[] —
+// this must now be visible in `warnings`, without ever surfacing the EPUB's
+// internal path or content (spec §22).
+describe("prepareEpubDocument: TOC parse failure warning (bug fix — manifest declares nav but parsing failed)", () => {
+  it("warns XTC_CHAPTER_TOC_PARSE_FAILED when the nav document is present in the manifest but rejected by the XXE guard", () => {
+    const files = minimalEpub3Files();
+    const zip = buildEpubZip({
+      ...files,
+      "OEBPS/nav.xhtml": `<?xml version="1.0"?><!DOCTYPE html SYSTEM "file:///etc/passwd"><html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body><nav epub:type="toc"><ol><li><a href="chapter1.xhtml">Chapter 1</a></li></ol></nav></body></html>`,
+    });
+    const result = prepareEpubDocument(zip, options(), context());
+    expect(result.tocSource).toBe("none");
+    expect(result.warnings.map((w) => w.code)).toContain("XTC_CHAPTER_TOC_PARSE_FAILED");
+  });
+
+  it("does NOT warn when the EPUB simply has no TOC manifest item at all", () => {
+    const files = minimalEpub3Files();
+    const opfWithoutNav = (files["OEBPS/content.opf"] as string)
+      .replace('<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>', "");
+    const zip = buildEpubZip({
+      ...files,
+      "OEBPS/content.opf": opfWithoutNav,
+    });
+    const result = prepareEpubDocument(zip, options(), context());
+    expect(result.tocSource).toBe("none");
+    expect(result.warnings.map((w) => w.code)).not.toContain("XTC_CHAPTER_TOC_PARSE_FAILED");
+  });
+
+  it("does NOT warn when the nav document parses successfully", () => {
+    const zip = buildEpubZip(minimalEpub3Files());
+    const result = prepareEpubDocument(zip, options(), context());
+    expect(result.tocSource).toBe("nav");
+    expect(result.warnings.map((w) => w.code)).not.toContain("XTC_CHAPTER_TOC_PARSE_FAILED");
+  });
+});
+
 describe("prepareEpubDocument: horizontal layout (spec §19.1 横書き)", () => {
   it("forces horizontal-tb with !important when layout is explicitly horizontal", () => {
     const zip = buildEpubZip(minimalEpub3Files());

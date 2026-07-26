@@ -696,6 +696,19 @@ export function prepareEpubDocument(
   // exclude here for EPUB2.
   const excludedNavPath = navLocation?.kind === "nav" ? navLocation.path : undefined;
 
+  // Spec §8.7 fix (bug report "無害なDOCTYPEで目次解析が全滅する" — see
+  // errors.ts's assertNoXxeMarkers doc comment for the root cause this
+  // guards against): the manifest names a TOC document but parseEpubNavigation
+  // still came back empty (assertNoXxeMarkers's catch-all in navigation.ts,
+  // spec §8.7's "目次解析に失敗しても本文変換は継続する" — the parse itself
+  // is still allowed to fail silently, this only makes the failure visible).
+  // Never fires for an EPUB with no TOC manifest item at all (navLocation
+  // undefined) — that is the ordinary, unremarkable "no TOC in the source"
+  // case, not a failure.
+  if (navLocation !== undefined && nav.source === "none") {
+    warnings.push({ code: "XTC_CHAPTER_TOC_PARSE_FAILED" });
+  }
+
   const renderedSpine = pkg.spine.filter(
     (item) =>
       item.linear &&

@@ -445,7 +445,9 @@ META-INF/container.xml
 
 XML パーサーとして `linkedom` を使用する。
 
-外部実体参照、DTD、XXE は処理しない。文字列内に `<!DOCTYPE` または `<!ENTITY` が存在する場合は拒否または除去する。
+外部実体参照、DTD、XXE は処理しない。文字列内に `<!ENTITY` が存在する場合、または `<!DOCTYPE` が外部識別子（`SYSTEM`/`PUBLIC`）や内部サブセット（`[...]`）を伴う場合、複数の `<!DOCTYPE` が存在する場合は拒否する（design decision D3、2026-07-26 に見直し）。
+
+内部サブセットも外部識別子も持たない素の `<!DOCTYPE name>` は拒否しない。実害（billion laughs・外部実体フェッチ）が生じるのは ENTITY 宣言または DOCTYPE が指す外部/内部サブセットであり、素の DOCTYPE 単独ではどちらも起こり得ない。加えて本パーサー（linkedom の `DOMParser`）は外部実体・DTD を一切解決しないため、素の DOCTYPE を通しても実害はない（詳細: `src/epub/errors.ts` の `assertNoXxeMarkers` doc comment）。実例: 青空文庫テキスト変換ツール由来の EPUB（例: 河童.epub）は nav.xhtml を含む全 XHTML に無害な `<!DOCTYPE html>` を付与しており、旧実装ではこれが目次解析全滅の原因になっていた。
 
 ## 8.4 OPF
 
@@ -563,7 +565,7 @@ application/x-dtbncx+xml
 - spine item ごとの章タイトル推定
 - ジョブログまたは将来機能向けの章情報
 
-目次解析に失敗しても本文変換は継続する。
+目次解析に失敗しても本文変換は継続する。ただし manifest 上は目次文書（`properties="nav"` または `application/x-dtbncx+xml`）が存在するのに解析結果が `source: "none"` / `entries: []` に縮退した場合は、`EpubWarning`（構造化コードのみ、EPUB 内部パス・本文・章名は含めない）を1件残す（2026-07-26 バグ修正で追加。目次がそもそも存在しない EPUB では出さない）。
 
 ---
 

@@ -289,3 +289,79 @@ describe("sanitizeSpineChapter: parse failure is fail-soft", () => {
     expect(result === undefined || typeof result?.bodyHtml === "string").toBe(true);
   });
 });
+
+describe("sanitizeSpineChapter: XTC chapter-marker plan (EPUB TOC -> XTC chapters)", () => {
+  it("inserts a fragment-targeted marker as the target element's first child, and reports no unresolved ids", () => {
+    const result = sanitizeSpineChapter(
+      xhtml('<h2 id="section-1">Heading</h2><p>text</p>'),
+      ctx(),
+      noImage,
+      { byId: new Map([["section-1", ["XTCCH0002"]]]), atStart: [] },
+    );
+    expect(result?.bodyHtml).toMatch(
+      /<h2 id="chapter-0000--section-1"><span[^>]*class="xtc-chapter-marker"[^>]*>XTCCH0002<\/span>Heading<\/h2>/,
+    );
+    expect(result?.unresolvedMarkerIds).toEqual([]);
+  });
+
+  it("inserts a fragment-less (atStart) marker as the chapter body's own first child, ahead of existing content", () => {
+    const result = sanitizeSpineChapter(xhtml("<h1>Title</h1><p>text</p>"), ctx(), noImage, {
+      byId: new Map(),
+      atStart: ["XTCCH0001"],
+    });
+    expect(result?.bodyHtml).toMatch(
+      /^<span[^>]*class="xtc-chapter-marker"[^>]*>XTCCH0001<\/span><h1>Title<\/h1>/,
+    );
+  });
+
+  it("reports a requested id that no surviving element declares as unresolved, and embeds no marker for it", () => {
+    const result = sanitizeSpineChapter(xhtml("<p>no matching id here</p>"), ctx(), noImage, {
+      byId: new Map([["missing-id", ["XTCCH0003"]]]),
+      atStart: [],
+    });
+    expect(result?.unresolvedMarkerIds).toEqual(["missing-id"]);
+    expect(result?.bodyHtml).not.toContain("xtc-chapter-marker");
+  });
+
+  it("reports an id stripped by STRIP_SELECTOR (e.g. a <script id=...>) as unresolved", () => {
+    const result = sanitizeSpineChapter(
+      xhtml('<script id="s1">evil()</script><p>text</p>'),
+      ctx(),
+      noImage,
+      { byId: new Map([["s1", ["XTCCH0001"]]]), atStart: [] },
+    );
+    expect(result?.unresolvedMarkerIds).toEqual(["s1"]);
+  });
+
+  it("multiple markers targeting the SAME id: markers[0] ends up as the literal first child, in array order", () => {
+    const result = sanitizeSpineChapter(
+      xhtml('<h2 id="shared">Heading</h2>'),
+      ctx(),
+      noImage,
+      { byId: new Map([["shared", ["XTCCH0001", "XTCCH0002"]]]), atStart: [] },
+    );
+    const first = result?.bodyHtml.indexOf("XTCCH0001") ?? -1;
+    const second = result?.bodyHtml.indexOf("XTCCH0002") ?? -1;
+    expect(first).toBeGreaterThanOrEqual(0);
+    expect(second).toBeGreaterThan(first);
+    expect(result?.bodyHtml).toMatch(/^<h2 id="chapter-0000--shared">(<span[^>]*>XTCCH0001<\/span>){1}(<span[^>]*>XTCCH0002<\/span>){1}Heading<\/h2>$/);
+  });
+
+  it("a duplicate raw id (malformed source): only the FIRST DOM-order occurrence receives the marker", () => {
+    const result = sanitizeSpineChapter(
+      xhtml('<h2 id="dup">First</h2><h3 id="dup">Second</h3>'),
+      ctx(),
+      noImage,
+      { byId: new Map([["dup", ["XTCCH0001"]]]), atStart: [] },
+    );
+    expect(result?.bodyHtml).toContain('<h2 id="chapter-0000--dup"><span');
+    expect(result?.bodyHtml).not.toMatch(/<h3 id="chapter-0000--dup-dup2">\s*<span/);
+    expect(result?.unresolvedMarkerIds).toEqual([]);
+  });
+
+  it("with no markerPlan argument at all, behaves exactly as before (no markers, no unresolvedMarkerIds entries)", () => {
+    const result = sanitizeSpineChapter(xhtml("<p>plain</p>"), ctx(), noImage);
+    expect(result?.bodyHtml).not.toContain("xtc-chapter-marker");
+    expect(result?.unresolvedMarkerIds).toEqual([]);
+  });
+});

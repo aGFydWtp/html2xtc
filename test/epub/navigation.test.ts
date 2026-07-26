@@ -39,8 +39,37 @@ describe("parseEpubNavigation: EPUB3 nav document", () => {
     const nav = parseEpubNavigation(entries, pkg);
     expect(nav.source).toBe("nav");
     expect(nav.entries).toEqual([
-      { label: "Chapter 1", href: "OEBPS/chapter1.xhtml#s1" },
-      { label: "Chapter 2", href: "OEBPS/chapter2.xhtml" },
+      { label: "Chapter 1", href: "OEBPS/chapter1.xhtml#s1", isTopLevel: true },
+      { label: "Chapter 2", href: "OEBPS/chapter2.xhtml", isTopLevel: true },
+    ]);
+  });
+
+  it("marks only the root <ol>'s direct entries isTopLevel:true; nested sub-list entries come back isTopLevel:false", () => {
+    const nestedNav = `<?xml version="1.0"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+<body>
+  <nav epub:type="toc">
+    <ol>
+      <li><a href="chapter1.xhtml">Chapter 1</a>
+        <ol>
+          <li><a href="chapter1.xhtml#s1">Section 1.1</a></li>
+        </ol>
+      </li>
+      <li><a href="chapter2.xhtml">Chapter 2</a></li>
+    </ol>
+  </nav>
+</body>
+</html>`;
+    const pkg = parsePackageDocument(new Map([[OPF_PATH, new TextEncoder().encode(OPF_WITH_NAV)]]), OPF_PATH);
+    const entries = new Map([
+      [OPF_PATH, new TextEncoder().encode(OPF_WITH_NAV)],
+      ["OEBPS/nav.xhtml", new TextEncoder().encode(nestedNav)],
+    ]);
+    const nav = parseEpubNavigation(entries, pkg);
+    expect(nav.entries).toEqual([
+      { label: "Chapter 1", href: "OEBPS/chapter1.xhtml", isTopLevel: true },
+      { label: "Section 1.1", href: "OEBPS/chapter1.xhtml#s1", isTopLevel: false },
+      { label: "Chapter 2", href: "OEBPS/chapter2.xhtml", isTopLevel: true },
     ]);
   });
 });
@@ -71,7 +100,37 @@ describe("parseEpubNavigation: EPUB2 NCX", () => {
     ]);
     const nav = parseEpubNavigation(entries, pkg);
     expect(nav.source).toBe("ncx");
-    expect(nav.entries).toEqual([{ label: "Chapter 1", href: "OEBPS/chapter1.xhtml" }]);
+    expect(nav.entries).toEqual([
+      { label: "Chapter 1", href: "OEBPS/chapter1.xhtml", isTopLevel: true },
+    ]);
+  });
+
+  it("marks only depth-1 navPoints (direct children of navMap) isTopLevel:true; nested navPoints come back isTopLevel:false", () => {
+    const nestedNcx = `<?xml version="1.0"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
+  <navMap>
+    <navPoint id="np1">
+      <navLabel><text>Chapter 1</text></navLabel>
+      <content src="chapter1.xhtml"/>
+      <navPoint id="np1-1">
+        <navLabel><text>Section 1.1</text></navLabel>
+        <content src="chapter1.xhtml#s1"/>
+      </navPoint>
+    </navPoint>
+    <navPoint id="np2"><navLabel><text>Chapter 2</text></navLabel><content src="chapter2.xhtml"/></navPoint>
+  </navMap>
+</ncx>`;
+    const pkg = parsePackageDocument(new Map([[OPF_PATH, new TextEncoder().encode(OPF_WITH_NCX)]]), OPF_PATH);
+    const entries = new Map([
+      [OPF_PATH, new TextEncoder().encode(OPF_WITH_NCX)],
+      ["OEBPS/toc.ncx", new TextEncoder().encode(nestedNcx)],
+    ]);
+    const nav = parseEpubNavigation(entries, pkg);
+    expect(nav.entries).toEqual([
+      { label: "Chapter 1", href: "OEBPS/chapter1.xhtml", isTopLevel: true },
+      { label: "Section 1.1", href: "OEBPS/chapter1.xhtml#s1", isTopLevel: false },
+      { label: "Chapter 2", href: "OEBPS/chapter2.xhtml", isTopLevel: true },
+    ]);
   });
 });
 

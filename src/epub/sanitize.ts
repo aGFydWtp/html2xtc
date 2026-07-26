@@ -6,6 +6,7 @@ import { resolveEpubRelativePath } from "./archive";
 import { hasDisallowedUrlScheme } from "./assets";
 import { sanitizeInlineStyle } from "./css";
 import type { CssUrlResolver } from "./css";
+import { XTC_CHAPTER_MARKER_CLASS } from "../../packages/aozora-text/src/index";
 
 /**
  * XHTML body sanitization (EPUB spec §9) and cross-chapter ID/fragment
@@ -106,6 +107,92 @@ export interface SanitizedChapter {
   textContent: string;
   /** Every already-resolved (data: URL or left as-is if unresolved) image reference found in the body — `<img src>` and SVG `<image href>`/`xlink:href` — in document order. Same "detect a cover-only page" purpose as textContent. */
   imageDataUrls: string[];
+  /**
+   * Raw ids from the caller's `markerPlan.byId` (if any) that were never
+   * found among this chapter's surviving elements — see ChapterMarkerPlan's
+   * own doc comment for every way an id can end up here. Empty when no
+   * markerPlan was passed, or every requested id was found.
+   */
+  unresolvedMarkerIds: string[];
+}
+
+/** linkedom's parsed-document/element shapes, used only by
+ * insertChapterMarkerSpans above (mirrors src/aozora.ts's identically-named
+ * local aliases, needed for the same reason: linkedom's own exported
+ * Document/Element types don't line up cleanly with what this file actually
+ * calls). */
+type LinkedomDocument = ReturnType<typeof parseHTML>["document"];
+type LinkedomElement = NonNullable<ReturnType<LinkedomDocument["querySelector"]>>;
+
+/**
+ * XTC chapter-marker insertion plan for ONE spine item (built by
+ * src/epub/html.ts's buildXtcChapterPlan from the top-level TOC entries that
+ * target this chapter). Every marker string here is already a
+ * formatChapterMarker() output assigned by html.ts — this module never
+ * numbers chapters itself, only embeds the markers it is handed.
+ */
+export interface ChapterMarkerPlan {
+  /**
+   * Raw (pre-namespacing) id -> ordered marker strings to insert as that
+   * element's first child(ren), for TOC entries whose href carried a
+   * "#fragment" targeting this spine item. When more than one TOC entry
+   * resolves to the SAME id — two differently-labeled TOC rows both linking
+   * to the same anchor — every one of that id's markers is inserted, at the
+   * SAME element, ordered so the array's first entry ends up as the
+   * element's literal first child (matching TOC document order); the device
+   * ends up with two menu rows that both jump to the identical page, which
+   * is accepted as correct rather than worked around. Only the id's FIRST
+   * DOM-order occurrence ever receives markers — this mirrors the
+   * duplicate-id handling already below (a malformed source declaring the
+   * same id twice keeps only the first occurrence's plain namespaced id;
+   * attaching a marker to a later, shadowed duplicate would be arbitrary).
+   * Any id requested here that this chapter's surviving elements never
+   * contain (stripped by STRIP_SELECTOR, never existed in the source, or
+   * lost to duplicate-id shadowing) is reported back via
+   * SanitizedChapter.unresolvedMarkerIds — html.ts drops the corresponding
+   * XTC chapter entirely rather than leaving a chapter-list entry with no
+   * matching marker in the rendered document.
+   */
+  byId: Map<string, string[]>;
+  /**
+   * Ordered marker strings (same "first entry -> literal first child" rule
+   * as byId above) for TOC entries whose href has NO fragment — the entry
+   * points at this whole spine item, so the marker(s) go at the very start
+   * of this chapter's own body, which becomes html.ts's wrapping
+   * `<section>`'s first child once bodyHtml is embedded there (same visual
+   * position a fragment-targeted marker on the chapter's first heading would
+   * land at). Unlike byId, there is no "not found" case: this chapter's body
+   * always exists whenever sanitizeSpineChapter returns a result at all, so
+   * every atStart marker always gets embedded.
+   */
+  atStart: string[];
+}
+
+/**
+ * Creates one invisible XTC chapter-marker `<span>` (packages/aozora-text's
+ * XTC_CHAPTER_MARKER_CSS makes it print-invisible; aria-hidden keeps a
+ * screen reader from announcing it) per `markers` entry, and inserts them as
+ * `target`'s first children — iterating in REVERSE so `markers[0]` ends up
+ * as the literal first child (each `insertBefore(span, target.firstChild)`
+ * pushes the previous insertion one slot later, so inserting the LAST marker
+ * first and the FIRST marker last is what makes the final DOM order match
+ * `markers`' own order). Mirrors src/aozora.ts's insertChapterMarkers
+ * (same span shape, same "first child of the target element, never a
+ * preceding sibling" split-safety rationale — see that function's doc
+ * comment for why sibling placement is unsafe here).
+ */
+function insertChapterMarkerSpans(
+  document: LinkedomDocument,
+  target: LinkedomElement,
+  markers: readonly string[],
+): void {
+  for (let i = markers.length - 1; i >= 0; i--) {
+    const span = document.createElement("span");
+    span.setAttribute("class", XTC_CHAPTER_MARKER_CLASS);
+    span.setAttribute("aria-hidden", "true");
+    span.textContent = markers[i] ?? "";
+    target.insertBefore(span, target.firstChild);
+  }
 }
 
 function isFragmentOnly(href: string): boolean {
@@ -167,6 +254,7 @@ export function sanitizeSpineChapter(
   xhtml: string,
   ctx: ChapterLinkContext,
   resolveImage: ImageResolver,
+  markerPlan?: ChapterMarkerPlan,
 ): SanitizedChapter | undefined {
   let document: ReturnType<typeof parseHTML>["document"];
   let body: (typeof document)["body"];
@@ -199,6 +287,15 @@ export function sanitizeSpineChapter(
     el.remove();
   }
 
+  // XTC chapter markers, fragment-less case: a TOC entry pointing at this
+  // whole spine item (no "#id") always resolves — this chapter's body
+  // always exists here — so these go in unconditionally, before the id pass
+  // below (whose byId markers need surviving [id] elements to already be in
+  // their final, stripped form).
+  if (markerPlan !== undefined && markerPlan.atStart.length > 0) {
+    insertChapterMarkerSpans(document, body, markerPlan.atStart);
+  }
+
   const cssResolver: CssUrlResolver = (rawUrl) => {
     if (hasDisallowedUrlScheme(rawUrl)) {
       return undefined;
@@ -217,6 +314,13 @@ export function sanitizeSpineChapter(
   // element the browser happens to pick first, which is silently wrong
   // rather than merely broken).
   const seenIds = new Set<string>();
+  // XTC chapter markers, fragment case: tracks which of markerPlan.byId's
+  // raw ids have already been matched to their (first-DOM-order-occurrence)
+  // element, so a later duplicate of the same raw id is never also given a
+  // marker — see ChapterMarkerPlan's own doc comment for why only the first
+  // occurrence counts. Left as an empty Set (and markerConsumedRawIds stays
+  // empty) when markerPlan is undefined.
+  const markerConsumedRawIds = new Set<string>();
   for (const el of [...body.querySelectorAll("[id]")]) {
     const rawId = el.getAttribute("id");
     if (rawId === null || rawId.trim().length === 0) {
@@ -232,7 +336,19 @@ export function sanitizeSpineChapter(
     }
     seenIds.add(candidate);
     el.setAttribute("id", candidate);
+
+    if (markerPlan !== undefined && !markerConsumedRawIds.has(rawId)) {
+      const markers = markerPlan.byId.get(rawId);
+      if (markers !== undefined && markers.length > 0) {
+        insertChapterMarkerSpans(document, el, markers);
+        markerConsumedRawIds.add(rawId);
+      }
+    }
   }
+  const unresolvedMarkerIds =
+    markerPlan === undefined
+      ? []
+      : [...markerPlan.byId.keys()].filter((id) => !markerConsumedRawIds.has(id));
 
   for (const el of [...body.querySelectorAll("*")]) {
     for (const name of [...el.getAttributeNames()]) {
@@ -350,5 +466,6 @@ export function sanitizeSpineChapter(
     inlineStyleTexts,
     textContent: body.textContent ?? "",
     imageDataUrls,
+    unresolvedMarkerIds,
   };
 }

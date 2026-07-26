@@ -1551,9 +1551,15 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
     // an author to set, since the title alone travels via the PDF's own
     // metadata (document.title -> Chromium print -> read_pdf_metadata).
     let resolvedAuthor: string | undefined;
+    // XTC chapter/table-of-contents metadata: prepareEpubDocument's
+    // PreparedEpubDocument.chapters (top-level TOC entries only — see
+    // src/epub/html.ts's buildXtcChapterPlan doc comment; always [] for an
+    // EPUB with no usable nav/NCX), forwarded to convert-xtc's
+    // convertInContainer call exactly like runTextSource's own `chapters`.
+    let chapters: XtcChapter[] = [];
 
     try {
-      ({ articleKey, fontsKey, author: resolvedAuthor } = await step.do(
+      ({ articleKey, fontsKey, author: resolvedAuthor, chapters } = await step.do(
         "prepare-epub",
         {
           // No retry budget beyond one extra attempt: every failure
@@ -1618,13 +1624,22 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
 
           // Structural warning codes only (never EPUB paths/text — spec
           // §14.1.1/§17): every code prepareEpubDocument currently emits
-          // (SPINE_ITEM_MISSING, CHAPTER_UNPARSEABLE, COVER_DUPLICATE_SKIPPED)
+          // (SPINE_ITEM_MISSING, CHAPTER_UNPARSEABLE, COVER_DUPLICATE_SKIPPED,
+          // XTC_CHAPTER_TOC_TARGET_UNRESOLVED, XTC_CHAPTER_DROPPED — the
+          // latter two from src/epub/html.ts's XTC chapter-marker wiring)
           // carries no `detail`.
           if (prepared.warnings.length > 0) {
             console.log(
               `[${jobId}] epub: warnings=${prepared.warnings.map((w) => w.code).join(",")}`,
             );
           }
+          // Same observability pair prepare-text logs (chapterHeadingLevel/
+          // chapterCount, above): tocSource tells "did this EPUB even have a
+          // usable nav/NCX" apart from "did every entry in it resolve",
+          // which the warnings line above can't distinguish on its own.
+          console.log(
+            `[${jobId}] epub: tocSource=${prepared.tocSource} chapterCount=${prepared.chapters.length}`,
+          );
 
           const key = epubHtmlKey(jobId);
           await this.env.XTC_BUCKET.put(key, prepared.html, {
@@ -1662,6 +1677,10 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
             layout: prepared.layout,
             spineItemCount: prepared.spineItemCount,
             warnings: prepared.warnings.map((w) => w.code),
+            // Small JSON (name+marker pairs only), well within step.do's
+            // 1 MiB output cap — same rationale as the URL/TXT pipelines'
+            // own chapters step outputs.
+            chapters: prepared.chapters,
           };
         },
       ));
@@ -1775,12 +1794,17 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
             // uploaded by the client. resolvedAuthor (prepare-epub's
             // prepared.author, the OPF dc:creator) rides along as
             // X-Xtc-Author (src/container.ts), same as the TXT pipeline.
+            // chapters (outer-scope, from prepare-epub's prepared.chapters)
+            // is [] for an EPUB with no usable TOC — same "omitted, not an
+            // empty array, when there are none" contract convertInContainer
+            // already implements for the URL/TXT pipelines.
             response = await convertInContainer(
               this.env,
               jobId,
               pdfSource.body.pipeThrough(new FixedLengthStream(pdfSource.size)),
               CONVERTER_FETCH_TIMEOUT_MS,
               resolvedAuthor,
+              chapters,
             );
           } catch (error) {
             if (error instanceof DOMException && error.name === "TimeoutError") {

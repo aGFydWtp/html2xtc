@@ -477,6 +477,91 @@ describe("prepareEpubDocument: image count", () => {
   });
 });
 
+describe("prepareEpubDocument: XTC chapter/table-of-contents metadata (top-level TOC entries -> chapters)", () => {
+  const CONTAINER_XML = `<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`;
+
+  it("returns chapters=[] and tocSource='none' for an EPUB with no nav/NCX at all", () => {
+    const zip = buildEpubZip({
+      mimetype: "application/epub+zip",
+      "META-INF/container.xml": CONTAINER_XML,
+      "OEBPS/content.opf": `<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>No TOC</dc:title></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>`,
+      "OEBPS/c1.xhtml": `<html><body><p>text</p></body></html>`,
+    });
+    const result = prepareEpubDocument(zip, options(), context());
+    expect(result.chapters).toEqual([]);
+    expect(result.tocSource).toBe("none");
+    expect(result.html).not.toContain("xtc-chapter-marker");
+  });
+
+  it("only the root <ol>'s top-level entries become chapters; a nested sub-entry is excluded", () => {
+    const zip = buildEpubZip({
+      mimetype: "application/epub+zip",
+      "META-INF/container.xml": CONTAINER_XML,
+      "OEBPS/content.opf": `<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Nested TOC</dc:title></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/><item id="c2" href="c2.xhtml" media-type="application/xhtml+xml"/><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/></manifest><spine><itemref idref="c1"/><itemref idref="c2"/></spine></package>`,
+      "OEBPS/c1.xhtml": `<html><body><h1 id="top">Chapter 1</h1><h2 id="sub">Section 1.1</h2></body></html>`,
+      "OEBPS/c2.xhtml": `<html><body><h1>Chapter 2</h1></body></html>`,
+      "OEBPS/nav.xhtml": `<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body><nav epub:type="toc"><ol><li><a href="c1.xhtml#top">Chapter 1</a><ol><li><a href="c1.xhtml#sub">Section 1.1</a></li></ol></li><li><a href="c2.xhtml">Chapter 2</a></li></ol></nav></body></html>`,
+    });
+    const result = prepareEpubDocument(zip, options(), context());
+    expect(result.chapters).toEqual([
+      { name: "Chapter 1", marker: "XTCCH0001" },
+      { name: "Chapter 2", marker: "XTCCH0002" },
+    ]);
+    expect(result.html).not.toContain("Section 1.1</span>"); // sanity: nested entry's label never lands in a marker
+    // The nested entry's own id gets no marker at all.
+    const sectionHeadingMatch = result.html.match(/<h2 id="[^"]*"[^>]*>([^<]*)<\/h2>/);
+    expect(sectionHeadingMatch?.[1]).toBe("Section 1.1"); // no marker span inserted before it
+  });
+
+  it("drops a TOC entry whose fragment id is never found in its target chapter — from BOTH the chapters array and the embedded markers", () => {
+    const zip = buildEpubZip({
+      mimetype: "application/epub+zip",
+      "META-INF/container.xml": CONTAINER_XML,
+      "OEBPS/content.opf": `<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Broken Fragment</dc:title></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/></manifest><spine><itemref idref="c1"/></spine></package>`,
+      "OEBPS/c1.xhtml": `<html><body><p>no id here</p></body></html>`,
+      "OEBPS/nav.xhtml": `<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body><nav epub:type="toc"><ol><li><a href="c1.xhtml#does-not-exist">Ghost Chapter</a></li></ol></nav></body></html>`,
+    });
+    const result = prepareEpubDocument(zip, options(), context());
+    expect(result.chapters).toEqual([]);
+    expect(result.html).not.toContain("xtc-chapter-marker");
+    expect(result.warnings.map((w) => w.code)).toContain("XTC_CHAPTER_DROPPED");
+  });
+
+  it("drops a TOC entry whose href points outside the rendered spine entirely", () => {
+    const zip = buildEpubZip({
+      mimetype: "application/epub+zip",
+      "META-INF/container.xml": CONTAINER_XML,
+      "OEBPS/content.opf": `<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Broken Target</dc:title></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/></manifest><spine><itemref idref="c1"/></spine></package>`,
+      "OEBPS/c1.xhtml": `<html><body><p>text</p></body></html>`,
+      "OEBPS/nav.xhtml": `<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body><nav epub:type="toc"><ol><li><a href="nonexistent.xhtml">Missing Target</a></li></ol></nav></body></html>`,
+    });
+    const result = prepareEpubDocument(zip, options(), context());
+    expect(result.chapters).toEqual([]);
+    expect(result.warnings.map((w) => w.code)).toContain("XTC_CHAPTER_TOC_TARGET_UNRESOLVED");
+  });
+
+  it("EPUB2 NCX: a depth-1 navPoint becomes a chapter, embedding its marker at the target id", () => {
+    const zip = buildEpubZip(minimalEpub2Files());
+    const result = prepareEpubDocument(zip, options(), context());
+    expect(result.tocSource).toBe("ncx");
+    expect(result.chapters).toEqual([{ name: "Chapter 1", marker: "XTCCH0001" }]);
+  });
+
+  it("the XTC_CHAPTER_MARKER_CLASS CSS rule is only emitted when there are chapters", () => {
+    const withToc = prepareEpubDocument(buildEpubZip(minimalEpub3Files()), options(), context());
+    expect(withToc.html).toContain("xtc-chapter-marker {");
+
+    const withoutTocZip = buildEpubZip({
+      mimetype: "application/epub+zip",
+      "META-INF/container.xml": CONTAINER_XML,
+      "OEBPS/content.opf": `<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>No TOC</dc:title></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>`,
+      "OEBPS/c1.xhtml": `<html><body><p>text</p></body></html>`,
+    });
+    const withoutToc = prepareEpubDocument(withoutTocZip, options(), context());
+    expect(withoutToc.html).not.toContain("xtc-chapter-marker {");
+  });
+});
+
 describe("resolveMaxEpubHtmlBytes", () => {
   it("returns the configured value when valid", () => {
     expect(resolveMaxEpubHtmlBytes({ MAX_EPUB_HTML_BYTES: "12345" })).toBe(12345);

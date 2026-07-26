@@ -100,6 +100,67 @@ def test_no_chapters_requested_is_unaffected():
     assert reader.chapters == []
 
 
+def test_start_page_zero_is_written_as_one_on_disk():
+    """The on-disk XTC chapter entry is 1-based (see
+    XTCWriter._write_chapters' docstring, citing the firmware's
+    XtcParser.cpp readChapters(): `if (startPage > 0) startPage--;`), while
+    XTCChapter.start_page/end_page are 0-based. A chapter starting at page 0
+    must therefore be written to disk as 1, not 0 -- writing 0 would collide
+    with the firmware's start/end-both-zero terminator sentinel and would
+    also just be off by one after the firmware's own decrement."""
+    chapters = [xtc.XTCChapter(name="第一章", start_page=0, end_page=4)]
+    writer = xtc.XTCWriter(width=8, height=8, chapters=chapters, page_format="xtg")
+    frames = [b"F0"]
+
+    data, frames_out, reader = _write_and_read(writer, frames)
+
+    chapter_offset = struct.unpack("<Q", data[0x30:0x38])[0]
+    disk_start_page = struct.unpack("<H", data[chapter_offset + 80 : chapter_offset + 82])[0]
+    disk_end_page = struct.unpack("<H", data[chapter_offset + 82 : chapter_offset + 84])[0]
+    assert disk_start_page == 1
+    assert disk_end_page == 5
+
+    # And the reader converts back to the original 0-based values.
+    assert reader.chapters[0].start_page == 0
+    assert reader.chapters[0].end_page == 4
+
+
+def test_chapter_page_at_0xfffe_round_trips_without_overflow():
+    """0xFFFE is the largest 0-based page value the on-disk +1 conversion
+    can represent (0xFFFE + 1 == 0xFFFF, the max uint16); this must not
+    raise and must round-trip losslessly. converter/app.py's
+    build_chapter_entries enforces this bound before ever constructing a
+    chapters TOML entry, so xtctool itself should never see anything
+    larger."""
+    chapters = [xtc.XTCChapter(name="境界", start_page=0xFFFE, end_page=0xFFFE)]
+    writer = xtc.XTCWriter(width=8, height=8, chapters=chapters, page_format="xtg")
+    frames = [b"F0"]
+
+    data, frames_out, reader = _write_and_read(writer, frames)
+
+    chapter_offset = struct.unpack("<Q", data[0x30:0x38])[0]
+    disk_start_page = struct.unpack("<H", data[chapter_offset + 80 : chapter_offset + 82])[0]
+    disk_end_page = struct.unpack("<H", data[chapter_offset + 82 : chapter_offset + 84])[0]
+    assert disk_start_page == 0xFFFF
+    assert disk_end_page == 0xFFFF
+    assert reader.chapters[0].start_page == 0xFFFE
+    assert reader.chapters[0].end_page == 0xFFFE
+
+
+def test_chapter_page_at_0xffff_overflows_uint16():
+    """One page beyond the 0xFFFE boundary: writing start_page=0xFFFF would
+    require packing 0x10000 into the on-disk uint16, which struct.pack
+    rejects. converter/app.py's build_chapter_entries is responsible for
+    never letting a chapter reach xtctool with a page this large (see its
+    0xFFFE range check) -- this test documents why that bound exists."""
+    chapters = [xtc.XTCChapter(name="境界超え", start_page=0xFFFF, end_page=0xFFFF)]
+    writer = xtc.XTCWriter(width=8, height=8, chapters=chapters, page_format="xtg")
+    with tempfile.TemporaryDirectory() as workdir:
+        out_path = Path(workdir) / "output.xtc"
+        with pytest.raises(struct.error):
+            writer.write(str(out_path), [b"F0"])
+
+
 def test_single_chapter_still_sets_valid_chapter_offset():
     # A regression-prone edge case: exactly one chapter, no metadata (title/
     # author both empty) -- has_metadata is False, so the chapter section

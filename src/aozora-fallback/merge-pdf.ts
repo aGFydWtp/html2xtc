@@ -49,9 +49,9 @@ export interface MergeChunkPdfsResult {
  * output never inherits a chunk's `/Title` even though every chunk PDF has
  * one (src/aozora-fallback/html.ts's `<title>`) — without `title` here, the
  * download filename would silently fall back to the jobId (converter/app.py
- * reads `/Title` off this exact PDF). Callers pass the original article
- * title (manifest.title, not a chunk's own title, which carries a
- * "(1/4)"-style split suffix).
+ * reads `/Title` off this exact PDF). Callers pass the article title from
+ * the manifest (the single source of truth this feature already threads
+ * through prepare-aozora-fallback) rather than re-reading it off a chunk.
  */
 export async function mergeChunkPdfs(
   chunks: readonly Uint8Array[],

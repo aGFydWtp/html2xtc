@@ -167,6 +167,7 @@ class FakeStatement {
 const ACCOUNT: Account = { id: "acct-1", displayName: "Haruki" };
 const NEW_ITEM_ID = "11111111-1111-4111-8111-111111111111";
 const EXISTING_ITEM_ID = "22222222-2222-4222-8222-222222222222";
+const SECOND_EXISTING_ITEM_ID = "33333333-3333-4333-8333-333333333333";
 
 function deviceRow(id: string, overrides: Partial<DeviceRow> = {}): DeviceRow {
   return {
@@ -196,7 +197,7 @@ function libraryItemRow(id: string, overrides: Partial<LibraryItemRow> = {}): Li
 }
 
 describe("autoAddItemToSoleActiveDevice", () => {
-  it("(a) adds the new item to the sole active device's delivery list, at the end", async () => {
+  it("(a) adds the new item to the sole active device's delivery list, at the front", async () => {
     const db = new FakeD1();
     db.devices.push(deviceRow("dev-1", { library_version: 3 }));
     db.libraryItems.push(libraryItemRow(EXISTING_ITEM_ID), libraryItemRow(NEW_ITEM_ID, { title: "New Book" }));
@@ -212,7 +213,42 @@ describe("autoAddItemToSoleActiveDevice", () => {
 
     const entries = db.deviceLibraryItems.filter((dli) => dli.device_id === "dev-1");
     expect(entries).toHaveLength(2);
-    expect(entries.find((e) => e.library_item_id === NEW_ITEM_ID)?.position).toBe(1);
+    expect(entries.find((e) => e.library_item_id === NEW_ITEM_ID)?.position).toBe(0);
+    expect(entries.find((e) => e.library_item_id === EXISTING_ITEM_ID)?.position).toBe(1);
+    expect(db.devices[0].library_version).toBe(4);
+  });
+
+  it("(a) prepends the new item ahead of multiple existing items, preserving their relative order", async () => {
+    const db = new FakeD1();
+    db.devices.push(deviceRow("dev-1", { library_version: 3 }));
+    db.libraryItems.push(
+      libraryItemRow(EXISTING_ITEM_ID),
+      libraryItemRow(SECOND_EXISTING_ITEM_ID, { title: "Second Book" }),
+      libraryItemRow(NEW_ITEM_ID, { title: "New Book" }),
+    );
+    db.deviceLibraryItems.push(
+      {
+        device_id: "dev-1",
+        library_item_id: EXISTING_ITEM_ID,
+        position: 0,
+        added_at: "2026-01-01T00:00:00.000Z",
+      },
+      {
+        device_id: "dev-1",
+        library_item_id: SECOND_EXISTING_ITEM_ID,
+        position: 1,
+        added_at: "2026-01-01T00:00:00.000Z",
+      },
+    );
+    const env = { APP_DB: db as unknown as D1Database };
+
+    await autoAddItemToSoleActiveDevice(env, ACCOUNT, NEW_ITEM_ID);
+
+    const entries = db.deviceLibraryItems.filter((dli) => dli.device_id === "dev-1");
+    expect(entries).toHaveLength(3);
+    expect(entries.find((e) => e.library_item_id === NEW_ITEM_ID)?.position).toBe(0);
+    expect(entries.find((e) => e.library_item_id === EXISTING_ITEM_ID)?.position).toBe(1);
+    expect(entries.find((e) => e.library_item_id === SECOND_EXISTING_ITEM_ID)?.position).toBe(2);
     expect(db.devices[0].library_version).toBe(4);
   });
 

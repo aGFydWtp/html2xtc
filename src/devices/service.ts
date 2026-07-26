@@ -248,9 +248,9 @@ export async function replaceDeviceLibrary(
  * from-job handler, and only when saveJobToLibrary genuinely inserted a new
  * row (never on its idempotent-replay path — resurrecting an item a user
  * deliberately removed from a device's list would be surprising). If the
- * account currently has exactly one active device, appends the new item to
- * that device's delivery list end, reusing replaceDeviceLibrary so the
- * version bump / optimistic-lock bookkeeping stays in one place. No-ops for
+ * account currently has exactly one active device, prepends the new item to
+ * the front of that device's delivery list, reusing replaceDeviceLibrary so
+ * the version bump / optimistic-lock bookkeeping stays in one place. No-ops for
  * zero or multiple active devices, and for a device whose list already
  * contains the item (avoids a duplicate device_library_items PK).
  *
@@ -274,7 +274,7 @@ export async function autoAddItemToSoleActiveDevice(
     if (library.items.some((item) => item.id === libraryItemId)) {
       return;
     }
-    const itemIds = [...library.items.map((item) => item.id), libraryItemId];
+    const itemIds = [libraryItemId, ...library.items.map((item) => item.id)];
     const updated = await replaceDeviceLibrary(env, account, device.id, {
       expectedVersion: library.version,
       itemIds,

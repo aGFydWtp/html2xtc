@@ -45,7 +45,7 @@
     await libraryStore.deleteItem(item.id);
   }
 
-  // 端末に追加: 対象端末の配信リスト末尾へ追加（既載ならスキップして成功扱い）。
+  // 端末に追加: 対象端末の配信リスト先頭へ追加（既載ならスキップして成功扱い）。
   // フィードバックは Devices.svelte の「コピーしました」と同様、次の操作まで表示し続ける。
   let addingToDevice = $state(false);
   let addNote = $state<"" | "ok" | "fail">("");

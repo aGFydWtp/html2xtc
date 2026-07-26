@@ -33,6 +33,32 @@ function cleanLabel(raw: string): string {
   return raw.replace(/\s+/g, " ").trim().slice(0, MAX_LABEL_CHARS);
 }
 
+/**
+ * EPUB3 nav top-level test: true iff, walking up from `a`'s parent to (but
+ * not including) `tocNav`, exactly one `<li>` ancestor is crossed. Anchors
+ * inside a NESTED `<ol>`/`<ul>` (a sub-heading under some other entry) cross
+ * a SECOND `<li>` on the way up and come back false. Deliberately tag-name
+ * agnostic (checks for `<li>`, not specifically `<ol>` vs `<ul>`) so this
+ * still works on a non-conformant nav that uses `<ul>` instead of the
+ * EPUB3-spec-required `<ol>`. An anchor with NO `<li>` ancestor at all
+ * (malformed markup) is also not top-level — there is no list structure to
+ * be "the top" of.
+ */
+function isTopLevelNavAnchor(a: XmlElement, tocNav: XmlElement): boolean {
+  let seenLi = false;
+  let current = a.parentElement;
+  while (current !== null && current !== tocNav) {
+    if (localName(current.tagName) === "li") {
+      if (seenLi) {
+        return false;
+      }
+      seenLi = true;
+    }
+    current = current.parentElement;
+  }
+  return seenLi;
+}
+
 function parseNavDocument(xml: string, navPath: string): EpubNavigation {
   const doc = parseXmlDocument(xml);
   if (doc.documentElement === null) {
@@ -61,12 +87,32 @@ function parseNavDocument(xml: string, navPath: string): EpubNavigation {
       continue;
     }
     try {
-      entries.push({ label, href: resolveHrefWithFragment(navPath, href) });
+      entries.push({
+        label,
+        href: resolveHrefWithFragment(navPath, href),
+        isTopLevel: isTopLevelNavAnchor(a, tocNav),
+      });
     } catch {
       continue; // skip an individual unsafe/unresolvable entry
     }
   }
   return { source: "nav", entries };
+}
+
+/**
+ * EPUB2 NCX top-level test: true iff NO ancestor of `navPoint` is itself a
+ * `navPoint` — i.e. `navPoint` is a direct (or otherwise unnested-through-
+ * another-navPoint) child of `<navMap>`, "depth 1" in the NCX's own terms.
+ */
+function isTopLevelNavPoint(navPoint: XmlElement): boolean {
+  let current = navPoint.parentElement;
+  while (current !== null) {
+    if (localName(current.tagName) === "navpoint") {
+      return false;
+    }
+    current = current.parentElement;
+  }
+  return true;
 }
 
 function parseNcxDocument(xml: string, ncxPath: string): EpubNavigation {
@@ -91,7 +137,11 @@ function parseNcxDocument(xml: string, ncxPath: string): EpubNavigation {
       continue;
     }
     try {
-      entries.push({ label, href: resolveHrefWithFragment(ncxPath, src) });
+      entries.push({
+        label,
+        href: resolveHrefWithFragment(ncxPath, src),
+        isTopLevel: isTopLevelNavPoint(navPoint),
+      });
     } catch {
       continue;
     }

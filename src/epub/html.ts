@@ -27,9 +27,16 @@ import {
   namespacedId,
   sanitizeSpineChapter,
 } from "./sanitize";
-import type { ChapterLinkContext, ImageResolver, SanitizedChapter } from "./sanitize";
+import type {
+  ChapterLinkContext,
+  ChapterMarkerPlan,
+  ImageResolver,
+  SanitizedChapter,
+} from "./sanitize";
 import type { EpubManifestItem, EpubNavigation, EpubPackageDocument } from "./types";
 import { firstByLocalName, parseXmlDocument } from "./xml";
+import { formatChapterMarker, normalizeChapterName, XTC_CHAPTER_MARKER_CLASS } from "../../packages/aozora-text/src/index";
+import type { XtcChapter } from "../../packages/aozora-text/src/index";
 
 /**
  * Self-contained X3 HTML generation (EPUB spec §11-§13): orchestrates
@@ -60,6 +67,19 @@ export interface PreparedEpubDocument {
   spineItemCount: number;
   imageCount: number;
   warnings: EpubWarning[];
+  /**
+   * XTC chapter/table-of-contents metadata (top-level TOC entries only —
+   * buildXtcChapterPlan below), forwarded by src/workflow.ts's runEpubSource
+   * straight into convertInContainer's `chapters` argument, exactly like the
+   * TXT-upload pipeline's PreparedTextDocument.chapters. Always `[]` for an
+   * EPUB with no usable TOC (locateNavigationDocument found nothing, or
+   * every entry failed to resolve) — never inferred from heading tags, per
+   * this feature's own design decision (no h1/h2-based fallback, unlike the
+   * TXT/Aozora pipelines' heading-level detection).
+   */
+  chapters: XtcChapter[];
+  /** Where the TOC (if any) chapters were built from — observability only (src/workflow.ts logs this alongside chapters.length), never read by any downstream branch. */
+  tocSource: EpubNavigation["source"];
 }
 
 export interface PrepareEpubDocumentContext {
@@ -271,6 +291,92 @@ function findChapterTitle(nav: EpubNavigation, path: string): string | undefined
   return undefined;
 }
 
+/**
+ * One candidate XTC chapter, built from a single top-level TOC entry before
+ * this spine item's actual sanitization runs — "candidate" because the
+ * chapter only survives into prepareEpubDocument's final `chapters` if its
+ * target spine item ends up rendered AND (for a fragment entry) its id is
+ * actually found there; see the caller's failedSpineIndexes /
+ * unresolvedFragmentsByIndex bookkeeping.
+ */
+interface XtcChapterCandidate {
+  chapter: XtcChapter;
+  /** This candidate's target spine index (renderedSpine's own indexing, matching spineIndexByPath/chapterSectionId). */
+  targetIndex: number;
+  /** "" for a fragment-less TOC entry (targets the whole spine item); otherwise the raw (pre-namespacing) id from the entry's "#fragment". */
+  fragment: string;
+}
+
+/**
+ * Builds the XTC chapter candidate list and, grouped by target spine index,
+ * the ChapterMarkerPlan sanitizeSpineChapter needs to actually embed each
+ * candidate's marker — from ONLY this nav's top-level entries (decision:
+ * nested TOC entries never become chapters — the XTC device's chapter menu
+ * is a flat list on real hardware, and following every nesting level would
+ * both make that flat list impractical to navigate and risk silently
+ * truncating a large book's later chapters against container.ts's
+ * MAX_XTC_CHAPTERS=200 cap). A TOC with no top-level entries at all (no
+ * `<nav>`/NCX found, or every entry nested) simply yields no candidates —
+ * this feature has no heading-tag-based fallback, unlike the
+ * TXT/Aozora-URL pipelines' own chapter extraction.
+ *
+ * Markers are numbered sequentially over ACCEPTED candidates only (an entry
+ * with an unresolvable TOC target, or one whose normalized label is empty —
+ * matching src/aozora.ts's own "empty name -> not a chapter" rule — never
+ * consumes a marker number). Numbering gaps from a candidate later dropped
+ * for a different reason (its target spine item fails to render, or its
+ * fragment id is never found — both discovered only once the caller
+ * actually sanitizes that spine item) are harmless: the Container matches
+ * chapters to pages by searching the PDF's text layer for each marker
+ * STRING, never by the numeric sequence itself.
+ */
+function buildXtcChapterPlan(
+  nav: EpubNavigation,
+  spineIndexByPath: ReadonlyMap<string, number>,
+): { candidates: XtcChapterCandidate[]; markerPlanByIndex: Map<number, ChapterMarkerPlan>; unresolvedTocTargetCount: number } {
+  const candidates: XtcChapterCandidate[] = [];
+  const markerPlanByIndex = new Map<number, ChapterMarkerPlan>();
+  let unresolvedTocTargetCount = 0;
+
+  for (const entry of nav.entries) {
+    if (!entry.isTopLevel) {
+      continue;
+    }
+    const hashIdx = entry.href.indexOf("#");
+    const pathPart = hashIdx === -1 ? entry.href : entry.href.slice(0, hashIdx);
+    const fragment = hashIdx === -1 ? "" : entry.href.slice(hashIdx + 1);
+    const targetIndex = spineIndexByPath.get(pathPart);
+    if (targetIndex === undefined) {
+      // Points outside the rendered spine (excluded/non-linear item, the
+      // TOC's own nav.xhtml, or a broken href) — same "can't link to it"
+      // situation buildTocSection's identical lookup already handles by
+      // falling back to a plain <li>; here there is no marker to embed at
+      // all, so the candidate is dropped outright rather than partially
+      // included.
+      unresolvedTocTargetCount++;
+      continue;
+    }
+    const name = normalizeChapterName(entry.label);
+    if (name.length === 0) {
+      continue;
+    }
+    const marker = formatChapterMarker(candidates.length + 1);
+    candidates.push({ chapter: { name, marker }, targetIndex, fragment });
+
+    const plan = markerPlanByIndex.get(targetIndex) ?? { byId: new Map<string, string[]>(), atStart: [] };
+    if (fragment.length === 0) {
+      plan.atStart.push(marker);
+    } else {
+      const existing = plan.byId.get(fragment) ?? [];
+      existing.push(marker);
+      plan.byId.set(fragment, existing);
+    }
+    markerPlanByIndex.set(targetIndex, plan);
+  }
+
+  return { candidates, markerPlanByIndex, unresolvedTocTargetCount };
+}
+
 function buildTocSection(nav: EpubNavigation, spineIndexByPath: ReadonlyMap<string, number>): string | undefined {
   if (nav.entries.length === 0) {
     return undefined;
@@ -368,11 +474,41 @@ function isCoverDuplicateSpineItem(sanitized: SanitizedChapter, coverDataUrl: st
  * grounds that untested is not the same as safe, but that's the extent of
  * the claim.
  */
-function buildFinalCss(options: EpubConvertOptions, layout: "horizontal" | "vertical", layoutIsExplicit: boolean): string {
+function buildFinalCss(
+  options: EpubConvertOptions,
+  layout: "horizontal" | "vertical",
+  layoutIsExplicit: boolean,
+  hasXtcChapters: boolean,
+): string {
   const important = layoutIsExplicit ? " !important" : "";
   const genericFamily = layout === "vertical" ? "serif" : "sans-serif";
   const pageBreakRule = options.chapterPageBreak
     ? `.epub-spine-item + .epub-spine-item {\n  break-before: page;\n  page-break-before: always;\n}\n`
+    : "";
+  // XTC chapter markers (sanitize.ts's insertChapterMarkerSpans): unlike
+  // packages/aozora-text's own XTC_CHAPTER_MARKER_CSS (used verbatim by the
+  // TXT/Aozora-URL pipelines, which never share a document with arbitrary
+  // author CSS), an EPUB's own stylesheet IS arbitrary author CSS that
+  // sanitizeCss (css.ts) lets right through for `color`/`font-size` — a
+  // broad rule like `span { font-size: 1.2em !important }` could otherwise
+  // make a marker visible/selectable/announced. This block re-declares the
+  // same three properties, scoped to the marker's own class (already more
+  // specific than a bare tag selector) AND with `!important` unconditionally
+  // (unlike this function's layout-related rules above, which only add
+  // `!important` when layoutIsExplicit) — same "never something to defer to"
+  // stance as the img/svg `float: none !important` rule above, because an
+  // EPUB author had no way to know this class even existed, so there is no
+  // legitimate authored intent to respect here. Gated on hasXtcChapters
+  // purely to skip emitting dead CSS for a book with no usable TOC (no
+  // marker spans exist in `html` at all in that case).
+  const xtcChapterMarkerRule = hasXtcChapters
+    ? `.${XTC_CHAPTER_MARKER_CLASS} {
+  color: transparent !important;
+  font-size: 1px !important;
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+`
     : "";
   const writingModeRule =
     layout === "vertical"
@@ -483,7 +619,8 @@ figure {
   margin: 0 !important;
 }
 
-${pageBreakRule}`;
+${pageBreakRule}
+${xtcChapterMarkerRule}`;
 }
 
 // --- entrypoint --------------------------------------------------------------
@@ -560,6 +697,26 @@ export function prepareEpubDocument(
   const spineIndexByPath = new Map<string, number>();
   renderedSpine.forEach((item, idx) => spineIndexByPath.set(item.manifestItem.absolutePath, idx));
 
+  // XTC chapter/table-of-contents metadata (top-level TOC entries only —
+  // buildXtcChapterPlan's own doc comment). `candidates` is finalized into
+  // `xtcChapters` further below, once the sanitization loop has actually
+  // discovered which spine items rendered and which fragment ids were
+  // found.
+  const { candidates: xtcChapterCandidates, markerPlanByIndex, unresolvedTocTargetCount } =
+    buildXtcChapterPlan(nav, spineIndexByPath);
+  if (unresolvedTocTargetCount > 0) {
+    warnings.push({ code: "XTC_CHAPTER_TOC_TARGET_UNRESOLVED" });
+  }
+  // Populated by the sanitization loop below: a target spine index lands
+  // here when the WHOLE chapter never made it into the rendered document
+  // (missing bytes, unparseable XHTML, or skipped as a cover duplicate) —
+  // every candidate targeting it is dropped, fragment or not.
+  const failedSpineIndexes = new Set<number>();
+  // Populated by the sanitization loop below: target spine index -> the set
+  // of requested fragment ids sanitizeSpineChapter reported as never found
+  // in that (successfully rendered) chapter.
+  const unresolvedFragmentsByIndex = new Map<number, Set<string>>();
+
   const { resolveRelative, resolveAbsolute, imageCount } = makeImageResolution(entries, pkg.manifest);
 
   // Resolved once, up front (not inside buildCoverSection) so the
@@ -597,19 +754,33 @@ export function prepareEpubDocument(
     const raw = entries.get(path);
     if (raw === undefined) {
       warnings.push({ code: "SPINE_ITEM_MISSING" });
+      failedSpineIndexes.add(idx);
       return;
     }
     const xhtml = new TextDecoder("utf-8", { fatal: false, ignoreBOM: false }).decode(raw);
     const ctx: ChapterLinkContext = { chapterIndex: idx, chapterPath: path, spineIndexByPath };
-    const sanitized = sanitizeSpineChapter(xhtml, ctx, resolveRelative);
+    const sanitized = sanitizeSpineChapter(xhtml, ctx, resolveRelative, markerPlanByIndex.get(idx));
     if (sanitized === undefined) {
       warnings.push({ code: "CHAPTER_UNPARSEABLE" });
+      failedSpineIndexes.add(idx);
       return;
     }
 
     if (coverDataUrl !== undefined && isCoverDuplicateSpineItem(sanitized, coverDataUrl)) {
       warnings.push({ code: "COVER_DUPLICATE_SKIPPED" });
+      failedSpineIndexes.add(idx);
       return;
+    }
+
+    if (sanitized.unresolvedMarkerIds.length > 0) {
+      // Not warned here directly — folded into the single
+      // XTC_CHAPTER_DROPPED warning emitted below once every candidate has
+      // been resolved (or not), so a chapter dropped for THIS reason and one
+      // dropped because its whole spine item never rendered don't produce
+      // two differently-coded warnings for what is, to anyone reading
+      // warning codes, the same outcome: "requested chapter, no marker in
+      // the output".
+      unresolvedFragmentsByIndex.set(idx, new Set(sanitized.unresolvedMarkerIds));
     }
 
     for (const href of sanitized.stylesheetHrefs) {
@@ -659,10 +830,39 @@ export function prepareEpubDocument(
     throw new EpubError("EMPTY_SPINE", "every spine item failed to sanitize");
   }
 
+  // XTC chapters, finalized: a candidate survives only if its target spine
+  // item actually rendered AND (fragment entries only) its id was actually
+  // found there — see buildXtcChapterPlan's own doc comment for why a
+  // candidate can be dropped at this late a stage despite having been a
+  // "top-level TOC entry with a resolvable spine target" earlier. Dropping
+  // here (rather than only warning) is what keeps every entry in the final
+  // `chapters` array backed by a marker that is actually present in `html`
+  // below — the invariant the caller (src/workflow.ts) relies on when it
+  // forwards this array to the Container unchanged.
+  let xtcChapterDropCount = 0;
+  const xtcChapters: XtcChapter[] = [];
+  for (const candidate of xtcChapterCandidates) {
+    if (failedSpineIndexes.has(candidate.targetIndex)) {
+      xtcChapterDropCount++;
+      continue;
+    }
+    if (
+      candidate.fragment.length > 0 &&
+      unresolvedFragmentsByIndex.get(candidate.targetIndex)?.has(candidate.fragment) === true
+    ) {
+      xtcChapterDropCount++;
+      continue;
+    }
+    xtcChapters.push(candidate.chapter);
+  }
+  if (xtcChapterDropCount > 0) {
+    warnings.push({ code: "XTC_CHAPTER_DROPPED" });
+  }
+
   const layout = detectLayout(pkg, entries, cssTextsForLayoutDetection, options.layout);
   const coverSection = coverDataUrl !== undefined ? buildCoverSection(coverDataUrl) : undefined;
   const tocSection = options.includeTableOfContents ? buildTocSection(nav, spineIndexByPath) : undefined;
-  const finalCss = buildFinalCss(options, layout, options.layout !== "auto");
+  const finalCss = buildFinalCss(options, layout, options.layout !== "auto", xtcChapters.length > 0);
 
   const authorMeta =
     pkg.metadata.author !== undefined
@@ -704,5 +904,7 @@ ${chapterSections.join("\n")}
     spineItemCount: chapterSections.length,
     imageCount: imageCount(),
     warnings,
+    chapters: xtcChapters,
+    tocSource: nav.source,
   };
 }

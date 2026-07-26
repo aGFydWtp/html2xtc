@@ -64,6 +64,16 @@ export interface EpubNavigationEntry {
   label: string;
   /** Archive-root-relative POSIX path; a fragment (if any) is preserved as a trailing "#id". */
   href: string;
+  /**
+   * True when this entry sits at the top level of the TOC's own structure —
+   * a root `<ol>`'s direct `<li>` in an EPUB3 nav document, or a depth-1
+   * `navPoint` (a direct child of `<navMap>`, not nested inside another
+   * `navPoint`) in an EPUB2 NCX. Only top-level entries become XTC chapters
+   * (src/epub/html.ts's buildXtcChapterPlan) — see that function's doc
+   * comment for why nested TOC entries are deliberately excluded rather than
+   * also becoming chapters.
+   */
+  isTopLevel: boolean;
 }
 
 export interface EpubNavigation {

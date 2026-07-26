@@ -78,7 +78,7 @@ import {
 import { renderSelfStyledHtmlPdf } from "../src/pdf";
 import { ConvertWorkflow } from "../src/workflow";
 import type { ConvertJobParams, ConvertSource, Env } from "../src/types";
-import { buildEpubZip, minimalEpub3Files } from "./fixtures/epub/build-epub";
+import { buildEpubZip, minimalEpub2Files, minimalEpub3Files } from "./fixtures/epub/build-epub";
 
 const mockedConvertInContainer = vi.mocked(convertInContainer);
 const mockedRenderSelfStyledHtmlPdf = vi.mocked(renderSelfStyledHtmlPdf);
@@ -581,18 +581,89 @@ describe("runEpubSource: title / author propagation (spec §19.1 title/author伝
     expect(html).toContain("<title>Minimal Test Book</title>");
 
     // 2. The OPF author reaches convertInContainer's request-side `author`
-    //    argument (5th positional), exactly like the TXT pipeline.
+    //    argument (5th positional), exactly like the TXT pipeline; the
+    //    fixture's nav.xhtml also carries one fragment-less top-level TOC
+    //    entry ("Chapter 1" -> chapter1.xhtml), which becomes chapters'
+    //    sole 6th-positional entry (see the dedicated XTC-chapter describe
+    //    block below for more thorough coverage of that wiring).
     expect(mockedConvertInContainer).toHaveBeenCalledWith(
       expect.anything(),
       JOB_ID,
       expect.anything(),
       expect.any(Number),
       "Test Author",
+      [{ name: "Chapter 1", marker: "XTCCH0001" }],
     );
 
     // 3. The mocked container's X-Xtc-Title response header round-trips
     //    through storeXtcOutput into the Workflow's own return value —
     //    the same value GET /jobs/:id surfaces as `title`.
     expect(result.title).toBe("Minimal Test Book");
+  });
+});
+
+describe("runEpubSource: XTC chapter/table-of-contents metadata wiring", () => {
+  it("embeds an XTC chapter marker for an EPUB3 nav's fragment-less top-level entry, and forwards it to convertInContainer's chapters argument", async () => {
+    const bucket = new FakeR2Bucket();
+    // minimalEpub3Files' own nav.xhtml has exactly one fragment-less
+    // top-level entry: "Chapter 1" -> chapter1.xhtml.
+    const source = epubSource(bucket, minimalEpubBytes());
+    const step = new FakeWorkflowStep();
+    mockedConvertInContainer.mockResolvedValue(new Response(new Uint8Array([1, 2, 3, 4]), { status: 200 }));
+
+    await runEpub(fakeEnv(bucket), step, source);
+
+    const htmlPut = bucket.putLog.find((entry) => entry.key === epubHtmlKey(JOB_ID));
+    const html = new TextDecoder().decode(htmlPut!.bytes);
+    // Fragment-less TOC entry -> marker at the chapter's own <section> start,
+    // i.e. immediately inside <section id="chapter-0000" ...> and ahead of
+    // the chapter's own <h1> (src/epub/sanitize.ts's ChapterMarkerPlan.atStart).
+    expect(html).toMatch(
+      /<section id="chapter-0000"[^>]*>\s*<span[^>]*class="xtc-chapter-marker"[^>]*>XTCCH0001<\/span>/,
+    );
+
+    const call = mockedConvertInContainer.mock.calls[0];
+    expect(call?.[5]).toEqual([{ name: "Chapter 1", marker: "XTCCH0001" }]);
+  });
+
+  it("forwards an EPUB2 NCX's depth-1 navPoint the same way", async () => {
+    const bucket = new FakeR2Bucket();
+    const source = epubSource(bucket, buildEpubZip(minimalEpub2Files()));
+    const step = new FakeWorkflowStep();
+    mockedConvertInContainer.mockResolvedValue(new Response(new Uint8Array([1, 2, 3, 4]), { status: 200 }));
+
+    await runEpub(fakeEnv(bucket), step, source);
+
+    const call = mockedConvertInContainer.mock.calls[0];
+    expect(call?.[5]).toEqual([{ name: "Chapter 1", marker: "XTCCH0001" }]);
+  });
+
+  it("forwards an empty chapters array (not undefined) for an EPUB with no nav/NCX at all", async () => {
+    const bucket = new FakeR2Bucket();
+    const noTocOpf = `<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="bookid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:identifier id="bookid">urn:uuid:00000000-0000-0000-0000-000000000002</dc:identifier>
+    <dc:title>No TOC Book</dc:title>
+  </metadata>
+  <manifest>
+    <item id="chapter1" href="chapter1.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine><itemref idref="chapter1"/></spine>
+</package>`;
+    const files = minimalEpub3Files();
+    delete files["OEBPS/nav.xhtml"];
+    files["OEBPS/content.opf"] = noTocOpf;
+    const source = epubSource(bucket, buildEpubZip(files));
+    const step = new FakeWorkflowStep();
+    mockedConvertInContainer.mockResolvedValue(new Response(new Uint8Array([1, 2, 3, 4]), { status: 200 }));
+
+    await runEpub(fakeEnv(bucket), step, source);
+
+    const call = mockedConvertInContainer.mock.calls[0];
+    expect(call?.[5]).toEqual([]);
+    const htmlPut = bucket.putLog.find((entry) => entry.key === epubHtmlKey(JOB_ID));
+    const html = new TextDecoder().decode(htmlPut!.bytes);
+    expect(html).not.toContain("xtc-chapter-marker");
   });
 });

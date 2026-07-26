@@ -158,6 +158,133 @@ describe("convertInContainer — A-2: MAX_XTC_CHAPTERS (200) cap", () => {
   });
 });
 
+describe("convertInContainer — chapter-detection diagnostic headers (log-only)", () => {
+  const chapters: XtcChapter[] = [
+    { name: "第一章", marker: "XTCCH0001" },
+    { name: "第二章", marker: "XTCCH0002" },
+  ];
+
+  it("logs nothing when no chapters were requested (sent=0), regardless of response headers", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(null, {
+        status: 200,
+        headers: { "X-Xtc-Chapters-Status": "not-requested" },
+      }),
+    );
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await convertInContainer(minimalEnv(), "job-1", new ArrayBuffer(0), 30_000);
+      expect(logSpy).not.toHaveBeenCalled();
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      logSpy.mockRestore();
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("logs at console.log with status=ok when all diagnostic headers are present and valid", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(null, {
+        status: 200,
+        headers: {
+          "X-Xtc-Chapters-Requested": "2",
+          "X-Xtc-Chapters-Detected": "2",
+          "X-Xtc-Chapters-Status": "ok",
+          "X-Xtc-Page-Count": "42",
+        },
+      }),
+    );
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await convertInContainer(minimalEnv(), "job-1", new ArrayBuffer(0), 30_000, undefined, chapters);
+      expect(warnSpy).not.toHaveBeenCalled();
+      expect(logSpy).toHaveBeenCalledTimes(1);
+      const line = logSpy.mock.calls[0]?.join(" ") ?? "";
+      expect(line).toBe(
+        "[job-1] chapters: sent=2 requested=2 detected=2 status=ok pageCount=42",
+      );
+    } finally {
+      logSpy.mockRestore();
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("logs at console.warn (not console.log) when status is not ok", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(null, {
+        status: 200,
+        headers: {
+          "X-Xtc-Chapters-Requested": "2",
+          "X-Xtc-Chapters-Detected": "0",
+          "X-Xtc-Chapters-Status": "no-markers-found",
+          "X-Xtc-Page-Count": "42",
+        },
+      }),
+    );
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await convertInContainer(minimalEnv(), "job-1", new ArrayBuffer(0), 30_000, undefined, chapters);
+      expect(logSpy).not.toHaveBeenCalled();
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      const line = warnSpy.mock.calls[0]?.join(" ") ?? "";
+      expect(line).toBe(
+        "[job-1] chapters: sent=2 requested=2 detected=0 status=no-markers-found pageCount=42",
+      );
+    } finally {
+      logSpy.mockRestore();
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("degrades to 'missing'/'unknown' (never crashes, never logs a raw garbled value) when headers are entirely absent — e.g. an older Container image", async () => {
+    // fetchMock's module-level default (no explicit mockResolvedValueOnce)
+    // returns a bare 200 Response with none of these headers set.
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await expect(
+        convertInContainer(minimalEnv(), "job-1", new ArrayBuffer(0), 30_000, undefined, chapters),
+      ).resolves.toBeInstanceOf(Response);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      const line = warnSpy.mock.calls[0]?.join(" ") ?? "";
+      expect(line).toBe(
+        "[job-1] chapters: sent=2 requested=unknown detected=unknown status=missing pageCount=missing",
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("treats an unrecognized status and malformed counts as 'unknown', never passing the raw header text into the log line", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(null, {
+        status: 200,
+        headers: {
+          "X-Xtc-Chapters-Requested": "12abc; DROP TABLE",
+          "X-Xtc-Chapters-Detected": "-1",
+          "X-Xtc-Chapters-Status": "some-future-status-not-yet-in-the-whitelist",
+          "X-Xtc-Page-Count": "",
+        },
+      }),
+    );
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await convertInContainer(minimalEnv(), "job-1", new ArrayBuffer(0), 30_000, undefined, chapters);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      const line = warnSpy.mock.calls[0]?.join(" ") ?? "";
+      expect(line).toBe(
+        "[job-1] chapters: sent=2 requested=unknown detected=unknown status=unknown pageCount=failed",
+      );
+      expect(line).not.toContain("DROP TABLE");
+      expect(line).not.toContain("some-future-status-not-yet-in-the-whitelist");
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+});
+
 // convertUploadedPdfInContainer is deliberately not covered here: it has no
 // `chapters` parameter at all (uploaded PDFs have no Worker-derived chapter
 // list to send — see its own doc comment in src/container.ts), so there is

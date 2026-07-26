@@ -11,7 +11,19 @@ POST /convert            trusted PDF (produced by our own Browser Run step)
                           X-Xtc-Chapters request header, optional, carries a
                           base64url JSON chapter list -- see
                           decode_chapters_header/resolve_chapters below for
-                          the detection and XTC-embedding contract)
+                          the detection and XTC-embedding contract.
+                          On success, X-Xtc-Chapters-Requested/-Detected
+                          (integer counts) and X-Xtc-Chapters-Status (a
+                          fixed machine-readable code -- see
+                          chapters_status_for_response) report what
+                          happened to chapter detection, and
+                          X-Xtc-Page-Count reports read_pdf_metadata's page
+                          count, empty when that call failed. These are
+                          diagnostics only -- counts and fixed codes, never
+                          chapter names/paths/exception text -- added so a
+                          production-only chapter-metadata failure can be
+                          triaged from response headers alone, without
+                          access to the Python process log.)
 POST /convert/uploaded-pdf  untrusted, user-uploaded PDF; see pdf_upload.py
                          for request/response contract and validation.
 GET  /healthz            liveness probe
@@ -236,7 +248,9 @@ def truncate_utf8_bytes(text: str, max_bytes: int) -> str:
     return text
 
 
-def decode_chapters_header(raw_header: str) -> list[dict[str, str]]:
+def decode_chapters_header(
+    raw_header: str, diagnostics: dict | None = None
+) -> list[dict[str, str]]:
     """Decodes X-Xtc-Chapters (base64url JSON array of {"name", "marker"}
     objects, in chapter order) into a plain list of {"name", "marker"}
     dicts. Malformed input fails soft to [] -- chapters are a nice-to-have
@@ -246,15 +260,31 @@ def decode_chapters_header(raw_header: str) -> list[dict[str, str]]:
     marker is optional per entry (missing/non-string falls back to "", which
     makes detect_chapter_pages treat that chapter as never found -- see its
     docstring); name is required -- entries missing a non-empty string name
-    are dropped rather than raising."""
+    are dropped rather than raising.
+
+    diagnostics, when given, is a caller-owned dict this function reports
+    into for /convert's X-Xtc-Chapters-Status response header (see
+    Handler._handle_convert): diagnostics["decode_failed"] is set to True
+    when the header could not be decoded as base64url, parsed as JSON, or
+    was valid JSON that was not a list -- i.e. the whole header is
+    unusable, as opposed to individual entries being dropped for missing a
+    name (normal per-entry filtering below, not a decode failure). Never
+    raises and never changes the (still fail-soft) return value -- purely
+    additive observability."""
     decoded = decode_base64url_utf8(raw_header)
     if not decoded:
+        if diagnostics is not None:
+            diagnostics["decode_failed"] = True
         return []
     try:
         data = json.loads(decoded)
     except Exception:  # noqa: BLE001 - malformed header, not fatal
+        if diagnostics is not None:
+            diagnostics["decode_failed"] = True
         return []
     if not isinstance(data, list):
+        if diagnostics is not None:
+            diagnostics["decode_failed"] = True
         return []
     chapters: list[dict[str, str]] = []
     for entry in data:
@@ -321,7 +351,11 @@ def normalize_search_text(text: str) -> str:
     return "".join(ch for ch in text if not ch.isspace())
 
 
-def detect_chapter_pages(pdf_bytes: bytes, chapters: list[dict[str, str]]) -> list[dict]:
+def detect_chapter_pages(
+    pdf_bytes: bytes,
+    chapters: list[dict[str, str]],
+    diagnostics: dict | None = None,
+) -> list[dict]:
     """Locates each configured chapter's starting page (0-indexed) in
     document order, by searching for its marker string (the invisible
     <span class="xtc-chapter-marker"> the Worker embeds just before each
@@ -355,7 +389,16 @@ def detect_chapter_pages(pdf_bytes: bytes, chapters: list[dict[str, str]]) -> li
     last-resort safety net against any marker match ending up out of order.
 
     Returns [{"name": str, "start_page": int}, ...] for the located
-    chapters only, still in chapter order."""
+    chapters only, still in chapter order.
+
+    diagnostics, when given, is a caller-owned dict this function reports
+    into for /convert's X-Xtc-Chapters-Status response header (see
+    resolve_chapters and Handler._handle_convert):
+    diagnostics["detect_exception"] is set to True when the except branch
+    below fires, so callers can tell "detection raised" apart from
+    "detection ran cleanly and simply found nothing" (both return []).
+    Never raises and never changes the (still fail-soft) return value --
+    purely additive observability."""
     if not chapters or pymupdf is None:
         return []
     try:
@@ -363,6 +406,8 @@ def detect_chapter_pages(pdf_bytes: bytes, chapters: list[dict[str, str]]) -> li
             page_texts = [normalize_search_text(page.get_text()) for page in doc]
     except Exception:  # noqa: BLE001 - detection is optional, never fatal
         logger.exception("failed to read PDF text for chapter detection")
+        if diagnostics is not None:
+            diagnostics["detect_exception"] = True
         return []
 
     def find_first(needle: str, start: int, end: int) -> int | None:
@@ -451,7 +496,10 @@ def build_chapter_entries(located: list[dict], total_pages: int) -> list[dict]:
 
 
 def resolve_chapters(
-    pdf_bytes: bytes, chapters_spec: list[dict[str, str]], page_count: int | None
+    pdf_bytes: bytes,
+    chapters_spec: list[dict[str, str]],
+    page_count: int | None,
+    diagnostics: dict | None = None,
 ) -> list[dict]:
     """End-to-end: chapters_spec (decode_chapters_header's decoded
     X-Xtc-Chapters entries) -> located page numbers -> final
@@ -460,19 +508,66 @@ def resolve_chapters(
     metadata; the conversion proceeds exactly as it did before this feature
     existed) when chapters_spec is empty, the page count is unknown, or
     detection located zero chapters -- chapters are always best-effort,
-    never a hard requirement for a successful conversion."""
+    never a hard requirement for a successful conversion.
+
+    diagnostics, when given, is a caller-owned dict (see Handler.
+    _handle_convert) this function reports into for /convert's
+    X-Xtc-Chapters-Status response header. It is forwarded to
+    detect_chapter_pages (which sets diagnostics["detect_exception"], see
+    its docstring) and, on return, this function itself sets
+    diagnostics["status"] to one of:
+
+    - "pdf-metadata-failed": page_count is None (read_pdf_metadata failed)
+    - "no-markers-found": page_count is 0 (nothing to search), detection
+      raised no exception but located zero chapters, or every located
+      chapter was subsequently dropped by build_chapter_entries (e.g. an
+      unpaired-surrogate name or an out-of-range page)
+    - "detect-exception": detect_chapter_pages' except branch fired
+    - "partial": some, but not all, of chapters_spec's entries made it into
+      the final entries
+    - "ok": every entry in chapters_spec made it into the final entries
+
+    diagnostics is left untouched (no "status" key set) when chapters_spec
+    is empty, since this function returns before doing anything -- callers
+    with an empty chapters_spec never call it in the first place today (see
+    Handler._handle_convert), so this branch is purely defensive. Never
+    raises and never changes the (still fail-soft) return value -- purely
+    additive observability."""
     if not chapters_spec:
+        return []
+    if page_count is None:
+        logger.warning(
+            "X-Xtc-Chapters present but page count is unavailable; "
+            "skipping chapter metadata"
+        )
+        if diagnostics is not None:
+            diagnostics["status"] = "pdf-metadata-failed"
         return []
     if not page_count:
         logger.warning(
             "X-Xtc-Chapters present but page count is unavailable; "
             "skipping chapter metadata"
         )
+        if diagnostics is not None:
+            diagnostics["status"] = "no-markers-found"
         return []
-    located = detect_chapter_pages(pdf_bytes, chapters_spec)
+    located = detect_chapter_pages(pdf_bytes, chapters_spec, diagnostics)
+    if diagnostics is not None and diagnostics.get("detect_exception"):
+        diagnostics["status"] = "detect-exception"
+        return []
     if not located:
+        if diagnostics is not None:
+            diagnostics["status"] = "no-markers-found"
         return []
-    return build_chapter_entries(located, page_count)
+    entries = build_chapter_entries(located, page_count)
+    if diagnostics is not None:
+        if not entries:
+            diagnostics["status"] = "no-markers-found"
+        elif len(entries) < len(chapters_spec):
+            diagnostics["status"] = "partial"
+        else:
+            diagnostics["status"] = "ok"
+    return entries
 
 
 def _toml_value(value) -> str:
@@ -614,6 +709,7 @@ def convert_pdf(
     page_count: int | None | object = _UNCOUNTED,
     author: str = "",
     chapters: list[dict] | None = None,
+    diagnostics: dict | None = None,
 ) -> bytes:
     """Run xtctool over the given PDF bytes and return the XTC bytes.
 
@@ -638,7 +734,17 @@ def convert_pdf(
     files are discarded once the repack step produces the final container,
     and the repack step re-derives all container metadata (title, author,
     chapters) from its own config file rather than from the input chunk
-    XTCs' metadata."""
+    XTCs' metadata.
+
+    diagnostics, when given, is a caller-owned dict (see Handler.
+    _handle_convert) this function reports into for /convert's
+    X-Xtc-Chapters-Status response header:
+    diagnostics["chapters_config_merge_failed"] is set to True when the
+    config_with_title_author_chapters merge below raises -- the case where
+    chapters were successfully detected but never actually reach the output
+    XTC because the config that would have carried them couldn't be built.
+    Never raises and never changes the (still best-effort) conversion
+    behavior -- purely additive observability."""
     deadline = time.monotonic() + timeout_seconds
     with tempfile.TemporaryDirectory() as workdir:
         pdf_path = Path(workdir) / "source.pdf"
@@ -668,6 +774,8 @@ def convert_pdf(
                 logger.exception(
                     "chapters config merge failed; omitting chapter metadata"
                 )
+                if diagnostics is not None:
+                    diagnostics["chapters_config_merge_failed"] = True
             else:
                 chapters_config_path = Path(workdir) / "config-chapters.toml"
                 chapters_config_path.write_text(
@@ -677,6 +785,22 @@ def convert_pdf(
 
         if page_count is _UNCOUNTED:
             page_count = count_pdf_pages(pdf_bytes)
+        if page_count is None:
+            # read_pdf_metadata/count_pdf_pages failed (see their
+            # docstrings' fail-soft ("", None) contract). This falls
+            # through to the single-pass branch below unconditionally --
+            # even for a PDF that would otherwise have been long enough to
+            # need chunking -- since page_count is exactly what the
+            # threshold comparison needs and there is no known page count to
+            # chunk by. That is an existing, intentional-but-unverified
+            # trade-off (see X-Xtc-Page-Count's docstring in
+            # Handler._handle_convert for how to spot it from the response
+            # headers); this log line is purely observability, the behavior
+            # itself is unchanged here.
+            logger.warning(
+                "page count unavailable; using single-pass conversion "
+                "without chunking (a long PDF could risk memory exhaustion)"
+            )
         if page_count is None or page_count <= CHUNK_THRESHOLD_PAGES:
             # A single subprocess gets the whole budget, exactly as before
             # chunking existed.
@@ -735,6 +859,49 @@ def convert_pdf(
         return xtc_path.read_bytes()
 
 
+def chapters_status_for_response(
+    header_present: bool,
+    requested: int,
+    chapters_diagnostics: dict,
+    config_merge_failed: bool,
+) -> str:
+    """Maps one /convert request's chapter-detection diagnostics into the
+    X-Xtc-Chapters-Status response header value (see this module's
+    docstring and Handler._handle_convert, which assembles
+    chapters_diagnostics via decode_chapters_header's and
+    resolve_chapters's diagnostics= parameters). Pure and side-effect-free
+    so every combination of inputs can be tested directly, without a real
+    HTTP request.
+
+    Precedence (first match wins):
+    - "not-requested": header_present is False (X-Xtc-Chapters absent)
+    - "header-decode-failed": decode_chapters_header couldn't decode/parse
+      the header at all (chapters_diagnostics["decode_failed"])
+    - "config-merge-failed": chapters were located but never reached the
+      output XTC because convert_pdf's chapters-config merge raised
+      (config_merge_failed) -- only ever True when chapters is non-empty,
+      i.e. resolve_chapters' own status was "ok" or "partial" (see
+      convert_pdf's chapters parameter and diagnostics docstrings)
+    - "ok": the header decoded to zero chapters (requested == 0 -- vacuously
+      "all of them" were written)
+    - otherwise: resolve_chapters' own diagnosed status
+      (chapters_diagnostics["status"]) -- "pdf-metadata-failed",
+      "detect-exception", "no-markers-found", or "partial" -- defaulting to
+      "no-markers-found" if, unexpectedly, resolve_chapters never set one
+      (defensive; resolve_chapters always sets diagnostics["status"]
+      before returning whenever it is actually called, which
+      Handler._handle_convert only does when requested > 0)."""
+    if not header_present:
+        return "not-requested"
+    if chapters_diagnostics.get("decode_failed"):
+        return "header-decode-failed"
+    if config_merge_failed:
+        return "config-merge-failed"
+    if requested == 0:
+        return "ok"
+    return chapters_diagnostics.get("status", "no-markers-found")
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     timeout = 60  # per-socket-read timeout; conversions run off-socket
@@ -750,13 +917,35 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _send_bytes(self, payload: bytes, title: str = "") -> None:
+    def _send_bytes(
+        self,
+        payload: bytes,
+        title: str = "",
+        *,
+        chapters_requested: int = 0,
+        chapters_detected: int = 0,
+        chapters_status: str = "not-requested",
+        page_count: int | None = None,
+    ) -> None:
         self.send_response(200)
         self.send_header("Content-Type", "application/octet-stream")
         self.send_header("Content-Length", str(len(payload)))
         if title:
             # Headers are Latin-1 only; the Worker percent-decodes this back.
             self.send_header("X-Xtc-Title", urllib.parse.quote(title, safe=""))
+        # Chapter-detection diagnostics for /convert (see this module's
+        # docstring and chapters_status_for_response): counts and a fixed
+        # machine-readable status code only -- never chapter names, EPUB-
+        # internal paths, or exception text, which stay in the Python
+        # process log only (see the logger.exception/logger.warning calls
+        # throughout this module). Every value sent here is ASCII with no
+        # embedded newlines.
+        self.send_header("X-Xtc-Chapters-Requested", str(chapters_requested))
+        self.send_header("X-Xtc-Chapters-Detected", str(chapters_detected))
+        self.send_header("X-Xtc-Chapters-Status", chapters_status)
+        self.send_header(
+            "X-Xtc-Page-Count", str(page_count) if page_count is not None else ""
+        )
         self.end_headers()
         self.wfile.write(payload)
 
@@ -858,11 +1047,24 @@ class Handler(BaseHTTPRequestHandler):
             # pass over the PDF's text only happens inside resolve_chapters
             # below, and only when this list is non-empty.
             raw_chapters = self.headers.get("X-Xtc-Chapters")
-            chapters_spec = decode_chapters_header(raw_chapters) if raw_chapters else []
+            # chapters_diagnostics is populated by decode_chapters_header
+            # below and, later, by resolve_chapters -- see
+            # chapters_status_for_response for how it turns into
+            # X-Xtc-Chapters-Status on the success response below.
+            chapters_diagnostics: dict = {}
+            chapters_spec = (
+                decode_chapters_header(raw_chapters, chapters_diagnostics)
+                if raw_chapters
+                else []
+            )
+            requested_chapters = len(chapters_spec)
 
             with CONVERSION_SLOTS:
                 # Single pymupdf pass supplies both the title and the page
                 # count convert_pdf uses for its chunking decision.
+                # X-Xtc-Page-Count on the success response mirrors
+                # page_count verbatim (empty string when this call failed
+                # and returned None -- see read_pdf_metadata's docstring).
                 title, page_count = read_pdf_metadata(pdf_bytes)
                 # A second pymupdf pass (full-document text extraction) only
                 # runs when chapters were actually requested -- every other
@@ -877,9 +1079,12 @@ class Handler(BaseHTTPRequestHandler):
                 # granted for free on top of the Worker's
                 # X-Convert-Timeout-Seconds (which has no way to know this
                 # extra pass happened).
+                convert_diagnostics: dict = {}
                 if chapters_spec:
                     detection_start = time.monotonic()
-                    chapters = resolve_chapters(pdf_bytes, chapters_spec, page_count)
+                    chapters = resolve_chapters(
+                        pdf_bytes, chapters_spec, page_count, chapters_diagnostics
+                    )
                     elapsed = time.monotonic() - detection_start
                     effective_timeout_seconds = max(0.0, timeout_seconds - elapsed)
                 else:
@@ -892,6 +1097,7 @@ class Handler(BaseHTTPRequestHandler):
                     page_count,
                     author,
                     chapters,
+                    diagnostics=convert_diagnostics,
                 )
         except ConversionError as exc:
             logger.error("conversion failed: %s; stderr: %s", exc, exc.stderr)
@@ -900,7 +1106,27 @@ class Handler(BaseHTTPRequestHandler):
             logger.exception("unexpected error while handling /convert")
             self._send_json(500, {"error": "internal error"}, close=True)
         else:
-            self._send_bytes(xtc_bytes, title)
+            # See convert_pdf's diagnostics parameter docstring: a failed
+            # chapters-config merge means xtctool never actually received
+            # any chapters, regardless of how many resolve_chapters located.
+            config_merge_failed = bool(
+                convert_diagnostics.get("chapters_config_merge_failed")
+            )
+            detected_chapters = 0 if config_merge_failed else len(chapters)
+            chapters_status = chapters_status_for_response(
+                raw_chapters is not None,
+                requested_chapters,
+                chapters_diagnostics,
+                config_merge_failed,
+            )
+            self._send_bytes(
+                xtc_bytes,
+                title,
+                chapters_requested=requested_chapters,
+                chapters_detected=detected_chapters,
+                chapters_status=chapters_status,
+                page_count=page_count,
+            )
 
     def log_message(self, format: str, *args) -> None:  # noqa: A002
         logger.info("%s - %s", self.address_string(), format % args)

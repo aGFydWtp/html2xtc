@@ -934,6 +934,49 @@ class TestDecodeChaptersHeader:
         assert app.decode_chapters_header("") == []
 
 
+class TestDecodeChaptersHeaderDiagnostics:
+    """decode_chapters_header's optional diagnostics dict (see its
+    docstring): populated for /convert's X-Xtc-Chapters-Status response
+    header, never changes the (still fail-soft) return value."""
+
+    def test_valid_header_does_not_set_decode_failed(self):
+        diagnostics = {}
+        payload = [{"name": "第一章", "marker": "XTCCH0001"}]
+        app.decode_chapters_header(_b64url_json(payload), diagnostics)
+        assert "decode_failed" not in diagnostics
+
+    def test_malformed_base64_sets_decode_failed(self):
+        diagnostics = {}
+        app.decode_chapters_header("not valid base64url!!", diagnostics)
+        assert diagnostics["decode_failed"] is True
+
+    def test_non_json_payload_sets_decode_failed(self):
+        diagnostics = {}
+        encoded = base64.urlsafe_b64encode(b"not json").rstrip(b"=").decode("ascii")
+        app.decode_chapters_header(encoded, diagnostics)
+        assert diagnostics["decode_failed"] is True
+
+    def test_non_array_payload_sets_decode_failed(self):
+        diagnostics = {}
+        app.decode_chapters_header(_b64url_json({"name": "x"}), diagnostics)
+        assert diagnostics["decode_failed"] is True
+
+    def test_valid_but_entirely_filtered_array_does_not_set_decode_failed(self):
+        # The header itself decoded fine; every entry was individually
+        # dropped for missing a name. That is normal per-entry filtering,
+        # not a header decode failure.
+        diagnostics = {}
+        payload = [{"marker": "XTCCH0001"}, {"name": "", "marker": "XTCCH0002"}]
+        result = app.decode_chapters_header(_b64url_json(payload), diagnostics)
+        assert result == []
+        assert "decode_failed" not in diagnostics
+
+    def test_no_diagnostics_dict_does_not_raise(self):
+        # The default (diagnostics=None) must stay safe -- every existing
+        # caller/test omits it.
+        assert app.decode_chapters_header("not valid base64url!!") == []
+
+
 class TestNormalizeSearchText:
     def test_strips_ascii_whitespace(self):
         assert app.normalize_search_text("a b\tc\nd\r") == "abcd"
@@ -1065,6 +1108,25 @@ class TestDetectChapterPages:
                 located = app.detect_chapter_pages(b"fake", [{"name": "x", "marker": "y"}])
         assert located == []
         assert "failed to read PDF text" in caplog.text
+
+    def test_diagnostics_marks_detect_exception_on_read_failure(self):
+        fake_pymupdf = mock.MagicMock()
+        fake_pymupdf.open.side_effect = RuntimeError("broken pdf")
+        diagnostics = {}
+        with mock.patch.object(app, "pymupdf", fake_pymupdf):
+            located = app.detect_chapter_pages(
+                b"fake", [{"name": "x", "marker": "y"}], diagnostics
+            )
+        assert located == []
+        assert diagnostics["detect_exception"] is True
+
+    def test_diagnostics_not_marked_when_no_exception(self):
+        pages = ["XTCCH0001 chapter one"]
+        chapters = [{"name": "第一章", "marker": "XTCCH0001"}]
+        diagnostics = {}
+        with mock.patch.object(app, "pymupdf", _fake_pymupdf_with_pages(pages)):
+            app.detect_chapter_pages(b"fake", chapters, diagnostics)
+        assert "detect_exception" not in diagnostics
 
 
 class TestBuildChapterEntries:
@@ -1209,6 +1271,83 @@ class TestResolveChapters:
         with mock.patch.object(app, "pymupdf", _fake_pymupdf_with_pages(pages)):
             result = app.resolve_chapters(b"pdf", [{"name": "x", "marker": "y"}], 1)
         assert result == []
+
+
+class TestResolveChaptersDiagnostics:
+    """resolve_chapters' optional diagnostics dict (see its docstring):
+    populated for /convert's X-Xtc-Chapters-Status response header, never
+    changes the (still fail-soft) return value."""
+
+    def test_none_page_count_sets_pdf_metadata_failed(self):
+        diagnostics = {}
+        result = app.resolve_chapters(
+            b"pdf", [{"name": "x", "marker": "y"}], None, diagnostics
+        )
+        assert result == []
+        assert diagnostics["status"] == "pdf-metadata-failed"
+
+    def test_zero_page_count_sets_no_markers_found(self):
+        diagnostics = {}
+        result = app.resolve_chapters(
+            b"pdf", [{"name": "x", "marker": "y"}], 0, diagnostics
+        )
+        assert result == []
+        assert diagnostics["status"] == "no-markers-found"
+
+    def test_detect_exception_sets_detect_exception_status(self):
+        fake_pymupdf = mock.MagicMock()
+        fake_pymupdf.open.side_effect = RuntimeError("broken pdf")
+        diagnostics = {}
+        with mock.patch.object(app, "pymupdf", fake_pymupdf):
+            result = app.resolve_chapters(
+                b"pdf", [{"name": "x", "marker": "y"}], 3, diagnostics
+            )
+        assert result == []
+        assert diagnostics["status"] == "detect-exception"
+
+    def test_no_markers_located_sets_no_markers_found_status(self):
+        pages = ["nothing relevant"]
+        diagnostics = {}
+        with mock.patch.object(app, "pymupdf", _fake_pymupdf_with_pages(pages)):
+            result = app.resolve_chapters(
+                b"pdf", [{"name": "x", "marker": "XTCCH0001"}], 1, diagnostics
+            )
+        assert result == []
+        assert diagnostics["status"] == "no-markers-found"
+
+    def test_partial_detection_sets_partial_status(self):
+        pages = ["intro", "XTCCH0001 chapter one"]
+        chapters_spec = [
+            {"name": "第一章", "marker": "XTCCH0001"},
+            {"name": "第二章", "marker": "XTCCH0002"},
+        ]
+        diagnostics = {}
+        with mock.patch.object(app, "pymupdf", _fake_pymupdf_with_pages(pages)):
+            result = app.resolve_chapters(b"pdf", chapters_spec, 2, diagnostics)
+        assert len(result) == 1
+        assert diagnostics["status"] == "partial"
+
+    def test_all_located_sets_ok_status(self):
+        pages = ["intro", "XTCCH0001 chapter one", "XTCCH0002 chapter two"]
+        chapters_spec = [
+            {"name": "第一章", "marker": "XTCCH0001"},
+            {"name": "第二章", "marker": "XTCCH0002"},
+        ]
+        diagnostics = {}
+        with mock.patch.object(app, "pymupdf", _fake_pymupdf_with_pages(pages)):
+            result = app.resolve_chapters(b"pdf", chapters_spec, 3, diagnostics)
+        assert len(result) == 2
+        assert diagnostics["status"] == "ok"
+
+    def test_empty_chapters_spec_leaves_diagnostics_untouched(self):
+        diagnostics = {}
+        assert app.resolve_chapters(b"pdf", [], 10, diagnostics) == []
+        assert diagnostics == {}
+
+    def test_no_diagnostics_dict_does_not_raise(self):
+        # The default (diagnostics=None) must stay safe -- every existing
+        # caller/test omits it.
+        assert app.resolve_chapters(b"pdf", [{"name": "x", "marker": "y"}], None) == []
 
 
 class TestTomlChaptersBlock:
@@ -1361,6 +1500,40 @@ class TestConvertPdfWithChapters:
         # test), exactly like the pre-existing title-merge-failure fallback.
         assert calls[0][calls[0].index("-c") + 1] == "/nonexistent/config.toml"
 
+    def test_diagnostics_marks_chapters_config_merge_failed(self):
+        # Same failure as the test above, but asserting on the diagnostics
+        # dict (see convert_pdf's diagnostics parameter docstring) that
+        # Handler._handle_convert uses to report X-Xtc-Chapters-Status:
+        # config-merge-failed.
+        diagnostics = {}
+        with mock.patch.object(app, "CONFIG_PATH", "/nonexistent/config.toml"):
+            with mock.patch.object(app.subprocess, "run", side_effect=run_success):
+                app.convert_pdf(
+                    FAKE_PDF,
+                    chapters=[{"name": "x", "start_page": 0, "end_page": 0}],
+                    diagnostics=diagnostics,
+                )
+        assert diagnostics["chapters_config_merge_failed"] is True
+
+    def test_diagnostics_untouched_when_no_chapters_given(self):
+        diagnostics = {}
+        with mock.patch.object(app.subprocess, "run", side_effect=run_success):
+            app.convert_pdf(FAKE_PDF, diagnostics=diagnostics)
+        assert diagnostics == {}
+
+    def test_diagnostics_untouched_when_chapters_merge_succeeds(self, tmp_path):
+        config_path = tmp_path / "config.toml"
+        config_path.write_text(SAMPLE_CONFIG, encoding="utf-8")
+        diagnostics = {}
+        with mock.patch.object(app, "CONFIG_PATH", str(config_path)):
+            with mock.patch.object(app.subprocess, "run", side_effect=run_success):
+                app.convert_pdf(
+                    FAKE_PDF,
+                    chapters=[{"name": "x", "start_page": 0, "end_page": 0}],
+                    diagnostics=diagnostics,
+                )
+        assert diagnostics == {}
+
 
 class TestHandleConvertWithChaptersHeader:
     def test_chapters_header_resolves_and_merges_into_config(self, server, tmp_path):
@@ -1457,7 +1630,7 @@ class TestChapterDetectionTimeoutBudget:
         clock = iter([0.0, 7.0])  # 7s "elapsed" during resolve_chapters
         captured = {}
 
-        def fake_convert_pdf(pdf_bytes, title, timeout_seconds, page_count, author, chapters):
+        def fake_convert_pdf(pdf_bytes, title, timeout_seconds, page_count, author, chapters, diagnostics=None):
             captured["timeout_seconds"] = timeout_seconds
             return FAKE_XTC
 
@@ -1484,7 +1657,7 @@ class TestChapterDetectionTimeoutBudget:
         clock = iter([0.0, 999.0])
         captured = {}
 
-        def fake_convert_pdf(pdf_bytes, title, timeout_seconds, page_count, author, chapters):
+        def fake_convert_pdf(pdf_bytes, title, timeout_seconds, page_count, author, chapters, diagnostics=None):
             captured["timeout_seconds"] = timeout_seconds
             return FAKE_XTC
 
@@ -1513,7 +1686,7 @@ class TestChapterDetectionTimeoutBudget:
         # X-Xtc-Chapters) /convert timeout test stays exact.
         captured = {}
 
-        def fake_convert_pdf(pdf_bytes, title, timeout_seconds, page_count, author, chapters):
+        def fake_convert_pdf(pdf_bytes, title, timeout_seconds, page_count, author, chapters, diagnostics=None):
             captured["timeout_seconds"] = timeout_seconds
             return FAKE_XTC
 
@@ -1528,6 +1701,300 @@ class TestChapterDetectionTimeoutBudget:
         assert status == 200
         assert body == FAKE_XTC
         assert captured["timeout_seconds"] == 5
+
+
+class TestChaptersStatusForResponse:
+    """chapters_status_for_response is the pure function that maps one
+    /convert request's chapter-detection diagnostics into the
+    X-Xtc-Chapters-Status response header value (see its docstring for the
+    precedence order asserted here)."""
+
+    def test_header_absent_is_not_requested(self):
+        assert (
+            app.chapters_status_for_response(False, 0, {}, False) == "not-requested"
+        )
+
+    def test_decode_failed_takes_precedence_over_config_merge_failed(self):
+        assert (
+            app.chapters_status_for_response(
+                True, 0, {"decode_failed": True}, True
+            )
+            == "header-decode-failed"
+        )
+
+    def test_config_merge_failed_takes_precedence_over_requested_zero(self):
+        assert app.chapters_status_for_response(True, 0, {}, True) == (
+            "config-merge-failed"
+        )
+
+    def test_config_merge_failed_takes_precedence_over_resolve_status(self):
+        assert app.chapters_status_for_response(
+            True, 2, {"status": "ok"}, True
+        ) == "config-merge-failed"
+
+    def test_requested_zero_with_valid_header_is_ok(self):
+        assert app.chapters_status_for_response(True, 0, {}, False) == "ok"
+
+    def test_resolve_status_pdf_metadata_failed_is_relayed(self):
+        assert (
+            app.chapters_status_for_response(
+                True, 1, {"status": "pdf-metadata-failed"}, False
+            )
+            == "pdf-metadata-failed"
+        )
+
+    def test_resolve_status_detect_exception_is_relayed(self):
+        assert (
+            app.chapters_status_for_response(
+                True, 1, {"status": "detect-exception"}, False
+            )
+            == "detect-exception"
+        )
+
+    def test_resolve_status_no_markers_found_is_relayed(self):
+        assert (
+            app.chapters_status_for_response(
+                True, 1, {"status": "no-markers-found"}, False
+            )
+            == "no-markers-found"
+        )
+
+    def test_resolve_status_partial_is_relayed(self):
+        assert (
+            app.chapters_status_for_response(True, 2, {"status": "partial"}, False)
+            == "partial"
+        )
+
+    def test_resolve_status_ok_is_relayed(self):
+        assert (
+            app.chapters_status_for_response(True, 2, {"status": "ok"}, False)
+            == "ok"
+        )
+
+    def test_missing_resolve_status_defaults_to_no_markers_found(self):
+        # Defensive fallback: requested > 0 but resolve_chapters was never
+        # actually called (should not happen via the real handler).
+        assert app.chapters_status_for_response(True, 1, {}, False) == (
+            "no-markers-found"
+        )
+
+
+class TestChaptersDiagnosticsResponseHeaders:
+    """End-to-end: /convert's X-Xtc-Chapters-Requested/-Detected/-Status and
+    X-Xtc-Page-Count response headers (see this module's docstring and
+    chapters_status_for_response), covering every status code the real
+    handler can actually produce."""
+
+    def test_no_chapters_header_is_not_requested(self, server):
+        with mock.patch.object(
+            app, "read_pdf_metadata", return_value=("", 3)
+        ):
+            with mock.patch.object(app.subprocess, "run", side_effect=run_success):
+                status, headers, _ = request(
+                    server, "POST", "/convert", body=FAKE_PDF
+                )
+        assert status == 200
+        assert headers["X-Xtc-Chapters-Requested"] == "0"
+        assert headers["X-Xtc-Chapters-Detected"] == "0"
+        assert headers["X-Xtc-Chapters-Status"] == "not-requested"
+        assert headers["X-Xtc-Page-Count"] == "3"
+
+    def test_malformed_header_is_header_decode_failed(self, server):
+        with mock.patch.object(
+            app, "read_pdf_metadata", return_value=("", 3)
+        ):
+            with mock.patch.object(app.subprocess, "run", side_effect=run_success):
+                status, headers, _ = request(
+                    server,
+                    "POST",
+                    "/convert",
+                    body=FAKE_PDF,
+                    headers={"X-Xtc-Chapters": "not valid base64url!!"},
+                )
+        assert status == 200
+        assert headers["X-Xtc-Chapters-Requested"] == "0"
+        assert headers["X-Xtc-Chapters-Detected"] == "0"
+        assert headers["X-Xtc-Chapters-Status"] == "header-decode-failed"
+
+    def test_pdf_metadata_failure_reports_empty_page_count(self, server):
+        chapters_header = _b64url_json([{"name": "第一章", "marker": "XTCCH0001"}])
+        with mock.patch.object(app, "read_pdf_metadata", return_value=("", None)):
+            with mock.patch.object(app.subprocess, "run", side_effect=run_success):
+                status, headers, _ = request(
+                    server,
+                    "POST",
+                    "/convert",
+                    body=FAKE_PDF,
+                    headers={"X-Xtc-Chapters": chapters_header},
+                )
+        assert status == 200
+        assert headers["X-Xtc-Chapters-Requested"] == "1"
+        assert headers["X-Xtc-Chapters-Detected"] == "0"
+        assert headers["X-Xtc-Chapters-Status"] == "pdf-metadata-failed"
+        assert headers["X-Xtc-Page-Count"] == ""
+
+    def test_detect_exception_status(self, server):
+        chapters_header = _b64url_json([{"name": "第一章", "marker": "XTCCH0001"}])
+        fake_pymupdf = mock.MagicMock()
+        fake_pymupdf.open.side_effect = RuntimeError("super-secret-parse-failure")
+        with mock.patch.object(app, "read_pdf_metadata", return_value=("", 3)):
+            with mock.patch.object(app, "pymupdf", fake_pymupdf):
+                with mock.patch.object(app.subprocess, "run", side_effect=run_success):
+                    status, headers, _ = request(
+                        server,
+                        "POST",
+                        "/convert",
+                        body=FAKE_PDF,
+                        headers={"X-Xtc-Chapters": chapters_header},
+                    )
+        assert status == 200
+        assert headers["X-Xtc-Chapters-Requested"] == "1"
+        assert headers["X-Xtc-Chapters-Detected"] == "0"
+        assert headers["X-Xtc-Chapters-Status"] == "detect-exception"
+        # The exception message must never leak into a response header.
+        assert "super-secret-parse-failure" not in json.dumps(headers)
+
+    def test_no_markers_found_status(self, server):
+        pages = ["intro", "nothing relevant here"]
+        chapters_header = _b64url_json([{"name": "第一章", "marker": "XTCCH0001"}])
+        with mock.patch.object(
+            app, "read_pdf_metadata", return_value=("", len(pages))
+        ):
+            with mock.patch.object(app, "pymupdf", _fake_pymupdf_with_pages(pages)):
+                with mock.patch.object(app.subprocess, "run", side_effect=run_success):
+                    status, headers, _ = request(
+                        server,
+                        "POST",
+                        "/convert",
+                        body=FAKE_PDF,
+                        headers={"X-Xtc-Chapters": chapters_header},
+                    )
+        assert status == 200
+        assert headers["X-Xtc-Chapters-Requested"] == "1"
+        assert headers["X-Xtc-Chapters-Detected"] == "0"
+        assert headers["X-Xtc-Chapters-Status"] == "no-markers-found"
+
+    def test_partial_status(self, server, tmp_path):
+        config_path = tmp_path / "config.toml"
+        config_path.write_text(SAMPLE_CONFIG, encoding="utf-8")
+        pages = ["intro", "XTCCH0001 chapter one"]
+        chapters_header = _b64url_json(
+            [
+                {"name": "第一章", "marker": "XTCCH0001"},
+                {"name": "第二章", "marker": "XTCCH0002"},
+            ]
+        )
+        with mock.patch.object(app, "CONFIG_PATH", str(config_path)):
+            with mock.patch.object(
+                app, "read_pdf_metadata", return_value=("", len(pages))
+            ):
+                with mock.patch.object(
+                    app, "pymupdf", _fake_pymupdf_with_pages(pages)
+                ):
+                    with mock.patch.object(
+                        app.subprocess, "run", side_effect=run_success
+                    ):
+                        status, headers, _ = request(
+                            server,
+                            "POST",
+                            "/convert",
+                            body=FAKE_PDF,
+                            headers={"X-Xtc-Chapters": chapters_header},
+                        )
+        assert status == 200
+        assert headers["X-Xtc-Chapters-Requested"] == "2"
+        assert headers["X-Xtc-Chapters-Detected"] == "1"
+        assert headers["X-Xtc-Chapters-Status"] == "partial"
+        # Chapter names/markers must never leak into a response header.
+        assert "第一章" not in json.dumps(headers)
+
+    def test_ok_status(self, server, tmp_path):
+        config_path = tmp_path / "config.toml"
+        config_path.write_text(SAMPLE_CONFIG, encoding="utf-8")
+        pages = ["intro", "XTCCH0001 chapter one", "XTCCH0002 chapter two"]
+        chapters_header = _b64url_json(
+            [
+                {"name": "第一章", "marker": "XTCCH0001"},
+                {"name": "第二章", "marker": "XTCCH0002"},
+            ]
+        )
+        with mock.patch.object(app, "CONFIG_PATH", str(config_path)):
+            with mock.patch.object(
+                app, "read_pdf_metadata", return_value=("", len(pages))
+            ):
+                with mock.patch.object(
+                    app, "pymupdf", _fake_pymupdf_with_pages(pages)
+                ):
+                    with mock.patch.object(
+                        app.subprocess, "run", side_effect=run_success
+                    ):
+                        status, headers, _ = request(
+                            server,
+                            "POST",
+                            "/convert",
+                            body=FAKE_PDF,
+                            headers={"X-Xtc-Chapters": chapters_header},
+                        )
+        assert status == 200
+        assert headers["X-Xtc-Chapters-Requested"] == "2"
+        assert headers["X-Xtc-Chapters-Detected"] == "2"
+        assert headers["X-Xtc-Chapters-Status"] == "ok"
+        assert headers["X-Xtc-Page-Count"] == "3"
+
+    def test_config_merge_failed_status_reports_zero_detected(self, server, tmp_path):
+        # Chapters are located successfully, but the config that would
+        # carry them into the XTC fails to build -- the final container
+        # ends up with zero chapters, which X-Xtc-Chapters-Detected must
+        # reflect (not the number resolve_chapters located).
+        pages = ["intro", "XTCCH0001 chapter one"]
+        chapters_header = _b64url_json([{"name": "第一章", "marker": "XTCCH0001"}])
+        with mock.patch.object(app, "CONFIG_PATH", "/nonexistent/config.toml"):
+            with mock.patch.object(
+                app, "read_pdf_metadata", return_value=("", len(pages))
+            ):
+                with mock.patch.object(
+                    app, "pymupdf", _fake_pymupdf_with_pages(pages)
+                ):
+                    with mock.patch.object(
+                        app.subprocess, "run", side_effect=run_success
+                    ):
+                        status, headers, _ = request(
+                            server,
+                            "POST",
+                            "/convert",
+                            body=FAKE_PDF,
+                            headers={"X-Xtc-Chapters": chapters_header},
+                        )
+        assert status == 200
+        assert headers["X-Xtc-Chapters-Requested"] == "1"
+        assert headers["X-Xtc-Chapters-Detected"] == "0"
+        assert headers["X-Xtc-Chapters-Status"] == "config-merge-failed"
+
+    def test_header_values_are_ascii_with_no_newlines(self, server):
+        chapters_header = _b64url_json([{"name": "第一章", "marker": "XTCCH0001"}])
+        pages = ["intro", "XTCCH0001 chapter one"]
+        with mock.patch.object(
+            app, "read_pdf_metadata", return_value=("", len(pages))
+        ):
+            with mock.patch.object(app, "pymupdf", _fake_pymupdf_with_pages(pages)):
+                with mock.patch.object(app.subprocess, "run", side_effect=run_success):
+                    _, headers, _ = request(
+                        server,
+                        "POST",
+                        "/convert",
+                        body=FAKE_PDF,
+                        headers={"X-Xtc-Chapters": chapters_header},
+                    )
+        for name in (
+            "X-Xtc-Chapters-Requested",
+            "X-Xtc-Chapters-Detected",
+            "X-Xtc-Chapters-Status",
+            "X-Xtc-Page-Count",
+        ):
+            value = headers[name]
+            assert value.isascii()
+            assert "\n" not in value
+            assert "\r" not in value
 
 
 class TestGracefulShutdown:

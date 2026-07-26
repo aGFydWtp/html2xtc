@@ -38,8 +38,17 @@ describe("renderChapterMarkerHtml", () => {
 });
 
 describe("XTC_CHAPTER_MARKER_CSS", () => {
-  it("uses color: transparent + font-size: 1px — never display/visibility/opacity hiding", () => {
-    expect(XTC_CHAPTER_MARKER_CSS).toContain("color: transparent");
+  it("uses opaque color: white (never transparent/alpha=0) + font-size: 1px — never display/visibility/opacity hiding", () => {
+    // Opaque white, not `color: transparent`: measured against the
+    // PRODUCTION Cloudflare Browser Rendering binding (not just a local
+    // Chrome), alpha=0 text — `color: transparent` alone or combined with
+    // `-webkit-text-fill-color: transparent` — is dropped from the PDF text
+    // layer entirely there, unlike in local Chrome. See XTC_CHAPTER_MARKER_CSS's
+    // own "WHY WHITE, NOT TRANSPARENT" doc comment (src/chapters.ts) before
+    // reverting this to transparent.
+    expect(XTC_CHAPTER_MARKER_CSS).toContain("color: white !important");
+    expect(XTC_CHAPTER_MARKER_CSS).toContain("-webkit-text-fill-color: white !important");
+    expect(XTC_CHAPTER_MARKER_CSS).not.toContain("transparent");
     expect(XTC_CHAPTER_MARKER_CSS).toContain("font-size: 1px");
     expect(XTC_CHAPTER_MARKER_CSS).not.toContain("display: none");
     expect(XTC_CHAPTER_MARKER_CSS).not.toContain("display:none");
@@ -54,6 +63,17 @@ describe("XTC_CHAPTER_MARKER_CSS", () => {
 
   it("targets exactly the .xtc-chapter-marker class", () => {
     expect(XTC_CHAPTER_MARKER_CSS).toContain(`.${XTC_CHAPTER_MARKER_CLASS} {`);
+  });
+
+  it("marks every declaration !important (must outrank src/pdf.ts's `body * { color: black !important }` on the Aozora URL-extraction path)", () => {
+    // Without !important here, the class selector's higher specificity is
+    // irrelevant: CSS resolves the !important tier before specificity, so a
+    // normal declaration always loses to buildPrintRules()'s `body * {
+    // color: black !important }` regardless of source order or selector
+    // specificity — see the doc comment for the full explanation.
+    for (const decl of ["color: white", "-webkit-text-fill-color: white", "font-size: 1px", "user-select: none", "-webkit-user-select: none"]) {
+      expect(XTC_CHAPTER_MARKER_CSS).toContain(`${decl} !important`);
+    }
   });
 });
 

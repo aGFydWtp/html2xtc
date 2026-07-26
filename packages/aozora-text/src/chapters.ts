@@ -45,10 +45,11 @@ export interface XtcChapter {
 export const XTC_CHAPTER_MARKER_CLASS = "xtc-chapter-marker";
 
 /**
- * Renders the marker invisible in print/PDF output while keeping it in
- * Chromium's PDF text layer (`color: transparent` + `font-size: 1px`), and
- * ALSO invisible to a live DOM view — text selection and screen readers —
- * without touching either of those two properties (`user-select: none` +
+ * Renders the marker invisible in print/PDF output while keeping it in the
+ * PDF text layer (opaque white text — `color: white` + `-webkit-text-fill-
+ * color: white`, blended into the always-white printed page, `font-size:
+ * 1px`), and ALSO invisible to a live DOM view — text selection and screen
+ * readers — without touching any of those properties (`user-select: none` +
  * `aria-hidden="true"` on the span itself, renderChapterMarkerHtml below).
  * This second half matters because the AST-based TXT renderer's output is
  * not print-only: frontend/src/components/TextInputPanel.svelte renders the
@@ -58,34 +59,91 @@ export const XTC_CHAPTER_MARKER_CLASS = "xtc-chapter-marker";
  * get a stray `XTCCH0001` before every chapter heading; without
  * `aria-hidden`, a screen reader would announce it.
  *
- * Measured, not just reasoned about: a 30-page vertical-writing document
- * (`writing-mode: vertical-rl`, `@page { size: 528px 792px }`) was printed to
- * PDF via headless Chrome 150.0.7871.182 and its text layer inspected with
- * PyMuPDF, both with the marker as `color: transparent; font-size: 1px`
- * alone and with `user-select: none` + `aria-hidden="true"` added. The
- * marker text survived into the PDF's text layer in BOTH cases, unchanged —
- * confirming `user-select` (which only gates interactive selection in a live
- * view) and `aria-hidden` (which only affects the accessibility tree a
- * screen reader walks) really do leave Chromium's print-to-PDF paint output,
- * and therefore the PDF text layer sourced from it, untouched. The same
- * pass confirmed the opposite for every box-collapsing alternative tried —
- * `display: none`, `visibility: hidden`, `opacity: 0`, `font-size: 0`, and
- * `width: 0`/`inline-size: 0` variants — all of which removed the marker
- * from the text layer entirely, which is exactly why none of them is used
- * here.
+ * `!important` on every declaration here matters for a reason specific to
+ * this shared constant: src/pdf.ts's buildPrintRules() (injected by
+ * renderPdfFromHtml — the Aozora Bunko URL-extraction path, src/aozora.ts)
+ * carries `body * { color: black !important; -webkit-text-fill-color: black
+ * !important; }`, a blanket full-contrast rule for arbitrary scraped pages.
+ * CSS resolves the `!important` tier BEFORE specificity: a normal
+ * (non-`!important`) declaration on `.xtc-chapter-marker` — even though a
+ * class selector is more specific than `body *`'s type-plus-universal
+ * selector — always loses to that `!important` rule regardless of source
+ * order or specificity, so a prior transparent-only version of this
+ * constant was silently repainted opaque BLACK on the URL-extraction path
+ * (see the alpha=0 finding below for why that accidentally kept it working
+ * at all). Marking every declaration here `!important` too moves this rule
+ * into the same importance tier, where `.xtc-chapter-marker`'s class
+ * selector (specificity 0,1,0) legitimately outranks `body *` (0,0,1) and
+ * wins. The AST-based TXT renderer and its self-styled PDF path
+ * (renderSelfStyledHtmlPdf) never inject buildPrintRules() at all (see that
+ * function's own doc comment), so `!important` is a no-op improvement there,
+ * never a hazard.
  *
- * The same measurement found the marker is NOT layout-free: as an ordinary
- * inline element it still takes up a sliver of line-box space, shifting the
- * heading's own glyphs by roughly 7.5px in the printed PDF (about 6.75px
- * with `user-select: none` added) — `font-size: 1px` does not collapse to
- * a true 1px advance, apparently because Chromium enforces its own minimum
- * rendered font size underneath it; the exact shift is therefore not
- * guaranteed stable across Chromium versions. Every page break in that same
- * 30-page document landed identically with and without the marker, so this
- * shift is confined to the heading's own line and never propagates into
- * pagination — and even if it someday did, the marker sits on the exact
- * same line as the heading it marks, so the Container's page lookup for
- * that chapter would still be correct.
+ * WHY WHITE, NOT TRANSPARENT — do not revert this without rereading this
+ * paragraph. An earlier version of this constant used `color: transparent`
+ * (alpha=0), reasoned to be "more surely invisible than any opaque color"
+ * and measured to survive intact through a LOCAL headless Chrome's
+ * print-to-PDF text layer (see the fuller Chrome-vs-Browser-Rendering note
+ * a few lines below). That reasoning does not hold in production: this
+ * service's actual PDF renderer is Cloudflare's Browser Rendering, a
+ * different Chromium build reached only via the BROWSER binding, and an A/B
+ * test run directly against the PRODUCTION binding found alpha=0 text of
+ * any kind — `color: transparent` alone, combined with `-webkit-text-fill-
+ * color: transparent`, at 1px or 14px, with or without `user-select: none`
+ * — is dropped from the PDF text layer entirely there, while every opaque
+ * color tested (default black, `white`, `rgba(255,255,255,1)`, even
+ * `rgba(0,0,0,0.01)`) survived. `font-size` and `user-select` were both
+ * ruled out as factors; alpha alone was the deciding variable. White was
+ * chosen over another near-invisible opaque color (e.g. `rgba(0,0,0,0.01)`)
+ * because every render path here always prints on a plain white page
+ * (`pdfOptions.printBackground: false` in src/pdf.ts means Chromium never
+ * paints ANY CSS background — the canvas is simply blank/white — so white
+ * text blends into it regardless of what background color a document's own
+ * CSS requests) and, unlike a near-transparent gray, `white` dithers to 0%
+ * ink under the Container's 1-bit e-ink conversion with no risk of stray
+ * pixels. If a future engineer is tempted to go back to `color: transparent`
+ * for "more surely invisible," re-run the A/B test against the actual
+ * BROWSER binding first — a local Chrome pass alone is not sufficient
+ * evidence (see below).
+ *
+ * Measured, not just reasoned about — but ONLY ONE of these two measurement
+ * passes reflects this service's real renderer:
+ *
+ * 1. LOCAL headless Chrome (150.0.7871.182), used only to confirm every
+ *    OTHER property here (`font-size: 1px`, `user-select: none`,
+ *    `aria-hidden`) is layout/accessibility-only and does not itself gate
+ *    text-layer survival: a 30-page vertical-writing document
+ *    (`writing-mode: vertical-rl`, `@page { size: 528px 792px }`) was
+ *    printed to PDF and its text layer inspected with PyMuPDF, both with
+ *    the marker as `color: transparent; font-size: 1px` alone and with
+ *    `user-select: none` + `aria-hidden="true"` added. The marker text
+ *    survived in BOTH cases there — but this pass never exercised the
+ *    production renderer, so it could not and did not catch the alpha=0
+ *    drop documented above; do not treat a local-Chrome-only pass as
+ *    sufficient confirmation of anything about text-layer survival on this
+ *    service again.
+ * 2. Cloudflare Browser Rendering (the actual BROWSER binding used in
+ *    production) — see the WHY WHITE paragraph above; this is the pass that
+ *    actually governs this constant's color choice.
+ *
+ * Both passes agreed on the box-collapsing alternatives, independent of
+ * alpha or Chromium build: `display: none`, `visibility: hidden`,
+ * `opacity: 0`, `font-size: 0`, and `width: 0`/`inline-size: 0` variants all
+ * remove the marker from the text layer entirely, which is why none of them
+ * is used here.
+ *
+ * The local-Chrome measurement also found the marker is NOT layout-free: as
+ * an ordinary inline element it still takes up a sliver of line-box space,
+ * shifting the heading's own glyphs by roughly 7.5px in the printed PDF
+ * (about 6.75px with `user-select: none` added) — `font-size: 1px` does not
+ * collapse to a true 1px advance, apparently because Chromium enforces its
+ * own minimum rendered font size underneath it; the exact shift is
+ * therefore not guaranteed stable across Chromium versions. Every page
+ * break in that same 30-page document landed identically with and without
+ * the marker, so this shift is confined to the heading's own line and never
+ * propagates into pagination — and even if it someday did, the marker sits
+ * on the exact same line as the heading it marks, so the Container's page
+ * lookup for that chapter would still be correct.
  *
  * `position: absolute` (no top/left set) was the one alternative that kept
  * the marker in the text layer AND fully eliminated the heading shift — and
@@ -105,10 +163,11 @@ export const XTC_CHAPTER_MARKER_CLASS = "xtc-chapter-marker";
  */
 export const XTC_CHAPTER_MARKER_CSS = `
 .${XTC_CHAPTER_MARKER_CLASS} {
-  color: transparent;
-  font-size: 1px;
-  user-select: none;
-  -webkit-user-select: none;
+  color: white !important;
+  -webkit-text-fill-color: white !important;
+  font-size: 1px !important;
+  user-select: none !important;
+  -webkit-user-select: none !important;
 }
 `;
 

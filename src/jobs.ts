@@ -363,7 +363,11 @@ export function titleFromOutput(output: unknown): string | undefined {
  * Builds the Content-Disposition for the .xtc download. Non-ASCII titles
  * (the normal case for Japanese pages) go into the RFC 5987 filename*
  * parameter; the plain filename carries an ASCII-only fallback so legacy
- * clients still get something sensible.
+ * clients still get something sensible. A title with no ASCII left after
+ * stripping (e.g. an all-Japanese title) omits the plain filename param
+ * entirely (RFC 6266 permits filename* alone) rather than falling back to
+ * the jobId, which would show the user a meaningless UUID for no reason —
+ * jobId is only ever used when there is no title at all.
  */
 export function xtcContentDisposition(
   title: string | undefined,
@@ -372,11 +376,10 @@ export function xtcContentDisposition(
   const base = sanitizeTitle(title) ?? jobId;
   // Keep printable ASCII only (minus the quote, which would break the
   // quoted-string); everything else is representable via filename* alone.
-  const asciiBase =
-    sanitizeTitle(base.replace(/[^ -~]/g, " ").replace(/"/g, " ")) ??
-    jobId;
+  const asciiBase = sanitizeTitle(base.replace(/[^ -~]/g, " ").replace(/"/g, " "));
   const encoded = encodeRfc5987(`${base}.xtc`);
-  return `attachment; filename="${asciiBase}.xtc"; filename*=UTF-8''${encoded}`;
+  const filenameParam = asciiBase !== undefined ? `filename="${asciiBase}.xtc"; ` : "";
+  return `attachment; ${filenameParam}filename*=UTF-8''${encoded}`;
 }
 
 /** RFC 5987 ext-value percent-encoding (stricter than encodeURIComponent). */

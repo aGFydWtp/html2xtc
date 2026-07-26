@@ -345,12 +345,12 @@ describe("xtcContentDisposition", () => {
     );
   });
 
-  it("percent-encodes a Japanese title and keeps an ASCII fallback", () => {
+  it("omits the plain filename param for an all-Japanese title (no ASCII survives)", () => {
     const header = xtcContentDisposition("日本語タイトル", JOB_ID);
     expect(header).toBe(
-      `attachment; filename="${JOB_ID}.xtc"; filename*=UTF-8''` +
-        `${encodeURIComponent("日本語タイトル")}.xtc`,
+      `attachment; filename*=UTF-8''${encodeURIComponent("日本語タイトル")}.xtc`,
     );
+    expect(header).not.toContain("filename=");
   });
 
   it("keeps the ASCII part of a mixed title as the fallback", () => {

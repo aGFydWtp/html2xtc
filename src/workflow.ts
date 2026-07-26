@@ -1000,7 +1000,10 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
         let inputPageCounts: number[];
         let outputPages: number;
         try {
-          ({ bytes: merged, inputPageCounts, outputPages } = await mergeChunkPdfs(chunkBytes));
+          ({ bytes: merged, inputPageCounts, outputPages } = await mergeChunkPdfs(
+            chunkBytes,
+            manifest.title,
+          ));
         } catch (error) {
           // mergeChunkPdfs only ever throws one of the fixed spec §19
           // messages (MERGE_ERROR_FAILED / MERGE_ERROR_PAGE_MISMATCH) —

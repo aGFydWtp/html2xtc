@@ -534,11 +534,13 @@ const DANGEROUS_VALUE_PATTERN = /expression\s*\(|javascript:|vbscript:|-moz-bind
  * weight of a rule that explicitly targets a class token this EPUB's author
  * had no legitimate reason to reference, and to fail closed rather than
  * silently accept it. Not a complete defense either way: `[class]`
- * (attribute-exists, no value) or a case-varied class name
- * (`.Xtc-Chapter-Marker` — HTML class matching is case-sensitive, so this
- * would never actually match our span, but is deliberately not chased here)
+ * (attribute-exists, no value) and CSS identifier escapes (`.xtc\002d...`)
  * are accepted gaps, on the grounds that the inline-style layer above is the
- * one actually load-bearing for invisibility.
+ * one actually load-bearing for invisibility. The `i` flag below, by
+ * contrast, means a case-varied spelling (`.Xtc-Chapter-Marker`) IS stripped
+ * — deliberate over-blocking, not a gap: HTML class matching is
+ * case-sensitive, so such a rule could never have matched our span anyway,
+ * and dropping it costs nothing.
  */
 const XTC_CHAPTER_MARKER_SELECTOR_PATTERN = new RegExp(
   `\\.${XTC_CHAPTER_MARKER_CLASS}(?![-\\w])|\\[\\s*class[^\\]]*${XTC_CHAPTER_MARKER_CLASS}[^\\]]*\\]`,

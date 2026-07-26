@@ -101,9 +101,9 @@ describe("locatePackageDocument: OPF path traversal", () => {
   });
 });
 
-describe("locatePackageDocument: DOCTYPE / ENTITY (design decision D3)", () => {
-  it("rejects a DOCTYPE declaration", () => {
-    const xml = `<?xml version="1.0"?><!DOCTYPE container><container version="1.0"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`;
+describe("locatePackageDocument: DOCTYPE / ENTITY (design decision D3, narrowed — see src/epub/errors.ts#assertNoXxeMarkers)", () => {
+  it("rejects a DOCTYPE with an external SYSTEM identifier", () => {
+    const xml = `<?xml version="1.0"?><!DOCTYPE container SYSTEM "file:///etc/passwd"><container version="1.0"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`;
     expect(() => locatePackageDocument(entriesOf(xml))).toThrow(EpubError);
     try {
       locatePackageDocument(entriesOf(xml));
@@ -112,8 +112,38 @@ describe("locatePackageDocument: DOCTYPE / ENTITY (design decision D3)", () => {
     }
   });
 
+  it("rejects a DOCTYPE with an external PUBLIC identifier", () => {
+    const xml = `<?xml version="1.0"?><!DOCTYPE container PUBLIC "-//W3C//DTD XHTML 1.0//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><container version="1.0"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`;
+    expect(() => locatePackageDocument(entriesOf(xml))).toThrow(EpubError);
+  });
+
+  it("rejects a DOCTYPE with an internal subset", () => {
+    const xml = `<?xml version="1.0"?><!DOCTYPE container [ <!ELEMENT container ANY> ]><container version="1.0"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`;
+    expect(() => locatePackageDocument(entriesOf(xml))).toThrow(EpubError);
+  });
+
+  it("rejects more than one DOCTYPE marker (ambiguous — safe side)", () => {
+    const xml = `<?xml version="1.0"?><!DOCTYPE container><!DOCTYPE container><container version="1.0"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`;
+    expect(() => locatePackageDocument(entriesOf(xml))).toThrow(EpubError);
+  });
+
   it("rejects an ENTITY declaration", () => {
     const xml = `<?xml version="1.0"?><!ENTITY xxe SYSTEM "file:///etc/passwd"><container version="1.0"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`;
     expect(() => locatePackageDocument(entriesOf(xml))).toThrow(EpubError);
+  });
+
+  it("rejects an ENTITY declaration inside a DOCTYPE's internal subset (billion-laughs shape)", () => {
+    const xml = `<?xml version="1.0"?><!DOCTYPE container [ <!ENTITY xxe "pwned"> ]><container version="1.0"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`;
+    expect(() => locatePackageDocument(entriesOf(xml))).toThrow(EpubError);
+  });
+
+  it("ACCEPTS a bare DOCTYPE with no external identifier and no internal subset", () => {
+    const xml = `<?xml version="1.0"?>\n<!DOCTYPE container>\n<container version="1.0"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`;
+    expect(locatePackageDocument(entriesOf(xml))).toBe("OEBPS/content.opf");
+  });
+
+  it("ACCEPTS a bare, lowercase DOCTYPE split across multiple lines with irregular whitespace", () => {
+    const xml = `<?xml version="1.0"?>\n<!doctype   container\n  >\n<container version="1.0"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`;
+    expect(locatePackageDocument(entriesOf(xml))).toBe("OEBPS/content.opf");
   });
 });

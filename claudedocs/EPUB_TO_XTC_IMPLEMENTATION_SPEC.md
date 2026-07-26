@@ -445,7 +445,9 @@ META-INF/container.xml
 
 XML パーサーとして `linkedom` を使用する。
 
-外部実体参照、DTD、XXE は処理しない。文字列内に `<!DOCTYPE` または `<!ENTITY` が存在する場合は拒否または除去する。
+外部実体参照、DTD、XXE は処理しない。文字列内に `<!ENTITY` が存在する場合、または `<!DOCTYPE` が外部識別子（`SYSTEM`/`PUBLIC`）や内部サブセット（`[...]`）を伴う場合、複数の `<!DOCTYPE` が存在する場合は拒否する（design decision D3、2026-07-26 に見直し）。
+
+内部サブセットも外部識別子も持たない素の `<!DOCTYPE name>` は拒否しない。実害（billion laughs・外部実体フェッチ）が生じるのは ENTITY 宣言または DOCTYPE が指す外部/内部サブセットであり、素の DOCTYPE 単独ではどちらも起こり得ない。加えて本パーサー（linkedom の `DOMParser`）は外部実体・DTD を一切解決しないため、素の DOCTYPE を通しても実害はない（詳細: `src/epub/errors.ts` の `assertNoXxeMarkers` doc comment）。実例: 青空文庫テキスト変換ツール由来の EPUB（例: 河童.epub）は nav.xhtml を含む全 XHTML に無害な `<!DOCTYPE html>` を付与しており、旧実装ではこれが目次解析全滅の原因になっていた。
 
 ## 8.4 OPF
 
@@ -539,9 +541,9 @@ text/html
 
 原則として `linear="no"` の item は除外する。
 
-ただし `includeTableOfContents=true` の場合、navigation document を別途目次として挿入するため、spine 内の目次ページを二重挿入しない。
+EPUB3 の navigation document（manifest item の `properties="nav"`）は、それが spine item としても宣言されていた場合、`includeTableOfContents` の値に関わらず常に本文候補から除外する（2026-07-26 バグ修正で仕様変更。旧仕様は `includeTableOfContents=true` の場合のみ除外していたが、これだと `false`（目次を含めない）を選んでも nav.xhtml がそのまま本文ページとして出力されてしまい、設定の意味と実際の挙動が食い違っていた）。nav.xhtml は本文ではなくナビゲーション用の成果物であり、XTC 上ではリンクも機能しないため、`includeTableOfContents=false` は「ナビゲーション由来のコンテンツを一切出さない」、`true` は「ツールが生成した目次セクション（8.7 参照）に置き換える」という、両方とも一貫した意味になる。EPUB2 の NCX はそもそも spine item になり得ない（media-type が XHTML 系でないため、本文候補の絞り込みで自動的に除外される）ので、この除外は EPUB3 の nav にのみ適用される。
 
-spine が空の場合は 422 とする。
+この除外の結果 spine が空になった場合も含め、spine が空の場合は 422 とする（`EMPTY_SPINE`）。壊れた EPUB（linear な本文候補が nav.xhtml だけ、など）でない限り実際には起こらない。
 
 ## 8.7 Navigation
 
@@ -563,7 +565,7 @@ application/x-dtbncx+xml
 - spine item ごとの章タイトル推定
 - ジョブログまたは将来機能向けの章情報
 
-目次解析に失敗しても本文変換は継続する。
+目次解析に失敗しても本文変換は継続する。ただし manifest 上は目次文書（`properties="nav"` または `application/x-dtbncx+xml`）が存在するのに解析結果が `source: "none"` / `entries: []` に縮退した場合は、`EpubWarning`（構造化コードのみ、EPUB 内部パス・本文・章名は含めない）を1件残す（2026-07-26 バグ修正で追加。目次がそもそも存在しない EPUB では出さない）。
 
 ---
 

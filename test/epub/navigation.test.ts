@@ -148,13 +148,42 @@ describe("parseEpubNavigation: graceful degradation (spec §8.7 目次解析に�
     expect(nav).toEqual({ source: "none", entries: [] });
   });
 
-  it("returns source:none (never throws) when the nav document contains a DOCTYPE", () => {
+  it("returns source:none (never throws) when the nav document contains a DANGEROUS DOCTYPE (external SYSTEM identifier — real XXE shape)", () => {
     const pkg = parsePackageDocument(new Map([[OPF_PATH, new TextEncoder().encode(OPF_WITH_NAV)]]), OPF_PATH);
-    const maliciousNav = `<!DOCTYPE html>${NAV_XHTML}`;
+    const maliciousNav = `<!DOCTYPE html SYSTEM "file:///etc/passwd">${NAV_XHTML}`;
     const entries = new Map([
       [OPF_PATH, new TextEncoder().encode(OPF_WITH_NAV)],
       ["OEBPS/nav.xhtml", new TextEncoder().encode(maliciousNav)],
     ]);
     expect(parseEpubNavigation(entries, pkg)).toEqual({ source: "none", entries: [] });
+  });
+
+  it("returns source:none (never throws) when the nav document contains a DOCTYPE with an internal subset", () => {
+    const pkg = parsePackageDocument(new Map([[OPF_PATH, new TextEncoder().encode(OPF_WITH_NAV)]]), OPF_PATH);
+    const maliciousNav = `<!DOCTYPE html [ <!ENTITY xxe "pwned"> ]>${NAV_XHTML}`;
+    const entries = new Map([
+      [OPF_PATH, new TextEncoder().encode(OPF_WITH_NAV)],
+      ["OEBPS/nav.xhtml", new TextEncoder().encode(maliciousNav)],
+    ]);
+    expect(parseEpubNavigation(entries, pkg)).toEqual({ source: "none", entries: [] });
+  });
+
+  it("PARSES SUCCESSFULLY (design decision D3, narrowed) when the nav document contains only a bare, harmless DOCTYPE — real-world repro: 青空文庫-conversion-toolchain EPUBs (e.g. 河童.epub) ship a plain <!DOCTYPE html> on every XHTML file, including nav.xhtml", () => {
+    const pkg = parsePackageDocument(new Map([[OPF_PATH, new TextEncoder().encode(OPF_WITH_NAV)]]), OPF_PATH);
+    // DOCTYPE placed after the XML declaration (well-formed XML requires
+    // this ordering — unlike the two rejection tests above, this one needs
+    // parseXmlDocument to actually succeed past assertNoXxeMarkers), matching
+    // 河童.epub's real on-disk structure.
+    const harmlessNav = NAV_XHTML.replace(
+      '<?xml version="1.0"?>',
+      '<?xml version="1.0"?>\n<!DOCTYPE html>',
+    );
+    const entries = new Map([
+      [OPF_PATH, new TextEncoder().encode(OPF_WITH_NAV)],
+      ["OEBPS/nav.xhtml", new TextEncoder().encode(harmlessNav)],
+    ]);
+    const nav = parseEpubNavigation(entries, pkg);
+    expect(nav.source).toBe("nav");
+    expect(nav.entries.length).toBe(2);
   });
 });

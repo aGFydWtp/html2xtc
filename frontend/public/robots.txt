@@ -1,0 +1,23 @@
+# AI crawlers (training crawlers like GPTBot/ClaudeBot/Google-Extended/CCBot,
+# and user-driven fetchers like ChatGPT-User/Claude-User) are intentionally
+# NOT blocked by user-agent here. Being discoverable/citable by LLMs is a
+# goal of this service, not a risk to mitigate.
+#
+# What IS disallowed below is the API execution surface: paths that trigger
+# real work (D1/R2 reads, conversions) rather than serving a page, so a
+# crawler doing plain GETs across the site doesn't burn into the per-IP
+# rate limit or probe pages that were never meant to be indexed.
+#
+# Pure POST-only endpoints (POST /convert, POST /preview/text) are not
+# listed: a GET to them 405s before any rate-limit check runs, so a crawler
+# following links can't reach them or spend budget on them regardless.
+#
+# See /llms.txt for how an LLM agent should actually call this API.
+
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /download/
+Disallow: /opds/
+Disallow: /internal/
+Disallow: /jobs

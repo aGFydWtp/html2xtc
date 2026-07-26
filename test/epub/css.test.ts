@@ -196,6 +196,36 @@ describe("sanitizeCss: disallowed properties (design decision D2 許可プロパ
   });
 });
 
+describe("sanitizeCss: XTC chapter-marker selector removal (defense-in-depth #2, backing the inline-style defense in sanitize.ts)", () => {
+  it("drops a rule whose selector directly targets the marker class", () => {
+    const out = sanitizeCss(".xtc-chapter-marker { color: black !important; }", noResolve);
+    expect(out).toBe("");
+  });
+
+  it("drops a rule whose selector combines the marker class with a tag/descendant (the actually-reported repro)", () => {
+    const out = sanitizeCss(
+      "body span.xtc-chapter-marker { color: black !important; font-size: 24px !important; }",
+      noResolve,
+    );
+    expect(out).toBe("");
+  });
+
+  it("drops a class-attribute-selector variant", () => {
+    expect(sanitizeCss('[class~="xtc-chapter-marker"] { color: red; }', noResolve)).toBe("");
+    expect(sanitizeCss('[class*="xtc-chapter-marker"] { color: red; }', noResolve)).toBe("");
+  });
+
+  it("does NOT drop an unrelated rule whose class name merely contains the marker class as a substring", () => {
+    const out = sanitizeCss(".xtc-chapter-marker-note { color: red; }", noResolve);
+    expect(out).toContain("color: red");
+  });
+
+  it("does NOT catch a selector that never mentions the marker class at all (documented gap — the inline-style layer in sanitize.ts is what actually defends against this)", () => {
+    const out = sanitizeCss("section > span:first-child { color: red !important; }", noResolve);
+    expect(out).toContain("color: red");
+  });
+});
+
 describe("sanitizeInlineStyle", () => {
   it("sanitizes an inline style attribute value the same way", () => {
     expect(sanitizeInlineStyle("color: red; behavior: url(evil.htc)", noResolve)).toBe("color: red;");

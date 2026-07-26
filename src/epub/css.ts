@@ -2,6 +2,7 @@
 // Copyright (C) 2026 aGFydWtp
 
 import { hasDisallowedUrlScheme } from "./assets";
+import { XTC_CHAPTER_MARKER_CLASS } from "../../packages/aozora-text/src/index";
 
 /**
  * CSS sanitization (EPUB spec §10, design decision D2): a hand-written
@@ -496,6 +497,54 @@ const MARGIN_PROPERTIES = new Set([
 
 const DANGEROUS_VALUE_PATTERN = /expression\s*\(|javascript:|vbscript:|-moz-binding|behavior\s*:/i;
 
+/**
+ * Defense-in-depth #2 against an EPUB-authored rule targeting our own XTC
+ * chapter-marker spans by selector (e.g. `body span.xtc-chapter-marker {
+ * color: black !important; font-size: 24px !important; }`, reported and
+ * reproduced against a real EPUB fixture): drops any rule whose selector
+ * references the marker class, however it's spelled — a bare/combined class
+ * selector (`.xtc-chapter-marker`, `span.xtc-chapter-marker`, `.foo
+ * .xtc-chapter-marker`) or an attribute selector matching on `class`
+ * (`[class~="xtc-chapter-marker"]`, `[class*="xtc-chapter-marker"]`, ...).
+ * Suffix-token-bounded (`(?![-\w])` right after the class name) so this
+ * never matches a DIFFERENT, merely similarly-named class like
+ * `.xtc-chapter-marker-note`. No prefix bound is needed on the `.` itself —
+ * unlike the suffix, ANY character may legitimately precede a class
+ * selector's leading `.` (a tag name as in `span.xtc-chapter-marker`,
+ * another class in a compound selector as in `.foo.xtc-chapter-marker`,
+ * whitespace, a combinator, …), so requiring one there would silently
+ * exempt exactly the compound-selector shape the actually-reported repro
+ * used (`body span.xtc-chapter-marker`). A DIFFERENT class name that merely
+ * ENDS with our class's name, like `.my-xtc-chapter-marker`, is still never
+ * matched — the literal `.` in this pattern must sit immediately before
+ * "xtc-chapter-marker", and in `.my-xtc-chapter-marker` it instead sits
+ * before "my-xtc-chapter-marker" (one continuous identifier), so the
+ * pattern never finds a `.` in the right place to begin with.
+ *
+ * This is explicitly the SECONDARY layer, not the fix: sanitize.ts's marker
+ * spans carry their own `style="...!important"` attribute, which always wins
+ * the cascade over ANY selector-based declaration at the same importance
+ * level regardless of that selector's specificity (CSS Cascading Level 4
+ * §5.1) — that inline style is what actually keeps a marker invisible no
+ * matter what an EPUB's stylesheet says, including a selector that doesn't
+ * even mention this class at all (e.g. `section > span:first-child { color:
+ * red !important }`), which this function CANNOT catch (it only ever sees
+ * the selector text, never which elements it will end up matching at
+ * render time). This layer exists only to also strip the *pointless* dead
+ * weight of a rule that explicitly targets a class token this EPUB's author
+ * had no legitimate reason to reference, and to fail closed rather than
+ * silently accept it. Not a complete defense either way: `[class]`
+ * (attribute-exists, no value) or a case-varied class name
+ * (`.Xtc-Chapter-Marker` — HTML class matching is case-sensitive, so this
+ * would never actually match our span, but is deliberately not chased here)
+ * are accepted gaps, on the grounds that the inline-style layer above is the
+ * one actually load-bearing for invisibility.
+ */
+const XTC_CHAPTER_MARKER_SELECTOR_PATTERN = new RegExp(
+  `\\.${XTC_CHAPTER_MARKER_CLASS}(?![-\\w])|\\[\\s*class[^\\]]*${XTC_CHAPTER_MARKER_CLASS}[^\\]]*\\]`,
+  "i",
+);
+
 const URL_FUNCTION = /url\(\s*(['"]?)([^'")]*)\1\s*\)/gi;
 
 /**
@@ -609,6 +658,9 @@ function sanitizeNodes(nodes: CssNode[], resolveUrl: CssUrlResolver): CssNode[] 
       }
       out.push({ kind: "at-rule-list", name: node.name, prelude: listPrelude, body: sanitizeNodes(node.body, resolveUrl) });
       continue;
+    }
+    if (XTC_CHAPTER_MARKER_SELECTOR_PATTERN.test(node.selector)) {
+      continue; // see XTC_CHAPTER_MARKER_SELECTOR_PATTERN's own doc comment
     }
     if (DANGEROUS_VALUE_PATTERN.test(node.selector)) {
       continue;

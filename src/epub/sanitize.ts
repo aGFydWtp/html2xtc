@@ -169,17 +169,53 @@ export interface ChapterMarkerPlan {
 }
 
 /**
- * Creates one invisible XTC chapter-marker `<span>` (packages/aozora-text's
- * XTC_CHAPTER_MARKER_CSS makes it print-invisible; aria-hidden keeps a
- * screen reader from announcing it) per `markers` entry, and inserts them as
- * `target`'s first children — iterating in REVERSE so `markers[0]` ends up
- * as the literal first child (each `insertBefore(span, target.firstChild)`
- * pushes the previous insertion one slot later, so inserting the LAST marker
- * first and the FIRST marker last is what makes the final DOM order match
- * `markers`' own order). Mirrors src/aozora.ts's insertChapterMarkers
- * (same span shape, same "first child of the target element, never a
+ * Inline-style defense against an EPUB-authored stylesheet rule that
+ * targets this class (reported bug, reproduced against a real fixture:
+ * `body span.xtc-chapter-marker { color: black !important; font-size: 24px
+ * !important; }` outranks a bare `.xtc-chapter-marker` class rule by
+ * specificity — the CSS cascade orders same-origin, same-importance
+ * declarations by specificity BEFORE source order, so "our rule is emitted
+ * later in the document" (html.ts's buildFinalCss) is not the safety
+ * property it looks like). An inline `style=""` attribute's declarations
+ * always win the cascade over ANY selector-based declaration at the same
+ * importance level, regardless of that selector's specificity (CSS
+ * Cascading Level 4 §5.1) — so setting this directly on each marker span
+ * closes the gap regardless of how "clever" an EPUB's own selector is,
+ * including one that never even mentions this class (see css.ts's
+ * XTC_CHAPTER_MARKER_SELECTOR_PATTERN doc comment for the narrower,
+ * selector-text-based secondary layer this backs up). Deliberately NOT
+ * reusing packages/aozora-text's XTC_CHAPTER_MARKER_CSS text (which has no
+ * `!important` — safe there only because the URL/TXT pipelines never share
+ * a document with arbitrary author CSS the way an EPUB upload does): this
+ * constant is this module's own, EPUB-specific hardening, not a change to
+ * that shared constant's existing output.
+ */
+const XTC_CHAPTER_MARKER_INLINE_STYLE =
+  "color:transparent!important;font-size:1px!important;user-select:none!important;-webkit-user-select:none!important";
+
+/**
+ * Creates one invisible XTC chapter-marker `<span>` (XTC_CHAPTER_MARKER_INLINE_STYLE
+ * above makes it print-invisible even against a hostile EPUB stylesheet;
+ * aria-hidden keeps a screen reader from announcing it) per `markers`
+ * entry, and inserts them as `target`'s first children — iterating in
+ * REVERSE so `markers[0]` ends up as the literal first child (each
+ * `insertBefore(span, target.firstChild)` pushes the previous insertion one
+ * slot later, so inserting the LAST marker first and the FIRST marker last
+ * is what makes the final DOM order match `markers`' own order). Mirrors
+ * src/aozora.ts's insertChapterMarkers (same span shape modulo the extra
+ * `style` attribute, same "first child of the target element, never a
  * preceding sibling" split-safety rationale — see that function's doc
  * comment for why sibling placement is unsafe here).
+ *
+ * MUST be called only AFTER every pass in sanitizeSpineChapter that touches
+ * a `style` attribute (the attribute-sanitization loop's `sanitizeInlineStyle`
+ * branch) has already finished — sanitizeInlineStyle's job is to filter
+ * UNTRUSTED, EPUB-authored style text through the same property allowlist
+ * as sanitizeCss, and running this function's own TRUSTED, code-generated
+ * style value through that filter risks it being reformatted or having a
+ * property dropped for no benefit (every property it sets is already
+ * hand-picked to be safe). sanitizeSpineChapter enforces this ordering by
+ * only ever calling this function once, near its very end.
  */
 function insertChapterMarkerSpans(
   document: LinkedomDocument,
@@ -190,6 +226,7 @@ function insertChapterMarkerSpans(
     const span = document.createElement("span");
     span.setAttribute("class", XTC_CHAPTER_MARKER_CLASS);
     span.setAttribute("aria-hidden", "true");
+    span.setAttribute("style", XTC_CHAPTER_MARKER_INLINE_STYLE);
     span.textContent = markers[i] ?? "";
     target.insertBefore(span, target.firstChild);
   }
@@ -287,15 +324,6 @@ export function sanitizeSpineChapter(
     el.remove();
   }
 
-  // XTC chapter markers, fragment-less case: a TOC entry pointing at this
-  // whole spine item (no "#id") always resolves — this chapter's body
-  // always exists here — so these go in unconditionally, before the id pass
-  // below (whose byId markers need surviving [id] elements to already be in
-  // their final, stripped form).
-  if (markerPlan !== undefined && markerPlan.atStart.length > 0) {
-    insertChapterMarkerSpans(document, body, markerPlan.atStart);
-  }
-
   const cssResolver: CssUrlResolver = (rawUrl) => {
     if (hasDisallowedUrlScheme(rawUrl)) {
       return undefined;
@@ -314,19 +342,24 @@ export function sanitizeSpineChapter(
   // element the browser happens to pick first, which is silently wrong
   // rather than merely broken).
   const seenIds = new Set<string>();
-  // XTC chapter markers, fragment case: tracks which of markerPlan.byId's
-  // raw ids have already been matched to their (first-DOM-order-occurrence)
-  // element, so a later duplicate of the same raw id is never also given a
-  // marker — see ChapterMarkerPlan's own doc comment for why only the first
-  // occurrence counts. Left as an empty Set (and markerConsumedRawIds stays
-  // empty) when markerPlan is undefined.
-  const markerConsumedRawIds = new Set<string>();
+  // XTC chapter markers, fragment case: records which element is each of
+  // markerPlan.byId's raw ids' FIRST DOM-order occurrence — the actual
+  // marker <span> insertion is deferred to after the attribute-sanitization
+  // loop below (see insertChapterMarkerSpans's own doc comment for why), so
+  // this loop only decides WHICH element will receive it, keyed by the
+  // still-pre-attribute-sanitization `el` reference. A later duplicate of
+  // the same raw id is never recorded (checked via `isFirstOccurrence`
+  // below, computed BEFORE the dup-suffix branch mutates `candidate`) — see
+  // ChapterMarkerPlan's own doc comment for why only the first occurrence
+  // counts. Left empty when markerPlan is undefined.
+  const markerTargetByRawId = new Map<string, LinkedomElement>();
   for (const el of [...body.querySelectorAll("[id]")]) {
     const rawId = el.getAttribute("id");
     if (rawId === null || rawId.trim().length === 0) {
       continue;
     }
     let candidate = namespacedId(ctx.chapterIndex, rawId);
+    const isFirstOccurrence = !seenIds.has(candidate);
     if (seenIds.has(candidate)) {
       let suffix = 2;
       while (seenIds.has(`${candidate}-dup${suffix}`)) {
@@ -337,18 +370,17 @@ export function sanitizeSpineChapter(
     seenIds.add(candidate);
     el.setAttribute("id", candidate);
 
-    if (markerPlan !== undefined && !markerConsumedRawIds.has(rawId)) {
+    if (markerPlan !== undefined && isFirstOccurrence) {
       const markers = markerPlan.byId.get(rawId);
       if (markers !== undefined && markers.length > 0) {
-        insertChapterMarkerSpans(document, el, markers);
-        markerConsumedRawIds.add(rawId);
+        markerTargetByRawId.set(rawId, el);
       }
     }
   }
   const unresolvedMarkerIds =
     markerPlan === undefined
       ? []
-      : [...markerPlan.byId.keys()].filter((id) => !markerConsumedRawIds.has(id));
+      : [...markerPlan.byId.keys()].filter((id) => !markerTargetByRawId.has(id));
 
   for (const el of [...body.querySelectorAll("*")]) {
     for (const name of [...el.getAttributeNames()]) {
@@ -438,6 +470,26 @@ export function sanitizeSpineChapter(
           el.removeAttribute(name);
         }
         continue;
+      }
+    }
+  }
+
+  // XTC chapter markers: inserted here, deliberately AFTER every pass above
+  // that could touch a `style` attribute (see insertChapterMarkerSpans's own
+  // doc comment for why). Fragment-less (atStart) markers always insert;
+  // fragment (byId) markers insert only at the target Pass 1 already found
+  // — an id requested in markerPlan.byId but never recorded there (dropped
+  // by STRIP_SELECTOR, never existed, or shadowed by a duplicate) simply has
+  // no entry in markerTargetByRawId and is already accounted for in
+  // unresolvedMarkerIds above.
+  if (markerPlan !== undefined) {
+    if (markerPlan.atStart.length > 0) {
+      insertChapterMarkerSpans(document, body, markerPlan.atStart);
+    }
+    for (const [rawId, markers] of markerPlan.byId) {
+      const target = markerTargetByRawId.get(rawId);
+      if (target !== undefined) {
+        insertChapterMarkerSpans(document, target, markers);
       }
     }
   }

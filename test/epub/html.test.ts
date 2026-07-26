@@ -560,6 +560,63 @@ describe("prepareEpubDocument: XTC chapter/table-of-contents metadata (top-level
     const withoutToc = prepareEpubDocument(withoutTocZip, options(), context());
     expect(withoutToc.html).not.toContain("xtc-chapter-marker {");
   });
+
+  it("stays invisible even against an EPUB stylesheet rule that outranks the class rule by specificity (reported bug repro)", () => {
+    // The exact repro reported against the review: a same-origin,
+    // higher-specificity `!important` rule (0,2,0 vs. the class rule's
+    // 0,1,0) that, absent the inline-style defense, would win the cascade
+    // over html.ts's own `.xtc-chapter-marker { ... !important }` rule
+    // regardless of source order.
+    const files = minimalEpub3Files();
+    files["OEBPS/chapter1.xhtml"] = `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Chapter 1</title><style>body span.xtc-chapter-marker { color: black !important; font-size: 24px !important; }</style></head>
+<body><h1>Chapter 1</h1><p>Hello, world.</p></body>
+</html>`;
+    const result = prepareEpubDocument(buildEpubZip(files), options(), context());
+
+    // Layer 2 (css.ts): the offending rule never survives sanitizeCss at
+    // all — it's gone from the generated <style> block entirely. (Checking
+    // for the selector text and the color value, not "24px": that font-size
+    // value coincidentally collides with DEFAULT_EPUB_OPTIONS.fontSizePx,
+    // which legitimately appears elsewhere in the generated CSS.)
+    expect(result.html).not.toContain("xtc-chapter-marker {\n  color: black");
+    expect(result.html).not.toContain("body span.xtc-chapter-marker");
+
+    // Layer 1 (the actual fix): the marker span itself carries an inline
+    // style that would win the cascade even if layer 2 somehow missed a
+    // differently-worded attack — see sanitize.ts's
+    // XTC_CHAPTER_MARKER_INLINE_STYLE doc comment for why an inline style
+    // attribute always outranks any selector-based declaration regardless
+    // of specificity. This test can only assert the inline style is
+    // present with the expected declarations (no headless browser is
+    // available in this suite to assert the actual rendered/computed
+    // color) — the cascade-ordering guarantee itself is a CSS spec fact
+    // (CSS Cascading Level 4 §5.1), not something re-verified here.
+    expect(result.html).toMatch(
+      /<span(?=[^>]*class="xtc-chapter-marker")(?=[^>]*style="color:transparent!important;font-size:1px!important;user-select:none!important;-webkit-user-select:none!important")[^>]*>XTCCH0001<\/span>/,
+    );
+  });
+
+  it("the marker's inline style still wins even against a selector that never mentions the marker class at all (documented layer-2 gap; layer 1 still applies)", () => {
+    const files = minimalEpub3Files();
+    files["OEBPS/chapter1.xhtml"] = `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Chapter 1</title><style>section > span:first-child { color: red !important; font-size: 30px !important; }</style></head>
+<body><h1>Chapter 1</h1><p>Hello, world.</p></body>
+</html>`;
+    const result = prepareEpubDocument(buildEpubZip(files), options(), context());
+
+    // Layer 2 can't catch this (the selector never names our class) — the
+    // rule survives sanitization, by design (see
+    // XTC_CHAPTER_MARKER_SELECTOR_PATTERN's own doc comment).
+    expect(result.html).toContain("color: red");
+    // But the marker span's own inline style is unconditional and present
+    // regardless, which is what actually keeps it invisible.
+    expect(result.html).toMatch(
+      /<span(?=[^>]*class="xtc-chapter-marker")(?=[^>]*style="color:transparent!important;font-size:1px!important;user-select:none!important;-webkit-user-select:none!important")[^>]*>XTCCH0001<\/span>/,
+    );
+  });
 });
 
 describe("resolveMaxEpubHtmlBytes", () => {

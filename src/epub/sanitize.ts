@@ -184,14 +184,27 @@ export interface ChapterMarkerPlan {
  * including one that never even mentions this class (see css.ts's
  * XTC_CHAPTER_MARKER_SELECTOR_PATTERN doc comment for the narrower,
  * selector-text-based secondary layer this backs up). Deliberately NOT
- * reusing packages/aozora-text's XTC_CHAPTER_MARKER_CSS text (which has no
- * `!important` — safe there only because the URL/TXT pipelines never share
- * a document with arbitrary author CSS the way an EPUB upload does): this
- * constant is this module's own, EPUB-specific hardening, not a change to
- * that shared constant's existing output.
+ * reusing packages/aozora-text's XTC_CHAPTER_MARKER_CSS text verbatim (this
+ * module inlines its own copy of the same declarations as a `style=""`
+ * attribute instead of a class rule) — that shared constant's own doc
+ * comment explains why it also now needs `!important` and opaque `white`,
+ * for the same alpha=0 reason as this one.
+ *
+ * `color`/`-webkit-text-fill-color: white` (NOT `transparent`) for the same
+ * reason as packages/aozora-text's XTC_CHAPTER_MARKER_CSS — see that
+ * constant's "WHY WHITE, NOT TRANSPARENT" doc comment for the full
+ * production A/B evidence. Short version: Cloudflare Browser Rendering (the
+ * actual renderer behind renderSelfStyledHtmlPdf, which this module's output
+ * always goes through) drops alpha=0 text from the PDF text layer entirely,
+ * regardless of font-size or user-select; opaque white blends into the
+ * always-white printed page (renderSelfStyledHtmlPdf never disables
+ * printBackground-driven whiteness — see src/pdf.ts's PDF_OPTIONS) and
+ * survives. `-webkit-text-fill-color` is set alongside `color` because an
+ * EPUB stylesheet could otherwise repaint the glyphs via that property alone
+ * even with `color` pinned inline.
  */
 const XTC_CHAPTER_MARKER_INLINE_STYLE =
-  "color:transparent!important;font-size:1px!important;user-select:none!important;-webkit-user-select:none!important";
+  "color:white!important;-webkit-text-fill-color:white!important;font-size:1px!important;user-select:none!important;-webkit-user-select:none!important";
 
 /**
  * Creates one invisible XTC chapter-marker `<span>` (XTC_CHAPTER_MARKER_INLINE_STYLE

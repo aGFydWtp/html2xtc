@@ -638,9 +638,21 @@ describe("prepareEpubDocument: XTC chapter/table-of-contents metadata (top-level
     expect(result.chapters).toEqual([{ name: "Chapter 1", marker: "XTCCH0001" }]);
   });
 
-  it("the XTC_CHAPTER_MARKER_CLASS CSS rule is only emitted when there are chapters", () => {
+  it("the XTC_CHAPTER_MARKER_CLASS CSS rule is only emitted when there are chapters, and uses opaque white — never transparent (backup layer behind the marker span's own inline style; see buildFinalCss's xtcChapterMarkerRule doc comment for why both this file's color choice AND test/epub/html.test.ts's own choice to pin exact values, not just selector presence, both matter)", () => {
     const withToc = prepareEpubDocument(buildEpubZip(minimalEpub3Files()), options(), context());
     expect(withToc.html).toContain("xtc-chapter-marker {");
+    // Opaque white, not `color: transparent`: this rule is dead code today
+    // (an inline style on every marker span always wins the cascade over
+    // it — see buildFinalCss's doc comment), but it exists precisely to
+    // survive unnoticed as a backup for years, so its own values must be
+    // independently correct. Cloudflare Browser Rendering (the production
+    // renderer, unlike a local Chrome) drops alpha=0 text from the PDF text
+    // layer entirely — see packages/aozora-text/src/chapters.ts's
+    // XTC_CHAPTER_MARKER_CSS "WHY WHITE, NOT TRANSPARENT" doc comment.
+    expect(withToc.html).toMatch(
+      /\.xtc-chapter-marker\s*\{\s*color: white !important;\s*-webkit-text-fill-color: white !important;/,
+    );
+    expect(withToc.html).not.toMatch(/\.xtc-chapter-marker\s*\{[^}]*transparent/);
 
     const withoutTocZip = buildEpubZip({
       mimetype: "application/epub+zip",
@@ -685,7 +697,7 @@ describe("prepareEpubDocument: XTC chapter/table-of-contents metadata (top-level
     // color) — the cascade-ordering guarantee itself is a CSS spec fact
     // (CSS Cascading Level 4 §5.1), not something re-verified here.
     expect(result.html).toMatch(
-      /<span(?=[^>]*class="xtc-chapter-marker")(?=[^>]*style="color:transparent!important;font-size:1px!important;user-select:none!important;-webkit-user-select:none!important")[^>]*>XTCCH0001<\/span>/,
+      /<span(?=[^>]*class="xtc-chapter-marker")(?=[^>]*style="color:white!important;-webkit-text-fill-color:white!important;font-size:1px!important;user-select:none!important;-webkit-user-select:none!important")[^>]*>XTCCH0001<\/span>/,
     );
   });
 
@@ -705,7 +717,7 @@ describe("prepareEpubDocument: XTC chapter/table-of-contents metadata (top-level
     // But the marker span's own inline style is unconditional and present
     // regardless, which is what actually keeps it invisible.
     expect(result.html).toMatch(
-      /<span(?=[^>]*class="xtc-chapter-marker")(?=[^>]*style="color:transparent!important;font-size:1px!important;user-select:none!important;-webkit-user-select:none!important")[^>]*>XTCCH0001<\/span>/,
+      /<span(?=[^>]*class="xtc-chapter-marker")(?=[^>]*style="color:white!important;-webkit-text-fill-color:white!important;font-size:1px!important;user-select:none!important;-webkit-user-select:none!important")[^>]*>XTCCH0001<\/span>/,
     );
   });
 });

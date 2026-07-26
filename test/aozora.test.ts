@@ -496,7 +496,13 @@ describe("AOZORA_DOCUMENT_CSS", () => {
   });
 
   it("keeps the XTC chapter marker invisible via color/font-size only, never display/visibility/opacity", () => {
-    expect(AOZORA_DOCUMENT_CSS).toMatch(/\.xtc-chapter-marker\s*\{[^}]*color: transparent/);
+    // Opaque white (`color: white !important`), not `color: transparent`:
+    // Cloudflare Browser Rendering (the production PDF renderer, unlike a
+    // local Chrome) drops alpha=0 text from the PDF text layer entirely —
+    // see packages/aozora-text/src/chapters.ts's XTC_CHAPTER_MARKER_CSS doc
+    // comment ("WHY WHITE, NOT TRANSPARENT") before reverting this.
+    expect(AOZORA_DOCUMENT_CSS).toMatch(/\.xtc-chapter-marker\s*\{[^}]*color: white !important/);
+    expect(AOZORA_DOCUMENT_CSS).not.toMatch(/\.xtc-chapter-marker\s*\{[^}]*color: transparent/);
     expect(AOZORA_DOCUMENT_CSS).toMatch(/\.xtc-chapter-marker\s*\{[^}]*font-size: 1px/);
     expect(AOZORA_DOCUMENT_CSS).not.toContain("display: none");
     expect(AOZORA_DOCUMENT_CSS).not.toContain("visibility: hidden");

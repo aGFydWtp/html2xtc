@@ -492,7 +492,7 @@ function buildFinalCss(
   // sanitizeCss (css.ts) lets right through for `color`/`font-size` — a
   // broad rule like `span { font-size: 1.2em !important }` could otherwise
   // make a marker visible/selectable/announced. This block re-declares the
-  // same three properties, scoped to the marker's own class (already more
+  // same properties, scoped to the marker's own class (already more
   // specific than a bare tag selector) AND with `!important` unconditionally
   // (unlike this function's layout-related rules above, which only add
   // `!important` when layoutIsExplicit) — same "never something to defer to"
@@ -501,9 +501,41 @@ function buildFinalCss(
   // legitimate authored intent to respect here. Gated on hasXtcChapters
   // purely to skip emitting dead CSS for a book with no usable TOC (no
   // marker spans exist in `html` at all in that case).
+  //
+  // NOT a currently-live defense: sanitize.ts's insertChapterMarkerSpans
+  // always sets the same properties as an inline `style=""` attribute on
+  // every marker span (XTC_CHAPTER_MARKER_INLINE_STYLE), and an inline style
+  // attribute's declarations always win the cascade over ANY selector-based
+  // declaration at the same importance level regardless of specificity (CSS
+  // Cascading Level 4 §5.1) — so THIS class rule can never actually be the
+  // one that wins against a hostile EPUB stylesheet today; it is a second,
+  // currently-redundant layer that only matters if a future refactor ever
+  // removes the inline style and relies on this rule alone. Precisely
+  // BECAUSE it is meant to survive unnoticed as backup for years, its own
+  // values must independently be correct — see the next paragraph.
+  //
+  // `color: white` + `-webkit-text-fill-color: white` (never `transparent`)
+  // for the same production-measured reason as packages/aozora-text's
+  // XTC_CHAPTER_MARKER_CSS and this module's own XTC_CHAPTER_MARKER_INLINE_STYLE
+  // (sanitize.ts): Cloudflare Browser Rendering — the actual renderer behind
+  // renderSelfStyledHtmlPdf, which every EPUB conversion goes through — drops
+  // alpha=0 text (`color: transparent`) from the PDF text layer entirely,
+  // unlike a local Chrome. See XTC_CHAPTER_MARKER_CSS's "WHY WHITE, NOT
+  // TRANSPARENT" doc comment (packages/aozora-text/src/chapters.ts) for the
+  // full A/B evidence and for why `white`, specifically, is what an opaque
+  // color should be here. Both `color` and `-webkit-text-fill-color` are set
+  // because either one alone can be repainted by a hostile author rule that
+  // only targets the other. This rule was ALSO left at `color: transparent`
+  // (no `-webkit-text-fill-color`) until a review caught it as the one of
+  // three marker-hiding declarations in this codebase that was never updated
+  // when the other two (XTC_CHAPTER_MARKER_CSS, XTC_CHAPTER_MARKER_INLINE_STYLE)
+  // were fixed — its dead-today status is exactly why it was easy to miss,
+  // and exactly why test/epub/html.test.ts pins its actual color value
+  // rather than only the selector's presence.
   const xtcChapterMarkerRule = hasXtcChapters
     ? `.${XTC_CHAPTER_MARKER_CLASS} {
-  color: transparent !important;
+  color: white !important;
+  -webkit-text-fill-color: white !important;
   font-size: 1px !important;
   user-select: none !important;
   -webkit-user-select: none !important;

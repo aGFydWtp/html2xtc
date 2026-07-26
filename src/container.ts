@@ -73,6 +73,106 @@ function capChapters(
 }
 
 /**
+ * Machine-readable X-Xtc-Chapters-Status values the Container is documented
+ * to send (converter/app.py's side of this contract). Kept as a whitelist so
+ * an unrecognized or missing value never reaches the log verbatim — see
+ * logChapterDiagnostics below.
+ */
+const KNOWN_CHAPTER_STATUSES = new Set([
+  "ok",
+  "not-requested",
+  "header-decode-failed",
+  "pdf-metadata-failed",
+  "detect-exception",
+  "no-markers-found",
+  "partial",
+  "config-merge-failed",
+]);
+
+/** Parses an X-Xtc-Chapters-{Requested,Detected} header value: must be a
+ * non-negative integer with no extra characters (rejects "12abc", "-1",
+ * "1.5", scientific notation, etc.) — anything else is treated the same as
+ * a missing header, never passed through to the log as-is. */
+function parseChapterCountHeader(raw: string | null): number | undefined {
+  if (raw === null || !/^\d+$/.test(raw)) {
+    return undefined;
+  }
+  const n = Number(raw);
+  return Number.isSafeInteger(n) ? n : undefined;
+}
+
+/** Parses X-Xtc-Page-Count: per the contract an empty string means
+ * read_pdf_metadata failed (distinct from the header being absent, e.g. an
+ * older Container image that doesn't send it at all). */
+function formatPageCountHeader(raw: string | null): string {
+  if (raw === null) {
+    return "missing";
+  }
+  if (raw === "") {
+    return "failed";
+  }
+  return /^\d+$/.test(raw) ? raw : "invalid";
+}
+
+/**
+ * Logs the chapter-detection diagnostic headers the Container's /convert
+ * response carries (see the module-level contract doc — Worker and
+ * Container sides are implemented independently, this is the Worker half).
+ * `sentChaptersCount` is the post-capChapters count actually placed in the
+ * X-Xtc-Chapters request header, so a single log line lets Workers Logs
+ * answer "how many chapters did the Worker send → how many did the
+ * Container decode → how many actually made it into the XTC", all three in
+ * one grep-able `[jobId] chapters: ...` line.
+ *
+ * Silent (no log at all) when sentChaptersCount is 0: no chapters were
+ * requested for this job, so there is nothing to diagnose and logging would
+ * just be noise across every URL/TXT/EPUB job that has no chapters. Once a
+ * job DID request chapters, this always logs — including when the response
+ * carries no diagnostic headers at all (an older Container image, since this
+ * header set can be deployed independently of the Worker), so a rollout gap
+ * is visible rather than silently swallowed.
+ *
+ * Every header value is validated before it can reach the log line: an
+ * unrecognized/missing status becomes the literal string "missing" or
+ * "unknown" (never the raw header text), and count headers that fail to
+ * parse as a plain non-negative integer become "unknown" — this keeps
+ * arbitrary/malformed header content from ever being written to Workers
+ * Logs. Only counts and the machine-readable status code are logged, never
+ * chapter names, EPUB paths, or URLs (spec's own chapters carry no such
+ * content in these headers to begin with, but the parsing above is the
+ * enforcement point regardless).
+ *
+ * Uses console.warn (not console.error, which capChapters above reserves for
+ * the truncation case) whenever the status is anything other than "ok" —
+ * including "missing"/"unknown" — so a chapter-detection problem in
+ * production stands out from the routine console.log lines around it.
+ */
+function logChapterDiagnostics(
+  jobId: string,
+  sentChaptersCount: number,
+  response: Response,
+): void {
+  if (sentChaptersCount === 0) {
+    return;
+  }
+  const rawStatus = response.headers.get("X-Xtc-Chapters-Status");
+  const status =
+    rawStatus === null ? "missing" : KNOWN_CHAPTER_STATUSES.has(rawStatus) ? rawStatus : "unknown";
+  const requested = parseChapterCountHeader(response.headers.get("X-Xtc-Chapters-Requested"));
+  const detected = parseChapterCountHeader(response.headers.get("X-Xtc-Chapters-Detected"));
+  const pageCount = formatPageCountHeader(response.headers.get("X-Xtc-Page-Count"));
+  const line =
+    `[${jobId}] chapters: sent=${sentChaptersCount} ` +
+    `requested=${requested ?? "unknown"} detected=${detected ?? "unknown"} ` +
+    `status=${status} pageCount=${pageCount}`;
+  if (status === "ok") {
+    console.log(line);
+  } else {
+    console.warn(line);
+  }
+}
+
+/**
  * Sends the PDF to the converter container and returns its response.
  * timeoutMs bounds the whole fetch: the sync /convert path passes a short
  * budget, the Workflow passes one sized for the 600s xtctool limit.
@@ -105,7 +205,7 @@ function capChapters(
  * here, the one chokepoint every caller funnels through, rather than in each
  * caller separately.
  */
-export function convertInContainer(
+export async function convertInContainer(
   env: Env,
   jobId: string,
   pdfBody: ArrayBuffer | ReadableStream,
@@ -121,7 +221,8 @@ export function convertInContainer(
     Math.max(1, Math.floor((timeoutMs - CONVERTER_TIMEOUT_MARGIN_MS) / 1000)),
   );
   const cappedChapters = capChapters(jobId, chapters);
-  return container.fetch(
+  const sentChaptersCount = cappedChapters?.length ?? 0;
+  const response = await container.fetch(
     new Request("http://converter/convert", {
       method: "POST",
       headers: {
@@ -141,6 +242,11 @@ export function convertInContainer(
       signal: AbortSignal.timeout(timeoutMs),
     }),
   );
+  // Chapter-detection observability (see logChapterDiagnostics' doc comment):
+  // reads response headers only, never the body, so this doesn't interfere
+  // with the caller's own body handling (streamed or buffered) below.
+  logChapterDiagnostics(jobId, sentChaptersCount, response);
+  return response;
 }
 
 /**

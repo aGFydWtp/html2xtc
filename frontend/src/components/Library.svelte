@@ -78,7 +78,9 @@
     bulkDownloading = false;
   }
 
-  // 選択アイテムを対象端末の配信リスト末尾へ追加（既載分はスキップ、冪等）。
+  // 選択アイテムを対象端末の配信リスト先頭へ追加（既載分はスキップ、冪等）。
+  // libraryStore.items は created_at DESC（新しい順）のため、selectedIds もその順で
+  // 渡され、追加後は新しく選んだものほど上に来る。
   async function addSelectedToDevice(deviceId: string): Promise<void> {
     const ids = selectedIds;
     if (ids.length === 0 || bulkBusy) return;

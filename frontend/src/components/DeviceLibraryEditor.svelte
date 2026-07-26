@@ -61,7 +61,7 @@
 
   function addItem(id: string): void {
     if (assignedOrder.includes(id)) return;
-    assignedOrder = [...assignedOrder, id];
+    assignedOrder = [id, ...assignedOrder];
   }
   function removeItem(id: string): void {
     assignedOrder = assignedOrder.filter((x) => x !== id);
@@ -79,7 +79,7 @@
     assignedOrder = next;
   }
   function selectAll(): void {
-    assignedOrder = [...assignedOrder, ...unassigned];
+    assignedOrder = [...unassigned, ...assignedOrder];
   }
   function deselectAll(): void {
     assignedOrder = [];

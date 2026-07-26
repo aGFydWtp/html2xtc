@@ -44,9 +44,18 @@ export interface MergeChunkPdfsResult {
  * — callers must read page counts off the returned MergeChunkPdfsResult
  * rather than re-parsing (spec §4's unverified production memory/CPU ceiling
  * makes every avoidable re-parse worth avoiding).
+ *
+ * `PDFDocument.create()` starts with an empty Info dictionary, so the merged
+ * output never inherits a chunk's `/Title` even though every chunk PDF has
+ * one (src/aozora-fallback/html.ts's `<title>`) — without `title` here, the
+ * download filename would silently fall back to the jobId (converter/app.py
+ * reads `/Title` off this exact PDF). Callers pass the original article
+ * title (manifest.title, not a chunk's own title, which carries a
+ * "(1/4)"-style split suffix).
  */
 export async function mergeChunkPdfs(
   chunks: readonly Uint8Array[],
+  title?: string,
 ): Promise<MergeChunkPdfsResult> {
   let output: PDFDocument;
   const inputPageCounts: number[] = [];
@@ -62,6 +71,9 @@ export async function mergeChunkPdfs(
       for (const page of pages) {
         output.addPage(page);
       }
+    }
+    if (title !== undefined) {
+      output.setTitle(title);
     }
   } catch (error) {
     console.error("mergeChunkPdfs failed", error);

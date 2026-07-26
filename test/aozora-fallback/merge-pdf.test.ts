@@ -105,6 +105,25 @@ describe("mergeChunkPdfs", () => {
     const good = await buildPdf(1, 100);
     await expect(mergeChunkPdfs([good, new Uint8Array(0)])).rejects.toThrow(MERGE_ERROR_FAILED);
   });
+
+  it("sets /Title on the merged output when a title is passed", async () => {
+    // PDFDocument.create() starts with an empty Info dictionary, so without
+    // the `title` argument the merged PDF has no /Title at all (regression
+    // guard: this used to make converter/app.py's read_pdf_metadata return
+    // an empty title, which sent the download UUID-named — see jobs.ts's
+    // sanitizeTitle(title) ?? jobId fallback).
+    const chunks = [await buildPdf(1, 100), await buildPdf(1, 110)];
+    const result = await mergeChunkPdfs(chunks, "吾輩は猫である");
+    const reloaded = await PDFDocument.load(result.bytes);
+    expect(reloaded.getTitle()).toBe("吾輩は猫である");
+  });
+
+  it("leaves /Title unset when no title is passed", async () => {
+    const chunks = [await buildPdf(1, 100), await buildPdf(1, 110)];
+    const result = await mergeChunkPdfs(chunks);
+    const reloaded = await PDFDocument.load(result.bytes);
+    expect(reloaded.getTitle()).toBeUndefined();
+  });
 });
 
 describe("totalBytes", () => {

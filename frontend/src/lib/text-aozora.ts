@@ -12,24 +12,33 @@ import {
   type AozoraDiagnostic,
 } from "@html2xtc/aozora-text";
 import { applyAozoraPresetIfUntouched } from "./text-options";
-import { applyTextPreset, type TextConvertOptions, type TextInputFormat } from "./text-options";
+import { applyTextPreset, isMarkdownFileName, type TextConvertOptions, type TextInputFormat } from "./text-options";
 import { normalizeText } from "./text-normalize";
 
 /**
- * inputFormat の自動判定（仕様 §15.2）。ユーザーが一度手動変更していれば
- * (`manuallySet`)、判定結果に関わらず現在値を維持する — 「再判定で上書きしない」。
- * まだ手動変更されていない場合のみ、高信頼判定（detectAozoraFormat の isAozora）で
- * "aozora" へ切り替える。判定が false のときは何もしない（"plain" のままにし、
- * 一度 aozora になったものを勝手に plain へ戻すことはしない — このケースは
- * ファイル読込直後の1回だけ呼ばれる想定のため実際には起こらない）。
+ * inputFormat の自動判定（仕様 §15.2、Markdown対応仕様書 §5.4）。ユーザーが一度
+ * 手動変更していれば(`manuallySet`)、判定結果に関わらず現在値を維持する —
+ * 「再判定で上書きしない」。まだ手動変更されていない場合の優先順位は
+ * Markdown対応仕様書 §5.4 のとおり:
+ *   1. (呼び出し元で処理済み: 手動変更済みならその選択を維持)
+ *   2. ファイル名が .md / .markdown → "markdown"
+ *   3. MIME が text/markdown → "markdown"
+ *   4. 青空文庫の高信頼判定（detectAozoraFormat の isAozora）→ "aozora"
+ *   5. それ以外は現在値のまま（"plain"）
+ * 本文内容からのMarkdown推測は行わない（§5.4「本文内容による推測は行わない」）。
  */
 export function resolveAutoInputFormat(
   currentFormat: TextInputFormat,
   manuallySet: boolean,
+  fileName: string,
+  fileType: string,
   detection: AozoraDetectionResult,
 ): TextInputFormat {
   if (manuallySet) {
     return currentFormat;
+  }
+  if (isMarkdownFileName(fileName) || fileType === "text/markdown") {
+    return "markdown";
   }
   return detection.isAozora ? "aozora" : currentFormat;
 }
@@ -39,14 +48,24 @@ export function resolveAutoInputFormat(
  * 純粋関数。TextInputPanel.svelte の「1ファイルにつき1回だけ」の初期化effectから
  * 呼ぶ。`decodedText` は判定用の生テキスト（デコード直後、正規化前でよい —
  * detectAozoraFormat は部分文字列の出現を見るだけなので改行コードや空白の正規化に
- * 依存しない）。
+ * 依存しない）。`fileName`/`fileType` はMarkdown拡張子・MIME判定用（§5.4）。
+ * markdown にはaozoraのような専用プリセットは仕様上不要なため、plainと同じく
+ * "standard" プリセットを適用する。
  */
 export function computeInitialTextOptions(
   options: TextConvertOptions,
   decodedText: string,
   manuallySet: boolean,
+  fileName: string,
+  fileType: string,
 ): TextConvertOptions {
-  const format = resolveAutoInputFormat(options.inputFormat, manuallySet, detectAozoraFormat(decodedText));
+  const format = resolveAutoInputFormat(
+    options.inputFormat,
+    manuallySet,
+    fileName,
+    fileType,
+    detectAozoraFormat(decodedText),
+  );
   const withFormat = format === options.inputFormat ? options : { ...options, inputFormat: format };
   return withFormat.inputFormat === "aozora"
     ? applyAozoraPresetIfUntouched(withFormat)
@@ -80,8 +99,10 @@ export function computeInitialTextState(
   decodedText: string,
   manuallySet: boolean,
   autoDerivedTitle: string,
+  fileName: string,
+  fileType: string,
 ): InitialTextState {
-  const initialOptions = computeInitialTextOptions(options, decodedText, manuallySet);
+  const initialOptions = computeInitialTextOptions(options, decodedText, manuallySet, fileName, fileType);
   const normalizedText = normalizeText(decodedText, {
     maxConsecutiveBlankLines: initialOptions.maxConsecutiveBlankLines,
     preserveSpaces: initialOptions.preserveSpaces,

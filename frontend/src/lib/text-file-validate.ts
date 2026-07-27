@@ -4,7 +4,8 @@
 
 export const MAX_UPLOAD_TEXT_BYTES = 5 * 1024 * 1024; // 5 MiB（仕様書 §7）
 
-const ALLOWED_MIME_TYPES = new Set(["", "text/plain"]);
+// Markdown対応仕様書 §5.3: text/markdown を追加で許可する。
+const ALLOWED_MIME_TYPES = new Set(["", "text/plain", "text/markdown"]);
 
 export type TextFileValidationErrorKind =
   | "not_text" // 拡張子・MIME不一致
@@ -22,8 +23,9 @@ export class TextFileValidationError extends Error {
   }
 }
 
+// Markdown対応仕様書 §5.3: .md / .markdown もテキスト入力として許可する。
 function hasTextExtension(filename: string): boolean {
-  return /\.txt$/i.test(filename);
+  return /\.(txt|md|markdown)$/i.test(filename);
 }
 
 // サーバー側 (src/text-decode.ts looksBinary) と同じ判定基準に揃える(仕様書

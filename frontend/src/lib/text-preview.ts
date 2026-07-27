@@ -133,11 +133,10 @@ function stripUnclosedRange(text: string): string {
   return openStarts.length > 0 ? text.slice(0, openStarts[0]) : text;
 }
 
-/** サーバー上限（4,000コードポイント/32KiB）を守るための最終安全網
- * （仕様(5)）。通常の PREVIEW_MAX_CHARS(1,000) 抽出では到達しないが、縮めた
- * 場合は再度 stripDanglingSpan/stripUnclosedRange を適用して境界の安全性を
- * 保つ。 */
-function enforceAozoraServerLimits(text: string): string {
+/** サーバー上限（4,000コードポイント/32KiB）まで機械的に切り詰めるだけの共通処理
+ * （aozora仕様(5)、Markdown対応仕様書 §18 の両方が参照する最終安全網）。呼び出し側
+ * （aozora/markdown）は、縮めた場合にそれぞれの構文境界を再度安全化する。 */
+function clampToServerLimits(text: string): string {
   let chars = Array.from(text);
   if (chars.length > SERVER_MAX_CODE_POINTS) {
     chars = chars.slice(0, SERVER_MAX_CODE_POINTS);
@@ -147,6 +146,15 @@ function enforceAozoraServerLimits(text: string): string {
     chars = chars.slice(0, Math.max(0, chars.length - 100));
     candidate = chars.join("");
   }
+  return candidate;
+}
+
+/** サーバー上限（4,000コードポイント/32KiB）を守るための最終安全網
+ * （仕様(5)）。通常の PREVIEW_MAX_CHARS(1,000) 抽出では到達しないが、縮めた
+ * 場合は再度 stripDanglingSpan/stripUnclosedRange を適用して境界の安全性を
+ * 保つ。 */
+function enforceAozoraServerLimits(text: string): string {
+  const candidate = clampToServerLimits(text);
   if (candidate.length === text.length) {
     return text;
   }
@@ -201,12 +209,156 @@ function selectAozoraTextPreview(normalized: string): string {
   return enforceAozoraServerLimits(candidate);
 }
 
+// --- markdown 用の安全な切り出し（Markdown対応仕様書 §18） ----------------------
+//
+// plain と同じ「段落境界優先→行末優先」の切り出しに加え、fenced code block（```
+// または ~~~ で開始する範囲）の途中で切らないよう境界を調整する。fenced code
+// block内の空行はMarkdown上パラグラフ区切りではないため、この調整は段落境界
+// 優先で決めた候補位置にも、行末優先で決めた候補位置にも同様に適用する。
+
+/** 1本のfenceマーカー行（行頭から最大3文字のインデントの後、` または ~ が3つ以上
+ * 連続する行）。`start`/`end` はコードポイント単位の位置（`end` はこの行の終わりの
+ * 改行の直後、なければ文字列末尾）。 */
+interface FenceMarkerLine {
+  start: number;
+  end: number;
+  char: "`" | "~";
+  length: number;
+}
+
+const FENCE_MARKER_RE = /^ {0,3}(`{3,}|~{3,})/;
+
+/** `chars`（コードポイント配列）の [0, limit) の範囲からfenceマーカー行をすべて
+ * 拾う。CommonMarkの完全な検証（info string内のバッククォート禁止等）は行わない
+ * — この切り出しは安全境界ではなく（仕様書 §18 「セキュリティ境界ではない」）、
+ * 実用上fenceの開始・終了を見分けられれば十分なため。 */
+function findFenceMarkerLines(chars: string[], limit: number): FenceMarkerLine[] {
+  const fences: FenceMarkerLine[] = [];
+  let pos = 0;
+  while (pos < limit && pos < chars.length) {
+    let lineEnd = pos;
+    while (lineEnd < chars.length && chars[lineEnd] !== "\n") lineEnd++;
+    const line = chars.slice(pos, lineEnd).join("");
+    const match = FENCE_MARKER_RE.exec(line);
+    if (match) {
+      const run = match[1];
+      fences.push({ start: pos, end: Math.min(lineEnd + 1, chars.length), char: run[0] as "`" | "~", length: run.length });
+    }
+    pos = lineEnd + 1;
+  }
+  return fences;
+}
+
+interface FenceBoundary {
+  /** 切り出し位置がfence内にあり、閉じfenceがSERVER_MAX_CODE_POINTS以内に見つかった
+   * 場合、その閉じfence行の直後まで延長する位置。 */
+  extendTo: number | null;
+  /** 切り出し位置がfence内にあり、閉じfenceが見つからなかった場合、開きfenceの
+   * 直前まで戻す位置。 */
+  trimTo: number | null;
+}
+
+/** `cutoff`（候補切り出し位置、コードポイント単位）がfenced code block内かどうかを
+ * 判定し、境界の調整方針を返す。閉じfenceの探索は SERVER_MAX_CODE_POINTS
+ * （4,000コードポイント）まで（仕様書 §18 の1「閉じfenceを最大4,000コードポイント
+ * まで探索する」）。閉じfenceは同じfence文字・同等以上の長さのものだけを対象にする
+ * （仕様書 §18 の5）。 */
+function resolveFenceBoundary(chars: string[], cutoff: number): FenceBoundary {
+  const scanLimit = Math.min(chars.length, SERVER_MAX_CODE_POINTS);
+  const fences = findFenceMarkerLines(chars, scanLimit);
+
+  let openStart: number | null = null;
+  let openChar: "`" | "~" = "`";
+  let openLength = 0;
+
+  for (const fence of fences) {
+    if (openStart === null) {
+      if (fence.start >= cutoff) {
+        // fenceが開くのは cutoff 以降 — それより前に開いていたfenceは無く、
+        // cutoff はfence内にない。
+        break;
+      }
+      openStart = fence.start;
+      openChar = fence.char;
+      openLength = fence.length;
+      continue;
+    }
+    const isClosing = fence.char === openChar && fence.length >= openLength;
+    if (!isClosing) {
+      // fenceの中身に現れた短い/別種のバッククォート・チルダの並び。無視する。
+      continue;
+    }
+    if (fence.start < cutoff) {
+      // cutoff より前に閉じている — このfenceはcutoffと無関係。次のfenceへ。
+      openStart = null;
+      continue;
+    }
+    // openStart < cutoff <= fence.start: cutoff を覆うfenceの閉じ側が見つかった。
+    return { extendTo: fence.end, trimTo: null };
+  }
+
+  if (openStart !== null && openStart < cutoff) {
+    // cutoff はfence内だが、SERVER_MAX_CODE_POINTS以内に閉じが見つからなかった。
+    return { extendTo: null, trimTo: openStart };
+  }
+  return { extendTo: null, trimTo: null };
+}
+
+function selectMarkdownTextPreview(normalized: string): string {
+  const chars = Array.from(normalized); // コードポイント単位（サロゲート安全）
+
+  if (chars.length <= PREVIEW_TARGET_CHARS) {
+    return normalized;
+  }
+
+  const maxChars = Math.min(PREVIEW_MAX_CHARS, chars.length);
+  const window = chars.slice(PREVIEW_TARGET_CHARS, maxChars).join("");
+  const paragraphBreak = window.match(/\n{2,}/);
+
+  let cutoff: number;
+  if (paragraphBreak?.index !== undefined) {
+    cutoff = PREVIEW_TARGET_CHARS + paragraphBreak.index;
+  } else {
+    cutoff = maxChars;
+    for (let i = maxChars - 1; i >= PREVIEW_TARGET_CHARS; i--) {
+      if (chars[i] === "\n") {
+        cutoff = i;
+        break;
+      }
+    }
+  }
+
+  const boundary = resolveFenceBoundary(chars, cutoff);
+  let finalCutoff = cutoff;
+  let extended = false;
+  if (boundary.extendTo !== null) {
+    finalCutoff = boundary.extendTo;
+    extended = true;
+  } else if (boundary.trimTo !== null) {
+    finalCutoff = boundary.trimTo;
+  }
+
+  let result = chars.slice(0, finalCutoff).join("");
+  // 段落境界・fence延長のどちらでもない、素の行末打ち切りのときだけ末尾の空白を
+  // 削る（plain/aozoraと同じ理由 — 打ち切り由来の見た目の空白のみ整える）。
+  if (paragraphBreak?.index === undefined && !extended) {
+    result = result.replace(/[ \t]+$/, "");
+  }
+
+  // サーバー上限（4,000cp/32KiB）を守る最終安全網。fence延長で4,000cp付近まで
+  // 伸びた場合や、fence行自体が長い場合の保険。
+  return clampToServerLimits(result);
+}
+
 /** X3実機プレビュー用の本文抽出。`inputFormat` が `"aozora"` のときは共有パッケージ
  * `@html2xtc/aozora-text` の関数を使い、標準ヘッダ・記号説明の分離、《…》／
  * ［＃…］の途中で切らない安全境界、未閉鎖の開始注記の手前への巻き戻しを行う
- * （aozora-text-conversion 仕様書 §14.2）。`"plain"`（省略時含む既定）は既存の
- * 挙動をそのまま維持する。 */
+ * （aozora-text-conversion 仕様書 §14.2）。`"markdown"` のときは fenced code
+ * block の途中で切らない安全境界を守る（Markdown対応仕様書 §18）。`"plain"`
+ * （省略時含む既定）は既存の挙動をそのまま維持する。 */
 export function selectTextPreview(fullText: string, inputFormat: TextInputFormat = "plain"): string {
   const normalized = fullText.replace(/\r\n|\r/g, "\n");
-  return inputFormat === "aozora" ? selectAozoraTextPreview(normalized) : selectPlainTextPreview(normalized);
+  if (inputFormat === "aozora") return selectAozoraTextPreview(normalized);
+  if (inputFormat === "markdown") return selectMarkdownTextPreview(normalized);
+  return selectPlainTextPreview(normalized);
 }

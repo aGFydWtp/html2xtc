@@ -26,6 +26,16 @@ describe("detectInputFileKind", () => {
     expect(detectInputFileKind(makeFile("novel.txt", ""))).toBe("text");
   });
 
+  it("detects .md and .markdown by extension as text (Markdown対応仕様書 §5.3)", () => {
+    expect(detectInputFileKind(makeFile("notes.md", ""))).toBe("text");
+    expect(detectInputFileKind(makeFile("notes.markdown", ""))).toBe("text");
+  });
+
+  it("does not misdetect a PDF/EPUB as text when it happens to carry a Markdown-ish MIME (extension wins)", () => {
+    expect(detectInputFileKind(makeFile("book.pdf", "text/markdown"))).toBe("pdf");
+    expect(detectInputFileKind(makeFile("book.epub", "text/markdown"))).toBe("epub");
+  });
+
   it("prioritizes .epub over .pdf/.txt when somehow both match (defensive)", () => {
     expect(detectInputFileKind(makeFile("archive.epub", "application/pdf"))).toBe("epub");
   });
@@ -35,6 +45,7 @@ describe("detectInputFileKind", () => {
     expect(detectInputFileKind(makeFile("file", "application/pdf"))).toBe("pdf");
     expect(detectInputFileKind(makeFile("file", "application/x-pdf"))).toBe("pdf");
     expect(detectInputFileKind(makeFile("file", "text/plain"))).toBe("text");
+    expect(detectInputFileKind(makeFile("file", "text/markdown"))).toBe("text");
   });
 
   it("returns null for an unrecognized extension and MIME", () => {

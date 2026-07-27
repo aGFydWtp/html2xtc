@@ -21,8 +21,18 @@ describe("validateTextFile", () => {
     await expect(validateTextFile(makeFile(OK_UTF8, "novel.txt", ""))).resolves.toBeUndefined();
   });
 
-  it("rejects a non-.txt extension", async () => {
-    await expect(validateTextFile(makeFile(OK_UTF8, "novel.md"))).rejects.toMatchObject({ kind: "not_text" });
+  it("rejects an unsupported extension", async () => {
+    await expect(validateTextFile(makeFile(OK_UTF8, "novel.docx"))).rejects.toMatchObject({ kind: "not_text" });
+  });
+
+  it("accepts .md and .markdown extensions (Markdown対応仕様書 §5.3)", async () => {
+    await expect(validateTextFile(makeFile(OK_UTF8, "novel.md"))).resolves.toBeUndefined();
+    await expect(validateTextFile(makeFile(OK_UTF8, "novel.markdown"))).resolves.toBeUndefined();
+    await expect(validateTextFile(makeFile(OK_UTF8, "NOVEL.MD"))).resolves.toBeUndefined();
+  });
+
+  it("accepts a text/markdown MIME type", async () => {
+    await expect(validateTextFile(makeFile(OK_UTF8, "novel.md", "text/markdown"))).resolves.toBeUndefined();
   });
 
   it("rejects an unsupported MIME type", async () => {

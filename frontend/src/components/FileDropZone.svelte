@@ -9,7 +9,7 @@
     onFileSelected,
     children,
     below,
-    accept = "text/plain,.txt,application/pdf,.pdf,application/epub+zip,.epub",
+    accept = "text/plain,text/markdown,.txt,.md,.markdown,application/pdf,.pdf,application/epub+zip,.epub",
   }: { onFileSelected: (file: File) => void; children: Snippet; below?: Snippet; accept?: string } = $props();
 
   let dragActive = $state(false);

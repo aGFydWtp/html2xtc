@@ -6,10 +6,12 @@ import { encodeBase64UrlUtf8 } from "./pdf-options";
 export type TextEncoding = "auto" | "utf-8" | "shift_jis";
 export type TextLayout = "horizontal" | "vertical";
 export type TextAlign = "start" | "justify";
-/** 入力形式（実装仕様書 §5.1）。"plain" が既定・省略時の値で、既存の挙動を
- * バイト同一で維持する。"aozora" は共有パッケージ @html2xtc/aozora-text の
- * AST パーサー/レンダラーを経由する。 */
-export type TextInputFormat = "plain" | "aozora";
+/** 入力形式（実装仕様書 §5.1、Markdown対応仕様書 §5.1）。"plain" が既定・
+ * 省略時の値で、既存の挙動をバイト同一で維持する。"aozora" は共有パッケージ
+ * @html2xtc/aozora-text の AST パーサー/レンダラーを経由する。"markdown" は
+ * 共有パッケージ @html2xtc/markdown-text の markdown-it ベースのパーサー/
+ * 許可リストレンダラーを経由する。 */
+export type TextInputFormat = "plain" | "aozora" | "markdown";
 
 export interface TextMargins {
   top: number;
@@ -152,10 +154,31 @@ export function applyAozoraPresetIfUntouched(options: TextConvertOptions): TextC
   return { ...options, ...AOZORA_PRESET_OVERRIDES };
 }
 
-// aozora では joinHardWrappedLines は常に無視される（§10.3）。UIの活性・非活性判定に
-// 使う純粋関数（TextOptions.svelte から呼ぶ）。
+// aozora・markdown では joinHardWrappedLines は常に無視される（§10.3、Markdown対応
+// 仕様書 §8「Markdownでは次のオプションを無視する」）。UIの活性・非活性判定に使う
+// 純粋関数（TextOptions.svelte から呼ぶ）。
 export function isJoinHardWrappedLinesEditable(inputFormat: TextInputFormat): boolean {
-  return inputFormat !== "aozora";
+  return inputFormat !== "aozora" && inputFormat !== "markdown";
+}
+
+// Markdownでは改行・空白・インデント自体が構文であるため、正規化系オプションのうち
+// maxConsecutiveBlankLines と preserveSpaces も無視される（Markdown対応仕様書 §8）。
+// aozora はこの2つを無視しない（joinHardWrappedLinesのみ無視、上の関数）ため、
+// isJoinHardWrappedLinesEditable とは別の判定関数にする。
+export function isMaxConsecutiveBlankLinesEditable(inputFormat: TextInputFormat): boolean {
+  return inputFormat !== "markdown";
+}
+
+export function isPreserveSpacesEditable(inputFormat: TextInputFormat): boolean {
+  return inputFormat !== "markdown";
+}
+
+// ファイル名が .md/.markdown かどうか（大文字小文字を区別しない）。自動判定
+// （Markdown対応仕様書 §5.4）と添付バッジ表示（§17.4）の両方で使う共通判定。
+const MARKDOWN_FILE_NAME_RE = /\.(?:md|markdown)$/i;
+
+export function isMarkdownFileName(name: string): boolean {
+  return MARKDOWN_FILE_NAME_RE.test(name);
 }
 
 // §6.5 プリセット
@@ -220,8 +243,8 @@ function codePointLength(value: string): number {
 export function validateTextOptions(options: TextConvertOptions): TextOptionsValidationError[] {
   const errors: TextOptionsValidationError[] = [];
 
-  if (options.inputFormat !== "plain" && options.inputFormat !== "aozora") {
-    errors.push({ field: "inputFormat", message: 'inputFormat must be "plain" or "aozora"' });
+  if (options.inputFormat !== "plain" && options.inputFormat !== "aozora" && options.inputFormat !== "markdown") {
+    errors.push({ field: "inputFormat", message: 'inputFormat must be "plain", "aozora" or "markdown"' });
   }
   if (options.encoding !== "auto" && options.encoding !== "utf-8" && options.encoding !== "shift_jis") {
     errors.push({ field: "encoding", message: 'encoding must be "auto", "utf-8" or "shift_jis"' });

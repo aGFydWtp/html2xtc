@@ -10,6 +10,11 @@ const AOZORA_TEXT_ENTRY = fileURLToPath(
   new URL("../packages/aozora-text/src/index.ts", import.meta.url),
 );
 
+// packages/markdown-text も同様（markdown-conversion 仕様書 §6.3）。
+const MARKDOWN_TEXT_ENTRY = fileURLToPath(
+  new URL("../packages/markdown-text/src/index.ts", import.meta.url),
+);
+
 // dev 時は API と version.json をローカルの wrangler dev (port 8787) へ中継する。
 // 本番は Workers assets + run_worker_first（wrangler.jsonc）が同じ振り分けを行う。
 const WORKER_PATHS = ["/convert", "/jobs", "/download", "/version.json", "/api"];
@@ -31,6 +36,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "@html2xtc/aozora-text": AOZORA_TEXT_ENTRY,
+      "@html2xtc/markdown-text": MARKDOWN_TEXT_ENTRY,
     },
   },
   server: {

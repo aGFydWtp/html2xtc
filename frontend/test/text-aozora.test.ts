@@ -34,24 +34,44 @@ const SINGLE_RUBY_ONLY_TEXT = "これは《ルビ》が一つだけあるだけ�
 
 const PLAIN_TEXT = "これはただのプレーンテキストです。何の注記もありません。";
 
-describe("resolveAutoInputFormat (§15.2)", () => {
+describe("resolveAutoInputFormat (§15.2, Markdown対応仕様書 §5.4)", () => {
   it("selects aozora on high-confidence detection when not manually set", () => {
-    expect(resolveAutoInputFormat("plain", false, { score: 5, isAozora: true })).toBe("aozora");
+    expect(resolveAutoInputFormat("plain", false, "doc.txt", "text/plain", { score: 5, isAozora: true })).toBe("aozora");
   });
 
   it("keeps the current format on low-confidence detection", () => {
-    expect(resolveAutoInputFormat("plain", false, { score: 2, isAozora: false })).toBe("plain");
+    expect(resolveAutoInputFormat("plain", false, "doc.txt", "text/plain", { score: 2, isAozora: false })).toBe("plain");
   });
 
   it("never overrides the format once the user has manually changed it, even at high confidence", () => {
-    expect(resolveAutoInputFormat("plain", true, { score: 9, isAozora: true })).toBe("plain");
-    expect(resolveAutoInputFormat("aozora", true, { score: 0, isAozora: false })).toBe("aozora");
+    expect(resolveAutoInputFormat("plain", true, "doc.txt", "text/plain", { score: 9, isAozora: true })).toBe("plain");
+    expect(resolveAutoInputFormat("aozora", true, "doc.txt", "text/plain", { score: 0, isAozora: false })).toBe("aozora");
+  });
+
+  it("selects markdown for a .md filename, regardless of MIME or aozora score", () => {
+    expect(resolveAutoInputFormat("plain", false, "doc.md", "", { score: 0, isAozora: false })).toBe("markdown");
+  });
+
+  it("selects markdown for a .markdown filename", () => {
+    expect(resolveAutoInputFormat("plain", false, "doc.markdown", "", { score: 0, isAozora: false })).toBe("markdown");
+  });
+
+  it("selects markdown for a text/markdown MIME type even with a .txt filename", () => {
+    expect(resolveAutoInputFormat("plain", false, "doc.txt", "text/markdown", { score: 0, isAozora: false })).toBe("markdown");
+  });
+
+  it("prefers the markdown filename over a high-confidence aozora detection (§5.4 priority order)", () => {
+    expect(resolveAutoInputFormat("plain", false, "doc.md", "text/plain", { score: 9, isAozora: true })).toBe("markdown");
+  });
+
+  it("does not select markdown once the user has manually changed the format", () => {
+    expect(resolveAutoInputFormat("plain", true, "doc.md", "", { score: 0, isAozora: false })).toBe("plain");
   });
 });
 
-describe("computeInitialTextOptions (§15.2/§15.3)", () => {
+describe("computeInitialTextOptions (§15.2/§15.3, Markdown対応仕様書 §5.4)", () => {
   it("auto-selects aozora and applies its preset for high-confidence text when untouched", () => {
-    const result = computeInitialTextOptions(cloneDefaults(), AOZORA_LOOKING_TEXT, false);
+    const result = computeInitialTextOptions(cloneDefaults(), AOZORA_LOOKING_TEXT, false, "doc.txt", "text/plain");
     expect(result.inputFormat).toBe("aozora");
     expect(result.layout).toBe("vertical");
     expect(result.font).toBe("BIZ UDMincho");
@@ -61,19 +81,19 @@ describe("computeInitialTextOptions (§15.2/§15.3)", () => {
   });
 
   it("does not auto-select aozora for a single lone 《...》 (§15.2)", () => {
-    const result = computeInitialTextOptions(cloneDefaults(), SINGLE_RUBY_ONLY_TEXT, false);
+    const result = computeInitialTextOptions(cloneDefaults(), SINGLE_RUBY_ONLY_TEXT, false, "doc.txt", "text/plain");
     expect(result.inputFormat).toBe("plain");
   });
 
   it("applies the standard preset for plain text", () => {
-    const result = computeInitialTextOptions(cloneDefaults(), PLAIN_TEXT, false);
+    const result = computeInitialTextOptions(cloneDefaults(), PLAIN_TEXT, false, "doc.txt", "text/plain");
     expect(result.inputFormat).toBe("plain");
     expect(result.layout).toBe("horizontal");
     expect(result.font).toBe("BIZ UDPGothic");
   });
 
   it("does not auto-select aozora once the user manually chose a format, even for high-confidence text", () => {
-    const result = computeInitialTextOptions(cloneDefaults(), AOZORA_LOOKING_TEXT, true);
+    const result = computeInitialTextOptions(cloneDefaults(), AOZORA_LOOKING_TEXT, true, "doc.txt", "text/plain");
     expect(result.inputFormat).toBe("plain");
     // manuallySet だけで inputFormat は plain のまま。プリセットは今の形式(plain)の
     // ものが適用される。
@@ -82,10 +102,24 @@ describe("computeInitialTextOptions (§15.2/§15.3)", () => {
 
   it("auto-selects the format but does NOT reapply the aozora preset once the user customized a preset field", () => {
     const customized = { ...cloneDefaults(), fontSizePx: 22 };
-    const result = computeInitialTextOptions(customized, AOZORA_LOOKING_TEXT, false);
+    const result = computeInitialTextOptions(customized, AOZORA_LOOKING_TEXT, false, "doc.txt", "text/plain");
     expect(result.inputFormat).toBe("aozora"); // format selection is independent of preset gating
     expect(result.fontSizePx).toBe(22); // user's explicit choice preserved
     expect(result.layout).toBe("horizontal"); // preset not applied at all (not just fontSizePx spared)
+  });
+
+  it("auto-selects markdown for a .md filename even when the text also looks aozora-like", () => {
+    const result = computeInitialTextOptions(cloneDefaults(), AOZORA_LOOKING_TEXT, false, "doc.md", "text/plain");
+    expect(result.inputFormat).toBe("markdown");
+    // markdown has no dedicated preset (Markdown対応仕様書 §17.2) — falls through to
+    // the same "standard" preset as plain.
+    expect(result.layout).toBe("horizontal");
+    expect(result.font).toBe("BIZ UDPGothic");
+  });
+
+  it("auto-selects markdown for a text/markdown MIME type", () => {
+    const result = computeInitialTextOptions(cloneDefaults(), PLAIN_TEXT, false, "doc.txt", "text/markdown");
+    expect(result.inputFormat).toBe("markdown");
   });
 });
 
@@ -104,7 +138,7 @@ const AOZORA_WITH_WRAPPED_BODY = `表題です
 
 describe("computeInitialTextState (初回自動X3プレビューのstale修正)", () => {
   it("returns normalizedText that reflects the FINAL options (joinHardWrappedLines=false for aozora), not a pre-adjustment default", () => {
-    const result = computeInitialTextState(cloneDefaults(), AOZORA_WITH_WRAPPED_BODY, false, "auto-derived");
+    const result = computeInitialTextState(cloneDefaults(), AOZORA_WITH_WRAPPED_BODY, false, "auto-derived", "doc.txt", "text/plain");
     expect(result.options.inputFormat).toBe("aozora");
     expect(result.options.joinHardWrappedLines).toBe(false);
 
@@ -128,7 +162,7 @@ describe("computeInitialTextState (初回自動X3プレビューのstale修正)"
   });
 
   it("fills in title/author extracted from the aozora header when both fields are untouched", () => {
-    const result = computeInitialTextState(cloneDefaults(), AOZORA_WITH_WRAPPED_BODY, false, "auto-derived");
+    const result = computeInitialTextState(cloneDefaults(), AOZORA_WITH_WRAPPED_BODY, false, "auto-derived", "doc.txt", "text/plain");
     expect(result.options.title).toBe("表題です");
     expect(result.options.author).toBe("著者です");
   });
@@ -139,13 +173,13 @@ describe("computeInitialTextState (初回自動X3プレビューのstale修正)"
       title: "ユーザーの表題",
       author: "ユーザーの著者",
     };
-    const result = computeInitialTextState(withUserInput, AOZORA_WITH_WRAPPED_BODY, false, "auto-derived");
+    const result = computeInitialTextState(withUserInput, AOZORA_WITH_WRAPPED_BODY, false, "auto-derived", "doc.txt", "text/plain");
     expect(result.options.title).toBe("ユーザーの表題");
     expect(result.options.author).toBe("ユーザーの著者");
   });
 
   it("applies the standard preset (joinHardWrappedLines=true) and leaves title/author untouched for plain text", () => {
-    const result = computeInitialTextState(cloneDefaults(), PLAIN_TEXT, false, "auto-derived");
+    const result = computeInitialTextState(cloneDefaults(), PLAIN_TEXT, false, "auto-derived", "doc.txt", "text/plain");
     expect(result.options.inputFormat).toBe("plain");
     expect(result.options.joinHardWrappedLines).toBe(true);
     expect(result.options.title).toBe("");
@@ -160,7 +194,7 @@ describe("computeInitialTextState (初回自動X3プレビューのstale修正)"
   });
 
   it("is idempotent: re-applying the header autofill to the already-filled result is a no-op", () => {
-    const result = computeInitialTextState(cloneDefaults(), AOZORA_WITH_WRAPPED_BODY, false, "auto-derived");
+    const result = computeInitialTextState(cloneDefaults(), AOZORA_WITH_WRAPPED_BODY, false, "auto-derived", "doc.txt", "text/plain");
     const structure = separateDocumentStructure(result.normalizedText.split("\n"));
     expect(resolveAutoFillTitle(result.options.title, "auto-derived", structure.title)).toBe(result.options.title);
     expect(resolveAutoFillAuthor(result.options.author, structure.author)).toBe(result.options.author);

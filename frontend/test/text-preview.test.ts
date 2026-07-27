@@ -182,3 +182,74 @@ describe("selectTextPreview — inputFormat: \"aozora\"", () => {
     expect(selectTextPreview(text, "aozora")).toBe("");
   });
 });
+
+// --- markdown (Markdown対応仕様書 §18) --------------------------------------------
+
+describe('selectTextPreview — inputFormat: "markdown"', () => {
+  it("behaves like plain text when there is no fenced code block", () => {
+    const before = "a".repeat(PREVIEW_TARGET_CHARS + 100);
+    const text = `${before}\n\ntail`;
+    expect(selectTextPreview(text, "markdown")).toBe(before);
+  });
+
+  it("returns the full text unchanged when at or under the target, even with a fence inside", () => {
+    const text = "intro\n\n```\ncode\n```\n\noutro";
+    expect(selectTextPreview(text, "markdown")).toBe(text);
+  });
+
+  it("extends past the normal cutoff to include a fence that closes within the search limit (§18 rule 1-2)", () => {
+    const prefix = "b".repeat(700) + "\n";
+    const codeLines = Array.from({ length: 40 }, (_, i) => `code line ${i}`).join("\n");
+    const text = `${prefix}\`\`\`\n${codeLines}\n\`\`\`\n\nSTOP_AFTER_FENCE`;
+    const result = selectTextPreview(text, "markdown");
+    expect(result).not.toContain("STOP_AFTER_FENCE");
+    // Both the opening and the matching closing fence markers are present —
+    // the cutoff was extended through the close, not truncated mid-block.
+    expect((result.match(/```/g) ?? []).length).toBe(2);
+    expect(result.trimEnd().endsWith("```")).toBe(true);
+  });
+
+  it("recognizes ~~~ fences the same way as ``` fences", () => {
+    const prefix = "b".repeat(700) + "\n";
+    const codeLines = Array.from({ length: 40 }, (_, i) => `code line ${i}`).join("\n");
+    const text = `${prefix}~~~\n${codeLines}\n~~~\n\nSTOP_AFTER_FENCE`;
+    const result = selectTextPreview(text, "markdown");
+    expect(result).not.toContain("STOP_AFTER_FENCE");
+    expect((result.match(/~~~/g) ?? []).length).toBe(2);
+  });
+
+  it("backs off to before the opening fence when no closing fence is found within the search limit (§18 rule 3)", () => {
+    const prefix = "c".repeat(700) + "\n";
+    const unclosedCode = "z".repeat(6000); // one giant line, never closes, well past the 4,000cp search limit
+    const text = `${prefix}\`\`\`\n${unclosedCode}`;
+    const result = selectTextPreview(text, "markdown");
+    expect(result).not.toContain("```");
+    // Trimmed back to just before the opening fence line (prefix, "700 c's" + its own newline).
+    expect(Array.from(result).length).toBeLessThanOrEqual(Array.from(prefix).length);
+  });
+
+  it("only treats a same-or-longer, same-character run as the closing fence — a shorter run inside the block is ignored (§18 rule 4-5)", () => {
+    const prefix = "d".repeat(700) + "\n";
+    const codeLines = Array.from({ length: 20 }, (_, i) => (i === 5 ? "```" : `code ${i}`)).join("\n");
+    const text = `${prefix}\`\`\`\`\n${codeLines}\n\`\`\`\`\n\nSTOP_AFTER_FENCE`;
+    const result = selectTextPreview(text, "markdown");
+    expect(result).not.toContain("STOP_AFTER_FENCE");
+    // The fake 3-backtick "close" inside the block must not have ended the
+    // fence early — the block content up to and including the real 4-tick
+    // close is all present.
+    expect(result).toContain("code 19");
+    expect(result.endsWith("````")).toBe(true);
+  });
+
+  it("never splits a surrogate pair (emoji) at the cutoff boundary, same as plain", () => {
+    const filler = "a".repeat(PREVIEW_MAX_CHARS - 1);
+    const text = `${filler}\u{1F600}\u{1F601}extra content after`;
+    const result = selectTextPreview(text, "markdown");
+    expect(Array.from(result).length).toBeLessThanOrEqual(PREVIEW_MAX_CHARS);
+    expect(result.endsWith("\u{1F600}") || Array.from(result).length < PREVIEW_MAX_CHARS).toBe(true);
+  });
+
+  it("returns an empty string for empty input", () => {
+    expect(selectTextPreview("", "markdown")).toBe("");
+  });
+});

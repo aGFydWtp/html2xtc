@@ -8,6 +8,9 @@ export default defineConfig({
       "@html2xtc/aozora-text": fileURLToPath(
         new URL("../packages/aozora-text/src/index.ts", import.meta.url),
       ),
+      "@html2xtc/markdown-text": fileURLToPath(
+        new URL("../packages/markdown-text/src/index.ts", import.meta.url),
+      ),
     },
   },
   test: {

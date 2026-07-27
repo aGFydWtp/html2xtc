@@ -113,12 +113,14 @@ export interface Messages {
   text_options_heading: string;
   text_options_summary: (layoutLabel: string, fontSizePx: number) => string;
 
-  // --- 入力形式（青空文庫TXT変換 実装仕様書 §15.1） -----------------------------
+  // --- 入力形式（青空文庫TXT変換 実装仕様書 §15.1、Markdown対応仕様書 §17.2） --------
   text_input_format_label: string;
   text_input_format_plain: string;
   text_input_format_aozora: string;
+  text_input_format_markdown: string;
   text_input_format_plain_hint: string;
   text_input_format_aozora_hint: string;
+  text_input_format_markdown_hint: string;
 
   text_layout_label: string;
   text_layout_horizontal: string;
@@ -144,6 +146,10 @@ export interface Messages {
   text_join_lines_off: string;
   text_join_lines_note: string;
   text_join_lines_aozora_note: string;
+  text_join_lines_markdown_note: string;
+  // Markdown対応仕様書 §17.3: 連続空行の上限・空白の保持がMarkdownで無効化された際の説明文
+  // （行の自動連結は上のtext_join_lines_markdown_noteを使う）。
+  text_markdown_ignored_option_note: string;
   text_bibliographic_heading: string;
   text_title_label: string;
   text_author_label: string;
@@ -162,6 +168,8 @@ export interface Messages {
   text_err_font_fallback: string;
   text_err_pdf_too_large: string;
   text_err_upload_failed: string;
+  // Markdown対応仕様書 §14/§21: MarkdownComplexityLimitError（token数/nesting超過）
+  text_err_markdown_too_complex: string;
 
   // --- EPUBアップロード入力（実装仕様書 §16） -----------------------------
   epub_remove_file: string;
@@ -216,6 +224,9 @@ export interface Messages {
   text_aozora_parsed_note: string;
   text_aozora_unsupported_note: (n: number) => string;
   text_aozora_diagnostics_truncated_note: string;
+
+  // --- Markdown本文プレビュー（Markdown対応仕様書 §17.5） ------------------------------
+  text_markdown_parsed_note: string;
 
   aozora_open: string;
   aozora_title: string;
@@ -545,8 +556,10 @@ export const I18N: Record<Lang, Messages> = {
     text_input_format_label: "入力形式",
     text_input_format_plain: "プレーンテキスト",
     text_input_format_aozora: "青空文庫形式",
+    text_input_format_markdown: "Markdown",
     text_input_format_plain_hint: "注記や記法を解釈せず、そのまま表示します",
     text_input_format_aozora_hint: "ルビ、傍点、見出し、改ページなどを解釈します",
+    text_input_format_markdown_hint: "見出し・リスト・引用・コード・表などを解釈します。HTMLや画像は読み込みません。",
     text_layout_label: "書字方向",
     text_layout_horizontal: "横書き",
     text_layout_vertical: "縦書き",
@@ -571,6 +584,8 @@ export const I18N: Record<Lang, Messages> = {
     text_join_lines_off: "つなげない",
     text_join_lines_note: "固定幅で改行されたテキストの行を段落内で連結します。",
     text_join_lines_aozora_note: "青空文庫形式では、注記や組版上の改行を保護するため使用できません。",
+    text_join_lines_markdown_note: "Markdownでは改行・空白・インデントが構文に使われるため、この設定は適用されません。",
+    text_markdown_ignored_option_note: "Markdownでは改行・空白・インデントが構文に使われるため、この設定は適用されません。",
     text_bibliographic_heading: "書誌情報",
     text_title_label: "表題",
     text_author_label: "著者",
@@ -589,6 +604,7 @@ export const I18N: Record<Lang, Messages> = {
     text_err_font_fallback: "指定フォントを取得できなかったため、代替フォントで変換します。",
     text_err_pdf_too_large: "組版後のPDFが大きすぎます。文字サイズや余白を調整してください。",
     text_err_upload_failed: "テキストファイルのアップロードに失敗しました。",
+    text_err_markdown_too_complex: "Markdown文書が複雑すぎるため変換できません。",
 
     epub_remove_file: "ファイルを解除",
     epub_meta_line: (size) => size,
@@ -638,6 +654,8 @@ export const I18N: Record<Lang, Messages> = {
     text_aozora_parsed_note: "青空文庫形式として解析しました。",
     text_aozora_unsupported_note: (n) => `未対応の注記 ${n}件は、注記文字として残ります。`,
     text_aozora_diagnostics_truncated_note: "診断の件数が上限に達したため、これ以降の警告は集計されていません。",
+
+    text_markdown_parsed_note: "Markdownとして解析しました。",
 
     aozora_open: "青空文庫から選択",
     aozora_title: "青空文庫から選択",
@@ -960,8 +978,10 @@ export const I18N: Record<Lang, Messages> = {
     text_input_format_label: "Input format",
     text_input_format_plain: "Plain text",
     text_input_format_aozora: "Aozora Bunko format",
+    text_input_format_markdown: "Markdown",
     text_input_format_plain_hint: "Displays the text as-is, without interpreting any notation or markup.",
     text_input_format_aozora_hint: "Interprets ruby, emphasis dots, headings, page breaks, and more.",
+    text_input_format_markdown_hint: "Interprets headings, lists, quotes, code, tables, and more. Does not load HTML or images.",
     text_layout_label: "Writing direction",
     text_layout_horizontal: "Horizontal",
     text_layout_vertical: "Vertical",
@@ -986,6 +1006,8 @@ export const I18N: Record<Lang, Messages> = {
     text_join_lines_off: "Off",
     text_join_lines_note: "Joins lines within a paragraph that were hard-wrapped to a fixed width.",
     text_join_lines_aozora_note: "Not available in Aozora Bunko format — line breaks from notation and typesetting must be preserved.",
+    text_join_lines_markdown_note: "Not available in Markdown — line breaks, whitespace, and indentation are part of the syntax.",
+    text_markdown_ignored_option_note: "Not available in Markdown — line breaks, whitespace, and indentation are part of the syntax.",
     text_bibliographic_heading: "Bibliographic info",
     text_title_label: "Title",
     text_author_label: "Author",
@@ -1004,6 +1026,7 @@ export const I18N: Record<Lang, Messages> = {
     text_err_font_fallback: "The selected font could not be retrieved; converting with a fallback font instead.",
     text_err_pdf_too_large: "The typeset PDF is too large. Try adjusting the font size or margins.",
     text_err_upload_failed: "Failed to upload the text file.",
+    text_err_markdown_too_complex: "The Markdown document is too complex to convert.",
 
     epub_remove_file: "Remove file",
     epub_meta_line: (size) => size,
@@ -1053,6 +1076,8 @@ export const I18N: Record<Lang, Messages> = {
     text_aozora_parsed_note: "Parsed as Aozora Bunko format.",
     text_aozora_unsupported_note: (n) => (n === 1 ? "1 unsupported annotation remains as literal annotation text." : `${n} unsupported annotations remain as literal annotation text.`),
     text_aozora_diagnostics_truncated_note: "The diagnostic count reached its limit, so further warnings were not tallied.",
+
+    text_markdown_parsed_note: "Parsed as Markdown.",
 
     aozora_open: "Choose from Aozora Bunko",
     aozora_title: "Choose from Aozora Bunko",

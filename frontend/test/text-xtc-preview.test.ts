@@ -131,4 +131,16 @@ describe("buildTextXtcPreviewCacheKey", () => {
     const aozoraKey = buildTextXtcPreviewCacheKey("同じ本文です。", cloneOptions({ inputFormat: "aozora" }));
     expect(plainKey).not.toBe(aozoraKey);
   });
+
+  // Markdown対応仕様書 §22.8「X3プレビューcache keyに inputFormat: markdown が
+  // 反映」: options全体をJSON化してキーへ連結しているため（この関数自体は仕様書
+  // 実装時から変更していない）、inputFormat: "markdown" も他の値と同様に別キーへ
+  // 分離される。
+  it("changes when inputFormat is markdown, distinct from both plain and aozora", () => {
+    const plainKey = buildTextXtcPreviewCacheKey("同じ本文です。", cloneOptions({ inputFormat: "plain" }));
+    const aozoraKey = buildTextXtcPreviewCacheKey("同じ本文です。", cloneOptions({ inputFormat: "aozora" }));
+    const markdownKey = buildTextXtcPreviewCacheKey("同じ本文です。", cloneOptions({ inputFormat: "markdown" }));
+    expect(markdownKey).not.toBe(plainKey);
+    expect(markdownKey).not.toBe(aozoraKey);
+  });
 });

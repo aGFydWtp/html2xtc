@@ -7,6 +7,9 @@ import {
   DEFAULT_TEXT_OPTIONS,
   encodeTextOptionsHeader,
   isJoinHardWrappedLinesEditable,
+  isMarkdownFileName,
+  isMaxConsecutiveBlankLinesEditable,
+  isPreserveSpacesEditable,
   isUntouchedForAozoraPreset,
   isUntouchedFromDefault,
   isValidFontFamily,
@@ -100,6 +103,12 @@ describe("validateTextOptions", () => {
   it("rejects an invalid font family", () => {
     expect(isValidTextOptions({ ...cloneDefaults(), font: "Not; Valid" })).toBe(false);
     expect(isValidTextOptions({ ...cloneDefaults(), font: "" })).toBe(false);
+  });
+
+  it("accepts markdown as inputFormat and rejects unknown inputFormat values (Markdown対応仕様書 §22.1)", () => {
+    expect(isValidTextOptions({ ...cloneDefaults(), inputFormat: "markdown" })).toBe(true);
+    expect(isValidTextOptions({ ...cloneDefaults(), inputFormat: "md" as never })).toBe(false);
+    expect(isValidTextOptions({ ...cloneDefaults(), inputFormat: "commonmark" as never })).toBe(false);
   });
 
   it("rejects invalid encoding/layout/textAlign enums", () => {
@@ -243,10 +252,38 @@ describe("isUntouchedForAozoraPreset / applyAozoraPresetIfUntouched (§15.3)", (
   });
 });
 
-describe("isJoinHardWrappedLinesEditable (§15.6)", () => {
-  it("is false for aozora, true for plain", () => {
+describe("isJoinHardWrappedLinesEditable (§15.6, Markdown対応仕様書 §8)", () => {
+  it("is false for aozora and markdown, true for plain", () => {
     expect(isJoinHardWrappedLinesEditable("aozora")).toBe(false);
+    expect(isJoinHardWrappedLinesEditable("markdown")).toBe(false);
     expect(isJoinHardWrappedLinesEditable("plain")).toBe(true);
+  });
+});
+
+describe("isMaxConsecutiveBlankLinesEditable / isPreserveSpacesEditable (Markdown対応仕様書 §8/§17.3)", () => {
+  it("is false only for markdown — aozora keeps these two editable, unlike joinHardWrappedLines", () => {
+    expect(isMaxConsecutiveBlankLinesEditable("markdown")).toBe(false);
+    expect(isMaxConsecutiveBlankLinesEditable("aozora")).toBe(true);
+    expect(isMaxConsecutiveBlankLinesEditable("plain")).toBe(true);
+
+    expect(isPreserveSpacesEditable("markdown")).toBe(false);
+    expect(isPreserveSpacesEditable("aozora")).toBe(true);
+    expect(isPreserveSpacesEditable("plain")).toBe(true);
+  });
+});
+
+describe("isMarkdownFileName (Markdown対応仕様書 §5.4/§17.4)", () => {
+  it("matches .md and .markdown, case-insensitively", () => {
+    expect(isMarkdownFileName("doc.md")).toBe(true);
+    expect(isMarkdownFileName("doc.MD")).toBe(true);
+    expect(isMarkdownFileName("doc.markdown")).toBe(true);
+    expect(isMarkdownFileName("doc.MARKDOWN")).toBe(true);
+  });
+
+  it("does not match .txt or other extensions", () => {
+    expect(isMarkdownFileName("doc.txt")).toBe(false);
+    expect(isMarkdownFileName("doc.markdown.txt")).toBe(false);
+    expect(isMarkdownFileName("doc")).toBe(false);
   });
 });
 

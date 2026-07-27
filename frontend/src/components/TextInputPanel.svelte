@@ -8,6 +8,7 @@
     renderDocumentToHtml,
     separateDocumentStructure,
   } from "@html2xtc/aozora-text";
+  import { MARKDOWN_DOCUMENT_CSS } from "@html2xtc/markdown-text";
   import { submitText, type TextUploadHandle } from "../lib/convert.svelte";
   import { t } from "../lib/i18n.svelte";
   import {
@@ -17,11 +18,13 @@
     summarizeAozoraDiagnostics,
   } from "../lib/text-aozora";
   import { decodeTextBytes, TextDecodeError, type EncodingDetectionResult } from "../lib/text-decode";
+  import { parseMarkdownPreview } from "../lib/text-markdown";
   import { countCharacters, countLines, normalizeText, textToParagraphHtml } from "../lib/text-normalize";
   import {
     applyAozoraPresetIfUntouched,
     applyTextPreset,
     DEFAULT_TEXT_OPTIONS,
+    isMarkdownFileName,
     isValidTextOptions,
     type TextConvertOptions,
     type TextInputFormat,
@@ -224,6 +227,22 @@
   // 文字列のみで、本文由来の文字列は一切含まない。
   const aozoraPreviewStyleHtml = `<style>${AOZORA_DOCUMENT_CSS}</style>`;
 
+  // Markdown本文プレビュー（Markdown対応仕様書 §17.5）: aozoraPreviewDocと同じ理由で
+  // X3実機プレビューと同じ安全な切り出し（x3PreviewText、fenced code block境界を
+  // 壊さない）を共有パッケージ経由でパースする。生入力を{@html}へ渡すことは一切ない
+  // — contentHtml は @html2xtc/markdown-text の許可リストレンダラーの出力のみ。
+  // パース例外（複雑度超過含む）はparseMarkdownPreview内でfail-softに握り潰し、
+  // nullを返す(空表示)ことでプレビュー全体を壊さない。
+  const markdownPreviewDoc = $derived.by(() => {
+    if (options.inputFormat !== "markdown") return null;
+    return parseMarkdownPreview(x3PreviewText);
+  });
+  const markdownBodyHtml = $derived(markdownPreviewDoc ? markdownPreviewDoc.contentHtml : "");
+  // MARKDOWN_DOCUMENT_CSS も共有パッケージのビルド時に確定した固定文字列（styles.ts）。
+  // 章マーカーのCSS（aria-hidden対応）も含まれるため、画面上でも選択・読み上げ
+  // されない（packages/aozora-text/src/chapters.ts の XTC_CHAPTER_MARKER_CSS 経由）。
+  const markdownPreviewStyleHtml = `<style>${MARKDOWN_DOCUMENT_CSS}</style>`;
+
   // options はプリセットや setTextLayout でオブジェクトごと差し替わる。$effect 内で
   // options.* を直接読むと参照の変更だけで再実行され、レイアウト切替のたびに再デコード
   // →status が一瞬 loading になり配下のコンポーネント（組版設定アコーディオン等）が
@@ -418,7 +437,7 @@
         clearTimeout(normalizeTimer);
         normalizeTimer = undefined;
       }
-      const initial = computeInitialTextState(options, decodedText, inputFormatManuallySet, autoTitle);
+      const initial = computeInitialTextState(options, decodedText, inputFormatManuallySet, autoTitle, current.name, current.type);
       options = initial.options;
       normalizedText = initial.normalizedText;
       previewMode = "x3";
@@ -440,7 +459,7 @@
 
 <div class="text-panel">
   <div class="att-row">
-    <span class="att-badge">TXT</span>
+    <span class="att-badge">{isMarkdownFileName(file.name) ? "MD" : "TXT"}</span>
     <div class="att-info">
       <div class="att-name">{file.name}</div>
       <div class="att-meta">{t("text_meta_line")(formatSize(file.size), charCount, lineCount)}</div>
@@ -458,6 +477,11 @@
               {@html aozoraPreviewStyleHtml}
               <!-- eslint-disable-next-line svelte/no-at-html-tags -- aozoraBodyHtml は共有パッケージ renderDocumentToHtml の許可リスト方式の固定タグ・固定属性出力のみ（render-html.ts参照）。生入力や途中文字列は渡さない -->
               <div class="body-text aozora-body">{@html aozoraBodyHtml}</div>
+            {:else if options.inputFormat === "markdown"}
+              <!-- eslint-disable-next-line svelte/no-at-html-tags -- 固定文字列（packages/markdown-text/src/styles.ts の MARKDOWN_DOCUMENT_CSS）で、本文由来の入力は一切含まない -->
+              {@html markdownPreviewStyleHtml}
+              <!-- eslint-disable-next-line svelte/no-at-html-tags -- markdownBodyHtml は共有パッケージ createMarkdownConverter の許可リストレンダラー出力のみ（renderer.ts参照）。生入力や途中文字列は渡さない。パース例外はtext-markdown.tsのparseMarkdownPreviewでfail-softに空表示化済み -->
+              <div class="body-text markdown-body">{@html markdownBodyHtml}</div>
             {:else}
               <!-- eslint-disable-next-line svelte/no-at-html-tags -- bodyPreviewHtml は textToParagraphHtml が escapeHtml 済みの本文から生成する固定タグ(<p>/<br>)のみを含む -->
               <div class="body-text">{@html bodyPreviewHtml}</div>
@@ -484,6 +508,11 @@
           {#if aozoraDiagnosticsSummary.truncated}
             <p class="preview-note">{t("text_aozora_diagnostics_truncated_note")}</p>
           {/if}
+        </div>
+      {/if}
+      {#if previewMode === "source" && options.inputFormat === "markdown"}
+        <div class="x3-preview-actions">
+          <p class="preview-note">{t("text_markdown_parsed_note")}</p>
         </div>
       {/if}
       {#if previewMode === "x3" && x3Parsed}

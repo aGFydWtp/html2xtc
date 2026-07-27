@@ -203,3 +203,149 @@ describe("AST node limit (spec §17 — deterministic failure, not a partial doc
     expect(() => parseAozoraDocument(paragraphs)).not.toThrow();
   });
 });
+
+describe("block control annotations without any blank lines (regression: real files that never blank-line-separate 改ページ／見出し from surrounding prose)", () => {
+  function textOf(children: unknown): string {
+    return (children as { type: string; value?: string }[])
+      .map((c) => (c.type === "text" ? (c.value ?? "") : ""))
+      .join("");
+  }
+
+  it("改ページ alone on its own line, with real content on the lines around it, is still a pageBreak block", () => {
+    const doc = parseAozoraDocument(["本文の前の行", "［＃改ページ］", "本文の後の行"].join("\n"));
+    expect(doc.blocks).toEqual<AozoraBlock[]>([
+      { type: "paragraph", children: [{ type: "text", value: "本文の前の行" }] },
+      { type: "pageBreak", kind: "page" },
+      { type: "paragraph", children: [{ type: "text", value: "本文の後の行" }] },
+    ]);
+    expect(doc.blocks.some((b) => b.type === "rawAnnotation")).toBe(false);
+  });
+
+  it("a same-line 大見出し and a 改ページ are both recognized with no blank lines anywhere (the reported bug's exact first sample)", () => {
+    const doc = parseAozoraDocument(
+      ["［＃改ページ］", "はじめに［＃「はじめに」は大見出し］", "　「時間の哲学」について、みなさんはどのような印象をお持ちでしょうか。"].join("\n"),
+    );
+    expect(doc.blocks).toEqual<AozoraBlock[]>([
+      { type: "pageBreak", kind: "page" },
+      { type: "heading", level: 1, variant: "normal", children: [{ type: "text", value: "はじめに" }] },
+      {
+        type: "paragraph",
+        children: [{ type: "text", value: "　「時間の哲学」について、みなさんはどのような印象をお持ちでしょうか。" }],
+      },
+    ]);
+    expect(doc.diagnostics).toEqual([]);
+  });
+
+  it("a ここから／ここで 見出しレンジ spanning several lines, with no blank lines anywhere, is recognized as one heading block (the reported bug's exact second sample)", () => {
+    const doc = parseAozoraDocument(
+      [
+        "　さあ、ここから時間哲学を始めるのは、あなたです。",
+        "［＃改ページ］",
+        "［＃ここから大見出し］",
+        "第Ⅰ部",
+        "概念のツールボックス",
+        "――考えるための道具を揃える――",
+        "［＃ここで大見出し終わり］",
+        "平井靖史",
+        "［＃改ページ］",
+      ].join("\n"),
+    );
+
+    expect(doc.blocks.map((b) => b.type)).toEqual(["paragraph", "pageBreak", "heading", "paragraph", "pageBreak"]);
+    expect(doc.blocks.some((b) => b.type === "rawAnnotation")).toBe(false);
+    // Note: "ここから時間哲学を始める" in the first line is plain Japanese
+    // prose (no "［＃" prefix) and must never be mistaken for a range
+    // marker — it stays literal, ordinary paragraph text.
+    expect(textOf((doc.blocks[0] as { children: unknown }).children)).toContain("ここから時間哲学を始める");
+    expect((doc.blocks[1] as { kind: string }).kind).toBe("page");
+    const heading = doc.blocks[2] as { type: "heading"; level: number; variant: string; children: unknown };
+    expect(heading.level).toBe(1);
+    expect(heading.variant).toBe("normal");
+    const headingText = textOf(heading.children);
+    expect(headingText).toContain("第Ⅰ部");
+    expect(headingText).toContain("概念のツールボックス");
+    expect(headingText).toContain("――考えるための道具を揃える――");
+    expect(textOf((doc.blocks[3] as { children: unknown }).children)).toContain("平井靖史");
+    expect((doc.blocks[4] as { kind: string }).kind).toBe("page");
+  });
+
+  it("字下げ (single) with no blank line before it still applies only to the following glued paragraph", () => {
+    const doc = parseAozoraDocument(["文1", "［＃3字下げ］", "文2", "文3"].join("\n"));
+    expect(doc.blocks).toEqual<AozoraBlock[]>([
+      { type: "paragraph", children: [{ type: "text", value: "文1" }] },
+      { type: "paragraph", indentEm: 3, children: [{ type: "text", value: "文2\n文3" }] },
+    ]);
+  });
+
+  it("中央寄せ ここから／ここで range with no blank lines still tags every paragraph inside it", () => {
+    const doc = parseAozoraDocument(
+      ["［＃ここから中央寄せ］", "中央1", "中央2", "［＃ここで中央寄せ終わり］", "通常"].join("\n"),
+    );
+    expect(doc.blocks).toEqual<AozoraBlock[]>([
+      { type: "paragraph", align: "center", children: [{ type: "text", value: "中央1\n中央2" }] },
+      { type: "paragraph", children: [{ type: "text", value: "通常" }] },
+    ]);
+  });
+
+  it("a lone 見出し-range end marker (no matching start anywhere) fails soft as a raw annotation block, keeping the body", () => {
+    const doc = parseAozoraDocument("［＃ここで大見出し終わり］\n\n本文");
+    expect(doc.blocks.some((b) => b.type === "rawAnnotation")).toBe(true);
+    expect(doc.blocks.some((b) => b.type === "paragraph")).toBe(true);
+    expect(doc.diagnostics.some((d) => d.kind === "unmatched-end")).toBe(true);
+  });
+
+  it("a 見出し-range start marker that's never closed keeps the body content visible and diagnoses unclosed-range", () => {
+    const doc = parseAozoraDocument("［＃ここから大見出し］\n\n本文1\n\n本文2");
+    expect(doc.blocks.every((b) => b.type !== "heading")).toBe(true);
+    expect(doc.blocks.some((b) => b.type === "rawAnnotation")).toBe(false);
+    const allText = doc.blocks
+      .filter((b): b is Extract<AozoraBlock, { type: "paragraph" }> => b.type === "paragraph")
+      .map((b) => textOf(b.children))
+      .join("");
+    expect(allText).toContain("本文1");
+    expect(allText).toContain("本文2");
+    expect(doc.diagnostics.some((d) => d.kind === "unclosed-range")).toBe(true);
+  });
+
+  it("mismatched level/variant between a 見出し-range start and end falls back to a paragraph, not a heading, with fail-soft diagnostics", () => {
+    const doc = parseAozoraDocument("［＃ここから大見出し］見出し文［＃ここで中見出し終わり］");
+    expect(doc.blocks.every((b) => b.type !== "heading")).toBe(true);
+    expect(doc.blocks.some((b) => b.type === "paragraph")).toBe(true);
+    expect(doc.diagnostics.some((d) => d.kind === "unmatched-end")).toBe(true);
+    expect(doc.diagnostics.some((d) => d.kind === "unclosed-range")).toBe(true);
+  });
+
+  describe("a 見出し-range that never finds its own ここで…見出し終わり is truncated at the next block control annotation, not left open until EOF or a distant unrelated end marker", () => {
+    it("a 改ページ immediately after an unclosed ここから見出し is still a real pageBreak block, not swallowed as heading content", () => {
+      const doc = parseAozoraDocument(["［＃ここから大見出し］", "［＃改ページ］", "本文"].join("\n"));
+      expect(doc.blocks.every((b) => b.type !== "heading")).toBe(true);
+      expect(doc.blocks.some((b) => b.type === "pageBreak" && b.kind === "page")).toBe(true);
+      expect(doc.diagnostics.some((d) => d.kind === "unclosed-range")).toBe(true);
+    });
+
+    it("a 字下げ range start inside an unclosed ここから見出し is still recognized as a real indent directive, and the heading start marker survives as fail-soft literal text", () => {
+      const doc = parseAozoraDocument(
+        ["［＃ここから大見出し］", "見出しらしき文", "［＃ここから3字下げ］", "字下げされた本文", "［＃ここで字下げ終わり］"].join("\n"),
+      );
+      expect(doc.blocks.every((b) => b.type !== "heading")).toBe(true);
+      expect(
+        doc.blocks.some((b) => b.type === "paragraph" && b.indentEm === 3 && textOf(b.children).includes("字下げされた本文")),
+      ).toBe(true);
+      expect(doc.diagnostics.some((d) => d.kind === "unclosed-range")).toBe(true);
+    });
+
+    it("does not falsely truncate when the range legitimately closes before any control annotation appears", () => {
+      const doc = parseAozoraDocument(
+        ["文の前", "［＃ここから大見出し］", "見出しの内容", "［＃ここで大見出し終わり］", "［＃改ページ］"].join("\n"),
+      );
+      expect(doc.blocks.map((b) => b.type)).toEqual(["paragraph", "heading", "pageBreak"]);
+      expect(textOf((doc.blocks[0] as { children: unknown }).children)).toContain("文の前");
+      const heading = doc.blocks[1] as { level: number; variant: string; children: unknown };
+      expect(heading.level).toBe(1);
+      expect(heading.variant).toBe("normal");
+      expect(textOf(heading.children)).toContain("見出しの内容");
+      expect((doc.blocks[2] as { kind: string }).kind).toBe("page");
+      expect(doc.diagnostics).toEqual([]);
+    });
+  });
+});

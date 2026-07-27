@@ -265,6 +265,34 @@ export function normalizeForAozora(text: string): AozoraNormalizeResult {
   return { text: nfc, controlCharsRemoved: removed };
 }
 
+export interface MarkdownNormalizeResult {
+  text: string;
+  /** Count only (spec §8.3/§17): the removed characters themselves are never logged. */
+  controlCharsRemoved: number;
+}
+
+/**
+ * Pre-parse normalization for `inputFormat === "markdown"` (markdown-
+ * conversion spec §8): unifies line endings, strips the same control
+ * characters as every other branch, and applies NFC — but deliberately does
+ * NOT collapse blank-line runs, join hard-wrapped lines, trim trailing
+ * line whitespace, or expand tabs. Every one of those is Markdown syntax
+ * (blank-line-delimited paragraphs/list-item boundaries, a hard break's
+ * trailing two spaces, a fenced/indented code block's exact
+ * whitespace/indentation) — running any of them on the raw string before
+ * markdown-it sees it would corrupt structure the parser still needs (spec
+ * §8's explicit "処理しないもの" list). Mirrors normalizeForAozora's same
+ * stance for the identical reason, reusing this file's own line-ending/
+ * control-char helpers so the two pipelines never drift on those two shared
+ * steps.
+ */
+export function normalizeMarkdownSource(text: string): MarkdownNormalizeResult {
+  const lfOnly = normalizeLineEndings(text);
+  const { text: stripped, removed } = stripControlChars(lfOnly);
+  const nfc = stripped.normalize("NFC");
+  return { text: nfc, controlCharsRemoved: removed };
+}
+
 export interface NormalizeOptions {
   maxConsecutiveBlankLines: number;
   preserveSpaces: boolean;

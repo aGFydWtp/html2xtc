@@ -76,6 +76,7 @@ import { textPrepareErrorMessage } from "./text-upload";
 import type { ConvertJobParams, ConvertSource, Env, PdfConvertOptions, RenderOptions } from "./types";
 import { AozoraAstLimitExceededError } from "../packages/aozora-text/src/index";
 import type { XtcChapter } from "../packages/aozora-text/src/index";
+import { MarkdownComplexityLimitError } from "../packages/markdown-text/src/index";
 
 // xtctool may run up to 600s (XTC_TIMEOUT_SECONDS in container.ts); allow a
 // 30s margin for transfer and container startup. Must stay below the step
@@ -1256,9 +1257,20 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
               // job's stored error string either.
               throw new NonRetryableError(textPrepareErrorMessage(error));
             }
+            if (error instanceof MarkdownComplexityLimitError) {
+              // Deterministic for this exact input (markdown-conversion spec
+              // §14/§21's "決定的エラーとして扱う") — retrying would
+              // re-parse the same over-token-count/over-nesting document.
+              // MarkdownComplexityLimitError's own message is already a
+              // fixed, content-free string (its own doc comment), and
+              // textPrepareErrorMessage returns it verbatim, so nothing
+              // body-derived reaches the job's stored error string either.
+              throw new NonRetryableError(textPrepareErrorMessage(error));
+            }
             // Every other error prepareTextDocument can throw (TextTooLongError
-            // etc., surfaced via normalizeText/normalizeForAozora) maps the
-            // same way it always has.
+            // etc., surfaced via normalizeText/normalizeForAozora/
+            // normalizeMarkdownSource, or an unexpected parser exception) maps
+            // the same way it always has.
             throw new NonRetryableError(textPrepareErrorMessage(error));
           }
 
@@ -1275,6 +1287,11 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
               `recognizedAnnotations=${prepared.diagnostics.recognizedAnnotations} ` +
               `unsupportedAnnotations=${prepared.diagnostics.unsupportedAnnotations} ` +
               `malformedAnnotations=${prepared.diagnostics.malformedAnnotations} ` +
+              // tokenCount is only meaningful for inputFormat=markdown
+              // (markdown-conversion spec §20's "tokenCount=") — "n/a" for
+              // plain/aozora, where PreparedTextDocument.markdownTokenCount
+              // is undefined.
+              `tokenCount=${prepared.markdownTokenCount ?? "n/a"} ` +
               `chapterHeadingLevel=${prepared.chapterHeadingLevel ?? "none"} chapterCount=${prepared.chapters.length}`,
           );
 

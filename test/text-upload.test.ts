@@ -11,6 +11,7 @@ import {
   TextTooLongError,
   TooManyLinesError,
 } from "../src/text-normalize";
+import { MarkdownComplexityLimitError } from "../packages/markdown-text/src/index";
 import {
   decodeTextFilenameHeader,
   isAllowedTextContentType,
@@ -20,13 +21,15 @@ import {
 } from "../src/text-upload";
 
 describe("isAllowedTextContentType", () => {
-  it("accepts text/plain and application/octet-stream", () => {
+  it("accepts text/plain, text/markdown, and application/octet-stream", () => {
     expect(isAllowedTextContentType("text/plain")).toBe(true);
+    expect(isAllowedTextContentType("text/markdown")).toBe(true);
     expect(isAllowedTextContentType("application/octet-stream")).toBe(true);
   });
 
   it("ignores media-type parameters and is case-insensitive", () => {
     expect(isAllowedTextContentType("Text/Plain; charset=utf-8")).toBe(true);
+    expect(isAllowedTextContentType("Text/Markdown; charset=utf-8")).toBe(true);
     expect(isAllowedTextContentType("APPLICATION/OCTET-STREAM")).toBe(true);
   });
 
@@ -189,6 +192,7 @@ describe("textPrepareErrorMessage (spec §19.1 condition mapping)", () => {
       [new TextTooLongError(), "text is too long to convert"],
       [new TooManyLinesError(), "line count exceeds the limit"],
       [new LineTooLongError(), "a line exceeds the maximum line length"],
+      [new MarkdownComplexityLimitError(), "Markdown document is too complex to convert"],
     ];
     for (const [error, expected] of cases) {
       const message = textPrepareErrorMessage(error);

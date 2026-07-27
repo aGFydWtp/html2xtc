@@ -91,6 +91,16 @@ describe("resolveServerErrorKey", () => {
     expect(resolveServerErrorKey("a line exceeds the maximum line length")).toBe("text_err_line_too_long");
   });
 
+  // Markdown対応仕様書 §14/§21: MarkdownComplexityLimitError の固定文言。
+  it("maps the Markdown complexity-limit message (packages/markdown-text/src/types.ts)", () => {
+    expect(resolveServerErrorKey("Markdown document is too complex to convert")).toBe(
+      "text_err_markdown_too_complex",
+    );
+    expect(
+      resolveServerErrorKey("NonRetryableError: Markdown document is too complex to convert"),
+    ).toBe("text_err_markdown_too_complex");
+  });
+
   it("maps the upload-time Content-Length size limit message (src/index.ts#handleCreateTextJob)", () => {
     expect(resolveServerErrorKey("uploaded text file exceeds the 5242880 byte limit")).toBe(
       "text_err_too_large",

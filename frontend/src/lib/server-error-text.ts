@@ -55,6 +55,7 @@ export type ServerErrorKey = keyof Pick<
   | "text_err_too_many_lines"
   | "text_err_line_too_long"
   | "text_err_pdf_too_large"
+  | "text_err_markdown_too_complex"
   | "epub_err_too_large"
   | "epub_err_invalid_zip"
   | "epub_err_missing_package"
@@ -138,6 +139,9 @@ export function resolveServerErrorKey(err: string): ServerErrorKey | null {
   if (err === "text is too long to convert") return "text_err_too_many_chars";
   if (err === "line count exceeds the limit") return "text_err_too_many_lines";
   if (err === "a line exceeds the maximum line length") return "text_err_line_too_long";
+  // Markdown対応仕様書 §14: MarkdownComplexityLimitError の固定文言（本文・見出し・
+  // URL等を含まない、コンテンツ非依存の文字列）。
+  if (err === "Markdown document is too complex to convert") return "text_err_markdown_too_complex";
 
   // --- EPUBアップロード系（実装仕様書 §17.1 の「クライアント向けメッセージ例」を ---
   //     正として照合。バックエンド実装（src/、別エージェント担当）が実際に投げる

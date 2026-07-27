@@ -4,14 +4,22 @@
 import type { AozoraDocument } from "../packages/aozora-text/src/types";
 import { renderBibliographyToHtml, renderDocumentToHtml } from "../packages/aozora-text/src/render-html";
 import { AOZORA_DOCUMENT_CSS } from "../packages/aozora-text/src/styles";
+import { MARKDOWN_DOCUMENT_CSS } from "../packages/markdown-text/src/index";
 import type { TextConvertOptions } from "./text-options";
 
 /**
  * Reading-HTML generation for uploaded TXT files (text-upload spec §9/§15).
- * Every input is always treated as plain text — never HTML or Markdown
- * (spec §4.1/§17): escapeHtml is mandatory on every user-derived string that
- * lands in the document, and no external URL/script/stylesheet reference is
- * ever emitted (spec §15.3).
+ * For `inputFormat: "plain"`, every input is always treated as plain text —
+ * never HTML or Markdown (spec §4.1/§17): escapeHtml is mandatory on every
+ * user-derived string that lands in the document, and no external
+ * URL/script/stylesheet reference is ever emitted (spec §15.3).
+ * `inputFormat: "aozora"` and `"markdown"` instead route the body through
+ * their own shared AST parser/allowlist renderer (@html2xtc/aozora-text,
+ * @html2xtc/markdown-text) — see buildAozoraContentHtml/
+ * buildMarkdownContentHtml below — but the same "never emit an external
+ * reference, escape everything user-derived" security stance holds there
+ * too, enforced inside each shared package's own renderer rather than in
+ * this file.
  */
 
 /** Mandatory HTML-escaping (spec §4.1) — the sole defense against the TXT
@@ -40,17 +48,19 @@ export function textToParagraphHtml(normalizedText: string): string {
 const DEFAULT_TITLE = "Untitled";
 
 /**
- * Resolves the document title (spec §15.4 priority): options.title, then the
- * filename with a trailing ".txt" removed, then "Untitled". `filename` is
- * expected to already be sanitized (src/text-upload.ts's sanitizeUploadFilename
- * equivalent) — display/title use only, never a path.
+ * Resolves the document title (spec §15.4 priority; extended by markdown-
+ * conversion spec §10.1 to also strip ".md"/".markdown"): options.title,
+ * then the filename with a trailing ".txt", ".md", or ".markdown" removed,
+ * then "Untitled". `filename` is expected to already be sanitized
+ * (src/text-upload.ts's sanitizeUploadFilename equivalent) — display/title
+ * use only, never a path.
  */
 export function resolveDocumentTitle(title: string, filename: string): string {
   const trimmedTitle = title.trim();
   if (trimmedTitle.length > 0) {
     return trimmedTitle;
   }
-  const withoutExt = filename.replace(/\.txt$/i, "").trim();
+  const withoutExt = filename.replace(/\.(?:txt|markdown|md)$/i, "").trim();
   return withoutExt.length > 0 ? withoutExt : DEFAULT_TITLE;
 }
 
@@ -82,14 +92,23 @@ export function buildTextPrintCss(options: TextConvertOptions): string {
   }
 `
       : "";
-  const preserveSpaces = options.preserveSpaces
-    ? `
+  // Markdown ignores preserveSpaces entirely (markdown-conversion spec §8:
+  // "`preserveSpaces === true` でもMarkdown出力全体を `pre-wrap` にしては
+  // ならない") — pre-wrapping the WHOLE .content would turn every <p>'s own
+  // paragraph-internal whitespace/line-breaks into literal layout, which is
+  // exactly the "Markdown固有空白を既存normalizeが壊す" failure mode this
+  // feature exists to avoid. A Markdown document's own <pre> elements (code
+  // blocks) already get their own pre-wrap from MARKDOWN_DOCUMENT_CSS
+  // (packages/markdown-text/src/styles.ts), scoped to just those elements.
+  const preserveSpaces =
+    options.preserveSpaces && options.inputFormat !== "markdown"
+      ? `
   .content {
     white-space: pre-wrap;
     tab-size: 4;
   }
 `
-    : "";
+      : "";
   const contentRules =
     options.layout === "vertical"
       ? `
@@ -206,9 +225,25 @@ export function buildAozoraContentHtml(document: AozoraDocument): SafeGeneratedH
   return brandSafeHtml(bibliography.length > 0 ? `${body}\n${bibliography}` : body);
 }
 
+/**
+ * Wraps a Markdown document's already-generated content HTML (spec §9.1's
+ * ParsedMarkdownDocument.contentHtml, produced entirely by
+ * @html2xtc/markdown-text's allowlist renderer — never markdown-it's own
+ * HTML renderer, never a raw/unescaped string) into a SafeGeneratedHtml
+ * value. This function itself performs no HTML generation of any kind: it
+ * only brands a value that has already been proven safe by construction
+ * (the shared package's renderer.ts never emits anything outside its fixed
+ * tag/attribute allowlist), exactly mirroring how buildAozoraContentHtml
+ * brands @html2xtc/aozora-text's own renderer output.
+ */
+export function buildMarkdownContentHtml(html: string): SafeGeneratedHtml {
+  return brandSafeHtml(html);
+}
+
 export interface BuildTextDocumentShellInput {
-  /** Only ever a SafeGeneratedHtml value from buildPlainTextContentHtml or
-   * buildAozoraContentHtml — never a raw/unescaped string. */
+  /** Only ever a SafeGeneratedHtml value from buildPlainTextContentHtml,
+   * buildAozoraContentHtml, or buildMarkdownContentHtml — never a
+   * raw/unescaped string. */
   contentHtml: SafeGeneratedHtml;
   options: TextConvertOptions;
   /** Used for the <title> tag — always non-empty (resolveDocumentTitle's
@@ -245,15 +280,19 @@ export function buildTextDocumentShell({
 ${title.length > 0 ? `      <h1>${escapeHtml(title)}</h1>\n` : ""}${authorTrimmed.length > 0 ? `      <p class="author">${escapeHtml(authorTrimmed)}</p>\n` : ""}    </header>
 `
     : "";
-  // AOZORA_DOCUMENT_CSS supplies the class rules buildAozoraContentHtml's
-  // markup depends on (ruby/emphasis/indent/page-break/etc., spec §12) — the
-  // `plain` branch's markup never uses any of these classes, so injecting it
-  // there would be dead weight, not a correctness risk, but is skipped
-  // anyway to keep `plain` output byte-identical to its pre-existing form
-  // (test/text-prepare.test.ts's parity pin).
+  // AOZORA_DOCUMENT_CSS / MARKDOWN_DOCUMENT_CSS supply the class rules
+  // buildAozoraContentHtml's / buildMarkdownContentHtml's markup depends on
+  // (ruby/emphasis/indent/page-break/etc. for aozora, spec §12; headings/
+  // lists/blockquote/code/table/md-link/md-image-placeholder for markdown,
+  // markdown-conversion spec §15) — the `plain` branch's markup never uses
+  // any of these classes, so injecting either there would be dead weight,
+  // not a correctness risk, but is skipped anyway to keep `plain` output
+  // byte-identical to its pre-existing form (test/text-prepare.test.ts's
+  // parity pin).
   const css =
     buildTextPrintCss(options) +
-    (options.inputFormat === "aozora" ? `\n${AOZORA_DOCUMENT_CSS}` : "");
+    (options.inputFormat === "aozora" ? `\n${AOZORA_DOCUMENT_CSS}` : "") +
+    (options.inputFormat === "markdown" ? `\n${MARKDOWN_DOCUMENT_CSS}` : "");
 
   return `<!doctype html>
 <html lang="ja">

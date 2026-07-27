@@ -52,6 +52,7 @@ import { DEFAULT_TEXT_OPTIONS } from "../src/text-options";
 import { prepareTextDocument } from "../src/text-prepare";
 import type { Env } from "../src/types";
 import { AozoraAstLimitExceededError } from "../packages/aozora-text/src/index";
+import { MarkdownComplexityLimitError } from "../packages/markdown-text/src/index";
 
 const mockedConvertInContainer = vi.mocked(convertInContainer);
 const mockedEnforcePurposeRateLimit = vi.mocked(enforcePurposeRateLimit);
@@ -595,6 +596,47 @@ describe("handleTextPreview", () => {
     expect(body.code).toBe("TEXT_TOO_LONG");
     expect(body.error).not.toContain("本文");
     // Never reaches font/render/convert once prepareTextDocument has failed.
+    expect(mockedConvertInContainer).not.toHaveBeenCalled();
+  });
+
+  // --- inputFormat: "markdown" (markdown-conversion spec §14.1/§17.6: same
+  // prepareTextDocument as production) ---
+
+  it("routes a markdown-format preview through the shared allowlist renderer, embedding the same chapter marker production would", async () => {
+    stubFontFetchFailure();
+    let capturedHtml = "";
+    const env = fakeEnv({
+      quickAction: async (_action, options) => {
+        capturedHtml = (options as { html: string }).html;
+        return new Response("%PDF", { status: 200 });
+      },
+    });
+    const request = previewRequest({
+      text: "# 見出し\n\n**太字**の本文です。\n",
+      options: validOptions({ inputFormat: "markdown" }),
+    });
+    const response = await handleTextPreview(request, env);
+    expect(response.status).toBe(200);
+    expect(capturedHtml).toContain("<h1>");
+    expect(capturedHtml).toContain("<strong>太字</strong>");
+    expect(capturedHtml).toContain(
+      '<span class="xtc-chapter-marker" aria-hidden="true">XTCCH0001</span><h1>',
+    );
+  });
+
+  it("maps a MarkdownComplexityLimitError from prepareTextDocument to a content-free 413 TEXT_TOO_LONG", async () => {
+    mockedPrepareTextDocument.mockImplementationOnce(() => {
+      throw new MarkdownComplexityLimitError();
+    });
+    const request = previewRequest({
+      text: "本文",
+      options: validOptions({ inputFormat: "markdown" }),
+    });
+    const response = await handleTextPreview(request, fakeEnv());
+    expect(response.status).toBe(413);
+    const body = (await response.json()) as { error: string; code: string };
+    expect(body.code).toBe("TEXT_TOO_LONG");
+    expect(body.error).not.toContain("本文");
     expect(mockedConvertInContainer).not.toHaveBeenCalled();
   });
 });

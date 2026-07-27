@@ -5,6 +5,8 @@
   import {
     FONT_CANDIDATES,
     isJoinHardWrappedLinesEditable,
+    isMaxConsecutiveBlankLinesEditable,
+    isPreserveSpacesEditable,
     setTextLayout,
     type TextConvertOptions,
     type TextInputFormat,
@@ -27,6 +29,8 @@
   } = $props();
 
   const joinLinesEditable = $derived(isJoinHardWrappedLinesEditable(options.inputFormat));
+  const maxBlankLinesEditable = $derived(isMaxConsecutiveBlankLinesEditable(options.inputFormat));
+  const preserveSpacesEditable = $derived(isPreserveSpacesEditable(options.inputFormat));
 
   let advancedOpen = $state(false);
 
@@ -72,10 +76,17 @@
           <div class="opt-label">{t("text_input_format_label")}</div>
           <div class="seg">
             <button type="button" aria-pressed={options.inputFormat === "plain"} onclick={() => onInputFormatChange("plain")}>{t("text_input_format_plain")}</button>
+            <button type="button" aria-pressed={options.inputFormat === "markdown"} onclick={() => onInputFormatChange("markdown")}>{t("text_input_format_markdown")}</button>
             <button type="button" aria-pressed={options.inputFormat === "aozora"} onclick={() => onInputFormatChange("aozora")}>{t("text_input_format_aozora")}</button>
           </div>
           <p class="field-note">
-            {options.inputFormat === "aozora" ? t("text_input_format_aozora_hint") : t("text_input_format_plain_hint")}
+            {#if options.inputFormat === "aozora"}
+              {t("text_input_format_aozora_hint")}
+            {:else if options.inputFormat === "markdown"}
+              {t("text_input_format_markdown_hint")}
+            {:else}
+              {t("text_input_format_plain_hint")}
+            {/if}
           </p>
         </div>
 
@@ -152,16 +163,19 @@
               min="0"
               max="5"
               step="1"
+              disabled={!maxBlankLinesEditable}
               value={options.maxConsecutiveBlankLines}
               oninput={(e) => (options.maxConsecutiveBlankLines = Number(e.currentTarget.value))}
             />
+            {#if !maxBlankLinesEditable}<p class="field-note">{t("text_markdown_ignored_option_note")}</p>{/if}
           </div>
           <div class="field">
             <div class="opt-label">{t("text_preserve_spaces_label")}</div>
             <div class="seg">
-              <button type="button" aria-pressed={!options.preserveSpaces} onclick={() => (options.preserveSpaces = false)}>{t("text_preserve_spaces_off")}</button>
-              <button type="button" aria-pressed={options.preserveSpaces} onclick={() => (options.preserveSpaces = true)}>{t("text_preserve_spaces_on")}</button>
+              <button type="button" disabled={!preserveSpacesEditable} aria-pressed={!options.preserveSpaces} onclick={() => (options.preserveSpaces = false)}>{t("text_preserve_spaces_off")}</button>
+              <button type="button" disabled={!preserveSpacesEditable} aria-pressed={options.preserveSpaces} onclick={() => (options.preserveSpaces = true)}>{t("text_preserve_spaces_on")}</button>
             </div>
+            {#if !preserveSpacesEditable}<p class="field-note">{t("text_markdown_ignored_option_note")}</p>{/if}
           </div>
         </div>
 
@@ -197,7 +211,15 @@
             <button type="button" disabled={!joinLinesEditable} aria-pressed={options.joinHardWrappedLines} onclick={() => (options.joinHardWrappedLines = true)}>{t("text_join_lines_on")}</button>
             <button type="button" disabled={!joinLinesEditable} aria-pressed={!options.joinHardWrappedLines} onclick={() => (options.joinHardWrappedLines = false)}>{t("text_join_lines_off")}</button>
           </div>
-          <p class="field-note">{joinLinesEditable ? t("text_join_lines_note") : t("text_join_lines_aozora_note")}</p>
+          <p class="field-note">
+            {#if joinLinesEditable}
+              {t("text_join_lines_note")}
+            {:else if options.inputFormat === "markdown"}
+              {t("text_join_lines_markdown_note")}
+            {:else}
+              {t("text_join_lines_aozora_note")}
+            {/if}
+          </p>
         </div>
 
         <div class="bib-heading">{t("text_bibliographic_heading")}</div>

@@ -141,6 +141,35 @@ ${aozoraIndentRules()}
   text-align: end !important;
 }
 
+/* 罫囲み (render-html.ts's renderBlocksWithBoxes wraps a run of consecutive
+   boxed paragraphs in this one div). Border color is close to black rather
+   than a light gray on purpose: production Cloudflare Browser Rendering
+   subtracts roughly 84 from every RGB channel versus a local Chromium
+   render (project-measured, see also src/pdf.ts's own color notes) — a
+   pale border risks landing anywhere between "nearly invisible" and
+   "darker than authored" depending on the starting value, while black is
+   already at the channel floor and unaffected either way. border/padding
+   are plain (non-logical) properties on purpose, unlike jisage_N/
+   chitsuki_N above: every side gets the identical value, so — unlike an
+   asymmetric indent, which DOES need margin-inline-* to mean the same
+   thing under vertical-rl and horizontal-tb — a uniform border/padding
+   already behaves identically in both writing modes with no logical
+   variant needed. break-inside is deliberately left at its default (not
+   avoid): a box taller than one page/column must still be allowed to
+   split across the break — text completeness always wins over an
+   unbroken border (this project's text-first print CSS rule; forcing
+   avoid here risks the exact "content silently doesn't fit" failure
+   that rule exists to forbid). No explicit width/max-width either, for
+   the same reason none of this file's other block-level rules set one:
+   it inherits the same available cross-size every paragraph already
+   flows within. */
+.aozora-box {
+  border: 1px solid #000;
+  padding: 0.5em;
+  margin-block: 0.5em;
+  box-sizing: border-box;
+}
+
 /* --- XTC chapter markers (chapters.ts) --------------------------------- */
 ${XTC_CHAPTER_MARKER_CSS}
 `;

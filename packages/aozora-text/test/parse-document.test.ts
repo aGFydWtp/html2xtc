@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 import { AozoraAstLimitExceededError, parseAozoraDocument } from "../src/parse-document";
 import type { AozoraBlock } from "../src/types";
-import { MAX_DIAGNOSTICS } from "../src/types";
+import { MAX_DIAGNOSTICS, MAX_RANGE_NESTING_DEPTH } from "../src/types";
 
 describe("改ページ (spec §9.2 / §18.3 — all 4 kinds)", () => {
   it("recognizes 改ページ／改丁／改見開き／改段 as their own pageBreak block", () => {
@@ -57,6 +57,61 @@ describe("見出し (spec §9.3 / §18.3)", () => {
     const doc = parseAozoraDocument("違う文字列［＃「一致しない」は大見出し］");
     expect(doc.blocks[0].type).toBe("paragraph");
     expect(doc.diagnostics.some((d) => d.kind === "unsupported-annotation")).toBe(true);
+  });
+});
+
+describe("見出し — quoted title containing its own nested 「」 (regression: real files whose title text itself quotes something)", () => {
+  it("a title with one nested 「」 pair in the middle (real-file line 89)", () => {
+    const doc = parseAozoraDocument("なぜ「今」、時間哲学なのか［＃「なぜ「今」、時間哲学なのか」は小見出し］");
+    expect(doc.blocks).toEqual<AozoraBlock[]>([
+      { type: "heading", level: 3, variant: "normal", children: [{ type: "text", value: "なぜ「今」、時間哲学なのか" }] },
+    ]);
+  });
+
+  it("a title starting with 「 — the quoted target itself begins with 「 (real-file line 1105)", () => {
+    const doc = parseAozoraDocument("「統握-内容」図式［＃「「統握-内容」図式」は小見出し］");
+    expect(doc.blocks).toEqual<AozoraBlock[]>([
+      { type: "heading", level: 3, variant: "normal", children: [{ type: "text", value: "「統握-内容」図式" }] },
+    ]);
+  });
+
+  it("a title with two separate nested 「」 pairs (real-file line 100)", () => {
+    const doc = parseAozoraDocument(
+      "第Ⅰ部「概念のツールボックス」――考えるための道具を揃える［＃「第Ⅰ部「概念のツールボックス」――考えるための道具を揃える」は大見出し］",
+    );
+    expect(doc.blocks).toEqual<AozoraBlock[]>([
+      {
+        type: "heading",
+        level: 1,
+        variant: "normal",
+        children: [{ type: "text", value: "第Ⅰ部「概念のツールボックス」――考えるための道具を揃える" }],
+      },
+    ]);
+  });
+
+  it("still falls back to a paragraph when before/target genuinely don't match, even with nested 「」 present", () => {
+    const doc = parseAozoraDocument("違う「文字」列［＃「一致し「ない」」は大見出し］");
+    expect(doc.blocks.every((b) => b.type !== "heading")).toBe(true);
+    expect(doc.blocks[0].type).toBe("paragraph");
+  });
+
+  it("does not crash or blow up on a pathological line packed with the literal ［＃「 marker", () => {
+    const pathological = "［＃「".repeat(2000) + "x" + "」は大見出し］";
+    expect(() => parseAozoraDocument(pathological)).not.toThrow();
+    const doc = parseAozoraDocument(pathological);
+    expect(doc.blocks.every((b) => b.type !== "heading")).toBe(true);
+  });
+
+  it("scales roughly linearly for many same-line heading lines each containing nested 「」 (spec §17/§18.7)", () => {
+    const unit = "なぜ「今」なのか［＃「なぜ「今」なのか」は小見出し］\n\n";
+    const base = unit.repeat(20_000);
+    const t1 = performance.now();
+    parseAozoraDocument(base);
+    const d1 = performance.now() - t1;
+    const t2 = performance.now();
+    parseAozoraDocument(base + base);
+    const d2 = performance.now() - t2;
+    expect(d2).toBeLessThan(d1 * 8 + 200);
   });
 });
 
@@ -201,5 +256,307 @@ describe("AST node limit (spec §17 — deterministic failure, not a partial doc
   it("does not throw just under the limit", () => {
     const paragraphs = Array.from({ length: 200_000 }, (_, i) => `p${i}`).join("\n\n");
     expect(() => parseAozoraDocument(paragraphs)).not.toThrow();
+  });
+});
+
+describe("block control annotations without any blank lines (regression: real files that never blank-line-separate 改ページ／見出し from surrounding prose)", () => {
+  function textOf(children: unknown): string {
+    return (children as { type: string; value?: string }[])
+      .map((c) => (c.type === "text" ? (c.value ?? "") : ""))
+      .join("");
+  }
+
+  it("改ページ alone on its own line, with real content on the lines around it, is still a pageBreak block", () => {
+    const doc = parseAozoraDocument(["本文の前の行", "［＃改ページ］", "本文の後の行"].join("\n"));
+    expect(doc.blocks).toEqual<AozoraBlock[]>([
+      { type: "paragraph", children: [{ type: "text", value: "本文の前の行" }] },
+      { type: "pageBreak", kind: "page" },
+      { type: "paragraph", children: [{ type: "text", value: "本文の後の行" }] },
+    ]);
+    expect(doc.blocks.some((b) => b.type === "rawAnnotation")).toBe(false);
+  });
+
+  it("a same-line 大見出し and a 改ページ are both recognized with no blank lines anywhere (the reported bug's exact first sample)", () => {
+    const doc = parseAozoraDocument(
+      ["［＃改ページ］", "はじめに［＃「はじめに」は大見出し］", "　「時間の哲学」について、みなさんはどのような印象をお持ちでしょうか。"].join("\n"),
+    );
+    expect(doc.blocks).toEqual<AozoraBlock[]>([
+      { type: "pageBreak", kind: "page" },
+      { type: "heading", level: 1, variant: "normal", children: [{ type: "text", value: "はじめに" }] },
+      {
+        type: "paragraph",
+        children: [{ type: "text", value: "　「時間の哲学」について、みなさんはどのような印象をお持ちでしょうか。" }],
+      },
+    ]);
+    expect(doc.diagnostics).toEqual([]);
+  });
+
+  it("a ここから／ここで 見出しレンジ spanning several lines, with no blank lines anywhere, is recognized as one heading block (the reported bug's exact second sample)", () => {
+    const doc = parseAozoraDocument(
+      [
+        "　さあ、ここから時間哲学を始めるのは、あなたです。",
+        "［＃改ページ］",
+        "［＃ここから大見出し］",
+        "第Ⅰ部",
+        "概念のツールボックス",
+        "――考えるための道具を揃える――",
+        "［＃ここで大見出し終わり］",
+        "平井靖史",
+        "［＃改ページ］",
+      ].join("\n"),
+    );
+
+    expect(doc.blocks.map((b) => b.type)).toEqual(["paragraph", "pageBreak", "heading", "paragraph", "pageBreak"]);
+    expect(doc.blocks.some((b) => b.type === "rawAnnotation")).toBe(false);
+    // Note: "ここから時間哲学を始める" in the first line is plain Japanese
+    // prose (no "［＃" prefix) and must never be mistaken for a range
+    // marker — it stays literal, ordinary paragraph text.
+    expect(textOf((doc.blocks[0] as { children: unknown }).children)).toContain("ここから時間哲学を始める");
+    expect((doc.blocks[1] as { kind: string }).kind).toBe("page");
+    const heading = doc.blocks[2] as { type: "heading"; level: number; variant: string; children: unknown };
+    expect(heading.level).toBe(1);
+    expect(heading.variant).toBe("normal");
+    const headingText = textOf(heading.children);
+    expect(headingText).toContain("第Ⅰ部");
+    expect(headingText).toContain("概念のツールボックス");
+    expect(headingText).toContain("――考えるための道具を揃える――");
+    expect(textOf((doc.blocks[3] as { children: unknown }).children)).toContain("平井靖史");
+    expect((doc.blocks[4] as { kind: string }).kind).toBe("page");
+  });
+
+  it("字下げ (single) with no blank line before it still applies only to the following glued paragraph", () => {
+    const doc = parseAozoraDocument(["文1", "［＃3字下げ］", "文2", "文3"].join("\n"));
+    expect(doc.blocks).toEqual<AozoraBlock[]>([
+      { type: "paragraph", children: [{ type: "text", value: "文1" }] },
+      { type: "paragraph", indentEm: 3, children: [{ type: "text", value: "文2\n文3" }] },
+    ]);
+  });
+
+  it("中央寄せ ここから／ここで range with no blank lines still tags every paragraph inside it", () => {
+    const doc = parseAozoraDocument(
+      ["［＃ここから中央寄せ］", "中央1", "中央2", "［＃ここで中央寄せ終わり］", "通常"].join("\n"),
+    );
+    expect(doc.blocks).toEqual<AozoraBlock[]>([
+      { type: "paragraph", align: "center", children: [{ type: "text", value: "中央1\n中央2" }] },
+      { type: "paragraph", children: [{ type: "text", value: "通常" }] },
+    ]);
+  });
+
+  it("a lone 見出し-range end marker (no matching start anywhere) fails soft as a raw annotation block, keeping the body", () => {
+    const doc = parseAozoraDocument("［＃ここで大見出し終わり］\n\n本文");
+    expect(doc.blocks.some((b) => b.type === "rawAnnotation")).toBe(true);
+    expect(doc.blocks.some((b) => b.type === "paragraph")).toBe(true);
+    expect(doc.diagnostics.some((d) => d.kind === "unmatched-end")).toBe(true);
+  });
+
+  it("a 見出し-range start marker that's never closed keeps the body content visible and diagnoses unclosed-range", () => {
+    const doc = parseAozoraDocument("［＃ここから大見出し］\n\n本文1\n\n本文2");
+    expect(doc.blocks.every((b) => b.type !== "heading")).toBe(true);
+    expect(doc.blocks.some((b) => b.type === "rawAnnotation")).toBe(false);
+    const allText = doc.blocks
+      .filter((b): b is Extract<AozoraBlock, { type: "paragraph" }> => b.type === "paragraph")
+      .map((b) => textOf(b.children))
+      .join("");
+    expect(allText).toContain("本文1");
+    expect(allText).toContain("本文2");
+    expect(doc.diagnostics.some((d) => d.kind === "unclosed-range")).toBe(true);
+  });
+
+  it("mismatched level/variant between a 見出し-range start and end falls back to a paragraph, not a heading, with fail-soft diagnostics", () => {
+    const doc = parseAozoraDocument("［＃ここから大見出し］見出し文［＃ここで中見出し終わり］");
+    expect(doc.blocks.every((b) => b.type !== "heading")).toBe(true);
+    expect(doc.blocks.some((b) => b.type === "paragraph")).toBe(true);
+    expect(doc.diagnostics.some((d) => d.kind === "unmatched-end")).toBe(true);
+    expect(doc.diagnostics.some((d) => d.kind === "unclosed-range")).toBe(true);
+  });
+
+  describe("a 見出し-range that never finds its own ここで…見出し終わり is truncated at the next block control annotation, not left open until EOF or a distant unrelated end marker", () => {
+    it("a 改ページ immediately after an unclosed ここから見出し is still a real pageBreak block, not swallowed as heading content", () => {
+      const doc = parseAozoraDocument(["［＃ここから大見出し］", "［＃改ページ］", "本文"].join("\n"));
+      expect(doc.blocks.every((b) => b.type !== "heading")).toBe(true);
+      expect(doc.blocks.some((b) => b.type === "pageBreak" && b.kind === "page")).toBe(true);
+      expect(doc.diagnostics.some((d) => d.kind === "unclosed-range")).toBe(true);
+    });
+
+    it("a 字下げ range start inside an unclosed ここから見出し is still recognized as a real indent directive, and the heading start marker survives as fail-soft literal text", () => {
+      const doc = parseAozoraDocument(
+        ["［＃ここから大見出し］", "見出しらしき文", "［＃ここから3字下げ］", "字下げされた本文", "［＃ここで字下げ終わり］"].join("\n"),
+      );
+      expect(doc.blocks.every((b) => b.type !== "heading")).toBe(true);
+      expect(
+        doc.blocks.some((b) => b.type === "paragraph" && b.indentEm === 3 && textOf(b.children).includes("字下げされた本文")),
+      ).toBe(true);
+      expect(doc.diagnostics.some((d) => d.kind === "unclosed-range")).toBe(true);
+    });
+
+    it("does not falsely truncate when the range legitimately closes before any control annotation appears", () => {
+      const doc = parseAozoraDocument(
+        ["文の前", "［＃ここから大見出し］", "見出しの内容", "［＃ここで大見出し終わり］", "［＃改ページ］"].join("\n"),
+      );
+      expect(doc.blocks.map((b) => b.type)).toEqual(["paragraph", "heading", "pageBreak"]);
+      expect(textOf((doc.blocks[0] as { children: unknown }).children)).toContain("文の前");
+      const heading = doc.blocks[1] as { level: number; variant: string; children: unknown };
+      expect(heading.level).toBe(1);
+      expect(heading.variant).toBe("normal");
+      expect(textOf(heading.children)).toContain("見出しの内容");
+      expect((doc.blocks[2] as { kind: string }).kind).toBe("page");
+      expect(doc.diagnostics).toEqual([]);
+    });
+  });
+});
+
+describe("罫囲み (ruled-box range, spec §9 — frame only, no table-column inference)", () => {
+  function textOf(children: unknown): string {
+    return (children as { type: string; value?: string }[])
+      .map((c) => (c.type === "text" ? (c.value ?? "") : ""))
+      .join("");
+  }
+
+  it("a ここから／ここで range tags every paragraph inside it with boxed:true, and none outside it", () => {
+    const doc = parseAozoraDocument(
+      "［＃ここから罫囲み］\n\n枠内1\n\n枠内2\n\n［＃ここで罫囲み終わり］\n\n枠外",
+    );
+    expect(doc.blocks).toEqual<AozoraBlock[]>([
+      { type: "paragraph", boxed: true, children: [{ type: "text", value: "枠内1" }] },
+      { type: "paragraph", boxed: true, children: [{ type: "text", value: "枠内2" }] },
+      { type: "paragraph", children: [{ type: "text", value: "枠外" }] },
+    ]);
+  });
+
+  it("recognizes the range with no blank lines anywhere (the line-unit boundary fix's benefit applies here too)", () => {
+    const doc = parseAozoraDocument(
+      [
+        "本文では「未来志向の時間評価」という語を、次の2つに明確に分割し混同を避ける。",
+        "［＃ここから罫囲み］",
+        "区分　評価される時間　典型課題",
+        "（A）経過型　持続の実時間　時間再生",
+        "（B）予測型　志向的未来　見積もり",
+        "［＃ここで罫囲み終わり］",
+        "経過型は〈持続する時間の長さ〉をモニターする行為である。",
+      ].join("\n"),
+    );
+    expect(doc.blocks.map((b) => b.type)).toEqual(["paragraph", "paragraph", "paragraph"]);
+    const boxed = doc.blocks.filter((b) => b.type === "paragraph" && b.boxed === true);
+    expect(boxed.length).toBeGreaterThan(0);
+    expect(boxed.every((b) => b.type === "paragraph" && b.boxed === true)).toBe(true);
+    const boxedText = boxed.map((b) => (b.type === "paragraph" ? textOf(b.children) : "")).join("\n");
+    expect(boxedText).toContain("区分");
+    expect(boxedText).toContain("経過型");
+    expect(boxedText).toContain("予測型");
+    const before = doc.blocks[0];
+    expect(before.type).toBe("paragraph");
+    expect(before.type === "paragraph" && before.boxed).toBeUndefined();
+    const after = doc.blocks[doc.blocks.length - 1];
+    expect(after.type).toBe("paragraph");
+    expect(after.type === "paragraph" && after.boxed).toBeUndefined();
+    expect(after.type === "paragraph" && textOf(after.children)).toContain("経過型は〈持続する時間の長さ〉");
+    expect(doc.diagnostics.every((d) => d.kind !== "unclosed-range")).toBe(true);
+  });
+
+  it("composes with 字下げ／中央寄せ nesting: a paragraph can be boxed AND indented/centered at once", () => {
+    const doc = parseAozoraDocument(
+      "［＃ここから罫囲み］\n\n［＃ここから中央寄せ］\n\n中央かつ枠\n\n［＃ここで中央寄せ終わり］\n\n［＃ここで罫囲み終わり］",
+    );
+    expect(doc.blocks).toEqual<AozoraBlock[]>([
+      { type: "paragraph", boxed: true, align: "center", children: [{ type: "text", value: "中央かつ枠" }] },
+    ]);
+  });
+
+  it("a start-only range marker (never closed) still keeps the body content visible and diagnoses unclosed-range", () => {
+    const doc = parseAozoraDocument("［＃ここから罫囲み］\n\n本文1\n\n本文2");
+    const paragraphs = doc.blocks.filter((b): b is Extract<AozoraBlock, { type: "paragraph" }> => b.type === "paragraph");
+    expect(paragraphs.map((p) => textOf(p.children))).toEqual(["本文1", "本文2"]);
+    expect(doc.diagnostics.some((d) => d.kind === "unclosed-range" && d.annotationName === "罫囲み")).toBe(true);
+  });
+
+  it("an end-only range marker (no matching start) fails soft as a raw annotation block, keeping the body", () => {
+    const doc = parseAozoraDocument("［＃ここで罫囲み終わり］\n\n本文");
+    expect(doc.blocks.some((b) => b.type === "rawAnnotation")).toBe(true);
+    expect(doc.blocks.some((b) => b.type === "paragraph")).toBe(true);
+    expect(doc.diagnostics.some((d) => d.kind === "unmatched-end")).toBe(true);
+  });
+
+  it("shares MAX_RANGE_NESTING_DEPTH's budget with 字下げ／中央寄せ (spec §17)", () => {
+    const opens = Array.from({ length: MAX_RANGE_NESTING_DEPTH + 10 }, (_, i) =>
+      i % 2 === 0 ? "［＃ここから罫囲み］" : "［＃ここから中央寄せ］",
+    ).join("\n\n");
+    const closes = Array.from({ length: MAX_RANGE_NESTING_DEPTH + 10 }, (_, i) =>
+      i % 2 === 0 ? "［＃ここで中央寄せ終わり］" : "［＃ここで罫囲み終わり］",
+    ).join("\n\n");
+    const doc = parseAozoraDocument(`${opens}\n\n本文\n\n${closes}`);
+    expect(doc.diagnostics.some((d) => d.kind === "resource-limit")).toBe(true);
+  });
+
+  it("truncates a 見出しレンジ that swallows a stray ここから罫囲み just like it does for the other 9 control annotations", () => {
+    const doc = parseAozoraDocument(["［＃ここから大見出し］", "［＃ここから罫囲み］", "本文"].join("\n"));
+    expect(doc.blocks.every((b) => b.type !== "heading")).toBe(true);
+    expect(doc.diagnostics.some((d) => d.kind === "unclosed-range")).toBe(true);
+  });
+});
+
+describe("unclosed-range diagnostics report the range's own opening line, not a fixed 0", () => {
+  it("a 見出しレンジ unclosed at EOF points at the ここから line, however far from EOF it is", () => {
+    const filler = Array.from({ length: 30 }, (_, i) => `本文${i}`).join("\n\n");
+    const doc = parseAozoraDocument(`${filler}\n\n［＃ここから大見出し］\n\n本文の続き`);
+    const diag = doc.diagnostics.find((d) => d.kind === "unclosed-range");
+    expect(diag).toBeDefined();
+    expect(diag?.line).toBe(61);
+  });
+
+  it("a 見出しレンジ truncated by an intervening control annotation points at the ここから line, not the control line", () => {
+    const doc = parseAozoraDocument(
+      ["本文0", "", "［＃ここから中見出し］", "見出しらしき文", "［＃改ページ］", "本文"].join("\n"),
+    );
+    const diag = doc.diagnostics.find((d) => d.kind === "unclosed-range");
+    expect(diag).toBeDefined();
+    expect(diag?.line).toBe(3); // the ここから中見出し line, not the ［＃改ページ］ line (5)
+  });
+
+  it("an unclosed 字下げ range points at its ここから line", () => {
+    const doc = parseAozoraDocument("本文0\n\n本文1\n\n［＃ここから3字下げ］\n\n本文2");
+    const diag = doc.diagnostics.find((d) => d.kind === "unclosed-range");
+    expect(diag).toBeDefined();
+    expect(diag?.line).toBe(5);
+  });
+
+  it("an unclosed 中央寄せ range points at its ここから line", () => {
+    const doc = parseAozoraDocument("本文0\n\n［＃ここから中央寄せ］\n\n本文1");
+    const diag = doc.diagnostics.find((d) => d.kind === "unclosed-range");
+    expect(diag).toBeDefined();
+    expect(diag?.line).toBe(3);
+  });
+
+  it("an unclosed 罫囲み range points at its ここから line", () => {
+    const doc = parseAozoraDocument("本文0\n\n本文1\n\n本文2\n\n［＃ここから罫囲み］\n\n本文3");
+    const diag = doc.diagnostics.find((d) => d.kind === "unclosed-range" && d.annotationName === "罫囲み");
+    expect(diag).toBeDefined();
+    expect(diag?.line).toBe(7);
+  });
+});
+
+describe("同一行見出し — MAX_HEADING_SPLIT_SLACK boundary (spec §17's O(1)-candidates bound)", () => {
+  // MAX_HEADING_SPLIT_SLACK is a bound on the candidate *index* distance
+  // from the midpoint, not directly on the before/target length
+  // difference — each 1-unit step moves that difference by 2, so the
+  // constant (32) tolerates a length difference of up to ~64, not 32. Both
+  // sides of that boundary are asserted below. The padding is placed
+  // BETWEEN the visible text and the ［＃「 marker (trailing on `before`,
+  // not leading on the whole line): padding at the very start/end of the
+  // *entire line* would be stripped by parseOutsideSegment's own
+  // line-level `.trim()` before matchSameLineHeading ever sees it, which
+  // would defeat the point of this test (it'd degenerate to before/target
+  // being byte-identical again, delta=0, telling us nothing about the
+  // slack boundary at all). 青空文庫 files conventionally use
+  // ［＃N字下げ］ rather than literal spaces for indentation, so this is a
+  // real but low-impact edge case in practice.
+  it("a before/target length difference of 64 (within the boundary) is still recognized as a heading", () => {
+    const doc = parseAozoraDocument(`はしがき${"　".repeat(64)}［＃「はしがき」は中見出し］`);
+    expect(doc.blocks[0].type).toBe("heading");
+  });
+
+  it("a before/target length difference of 66 (past the boundary) falls back to a paragraph", () => {
+    const doc = parseAozoraDocument(`はしがき${"　".repeat(66)}［＃「はしがき」は中見出し］`);
+    expect(doc.blocks[0].type).toBe("paragraph");
+    expect(doc.blocks.every((b) => b.type !== "heading")).toBe(true);
   });
 });

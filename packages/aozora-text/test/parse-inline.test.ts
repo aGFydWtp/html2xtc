@@ -292,6 +292,130 @@ describe("外字 (spec §9.10)", () => {
       });
       expect(diagnostics.some((d) => d.kind === "unsupported-annotation")).toBe(true);
     });
+
+    it("a 面区点 triple with NO 水準 prefix (real regression report: 1-84-17) resolves as gaiji", () => {
+      const { nodes, diagnostics } = parse("※［＃「x」、1-84-17］");
+      expect(nodes).toEqual([{ type: "gaiji", description: "x" }]);
+      expect(diagnostics).toEqual([]);
+      expect(nodes.some((n) => n.type === "text" && n.value.includes("※"))).toBe(false);
+    });
+
+    it("full-width digits in a plain 区点番号 (６０-８) resolve as gaiji", () => {
+      const { nodes } = parse("※［＃「さんずい＋幼」、６０-８］");
+      expect(nodes).toEqual([{ type: "gaiji", description: "さんずい＋幼" }]);
+    });
+
+    it("full-width digits in a 水準-prefixed 面区点 also resolve as gaiji", () => {
+      const { nodes } = parse("※［＃「口＋世」、第３水準１-１４-９５］");
+      expect(nodes).toEqual([{ type: "gaiji", description: "口＋世" }]);
+    });
+  });
+
+  describe("U+ gate: shape-only (ASCII alnum after U+), not a full hex re-validation — and the regression this specifically closes", () => {
+    it("full-width Ｕ＋XXXX resolves as gaiji (hex itself stays half-width-only per applyGaiji's own regex, so this still degrades to description-only, same as c98ab4b's broad-accept behavior for this exact input)", () => {
+      const { nodes, diagnostics } = parse("※［＃「花」、Ｕ＋82B1］");
+      expect(nodes).toEqual([{ type: "gaiji", description: "花" }]);
+      expect(diagnostics).toEqual([]);
+      expect(nodes.some((n) => n.type === "text" && n.value.includes("※"))).toBe(false);
+    });
+
+    it("does not lose body text when U+ is immediately followed by unrelated Japanese prose (regression: an earlier, too-loose 'starts with U+' gate silently discarded everything after U+)", () => {
+      const { nodes, diagnostics } = parse("［＃「その意味は」、U+ある特殊文字を指す］");
+      expect(nodes.some((n) => n.type === "gaiji")).toBe(false);
+      expect(nodes).toContainEqual({
+        type: "rawAnnotation",
+        text: "［＃「その意味は」、U+ある特殊文字を指す］",
+      });
+      expect(diagnostics.some((d) => d.kind === "unsupported-annotation")).toBe(true);
+    });
+
+    it("U+ with nothing after it (empty tail) is still accepted as a code-spec attempt, degrading to description-only (nothing to lose — the tail is empty either way)", () => {
+      const { nodes } = parse("※［＃「x」、U+］");
+      expect(nodes).toEqual([{ type: "gaiji", description: "x" }]);
+    });
+
+    it("U+ followed only by whitespace is treated the same as an empty tail (trimmed to nothing, degrades to description-only)", () => {
+      const { nodes } = parse("※［＃「x」、U+   ］");
+      expect(nodes).toEqual([{ type: "gaiji", description: "x" }]);
+    });
+
+    it("U+ followed by a long ASCII-alnum tail (well under the 4096-codepoint annotation-body cap, so this exercises the gate itself, not the separate resource-limit truncation) is still accepted as a (malformed, too-long) code-spec attempt, degrading to description-only — never treated as prose to preserve, since it's pure ASCII with nothing meaningful to lose", () => {
+      const { nodes, diagnostics } = parse(`※［＃「x」、U+${"a".repeat(3000)}］`);
+      expect(nodes).toEqual([{ type: "gaiji", description: "x" }]);
+      expect(diagnostics).toEqual([]);
+    });
+
+    it("U+ followed by a mix of ASCII and a single Japanese character is rejected (not ASCII-alnum-only) and falls back to verbatim", () => {
+      const { nodes } = parse("［＃「x」、U+82B1です］");
+      expect(nodes.some((n) => n.type === "gaiji")).toBe(false);
+      expect(nodes).toContainEqual({ type: "rawAnnotation", text: "［＃「x」、U+82B1です］" });
+    });
+
+    // Non-regression: the 4 existing "malformed hex still degrades to
+    // description-only" contracts (all ASCII-alnum after U+, so they pass
+    // the shape gate and reach applyGaiji's own strict hex validation,
+    // exactly as before every change in this area).
+    it("rejects a surrogate-half code point, falling back to description-only (non-regression)", () => {
+      const { nodes } = parse("※［＃「x」、U+D800］");
+      expect(nodes).toEqual([{ type: "gaiji", description: "x" }]);
+    });
+
+    it("rejects a code point past U+10FFFF, falling back to description-only (non-regression)", () => {
+      const { nodes } = parse("※［＃「x」、U+110000］");
+      expect(nodes).toEqual([{ type: "gaiji", description: "x" }]);
+    });
+
+    it("rejects a noncharacter code point, falling back to description-only (non-regression)", () => {
+      const { nodes } = parse("※［＃「x」、U+FFFE］");
+      expect(nodes).toEqual([{ type: "gaiji", description: "x" }]);
+    });
+
+    it("rejects malformed hex (non-hex letters), falling back to description-only (non-regression)", () => {
+      const { nodes } = parse("※［＃「x」、U+ZZZZ］");
+      expect(nodes).toEqual([{ type: "gaiji", description: "x" }]);
+    });
+  });
+
+  describe("isGaijiCodeSpec performance (spec §17/§18.7 — no nested quantifiers, no catastrophic backtracking)", () => {
+    function timeIt(fn: () => void): number {
+      const start = performance.now();
+      fn();
+      return performance.now() - start;
+    }
+
+    it("a long run of digit groups (kept under the 4096-codepoint annotation-body cap, so this exercises isGaijiCodeSpec itself) resolves as gaiji, in well under a millisecond-scale budget", () => {
+      const longNumberChain = Array.from({ length: 900 }, (_, i) => String(i % 100)).join("-");
+      const t = timeIt(() => {
+        const { nodes } = parse(`※［＃「x」、${longNumberChain}］`);
+        expect(nodes).toEqual([{ type: "gaiji", description: "x" }]);
+      });
+      expect(t).toBeLessThan(50);
+    });
+
+    it("a long run of bare hyphens (no valid digit groups; still under the annotation-body cap) does not match, falls back to verbatim, and does not blow up", () => {
+      const t = timeIt(() => {
+        const { nodes } = parse(`［＃「x」、${"-".repeat(3000)}］`);
+        expect(nodes.some((n) => n.type === "gaiji")).toBe(false);
+      });
+      expect(t).toBeLessThan(50);
+    });
+
+    it("a U+ tail so large it exceeds the 4096-codepoint annotation-body cap is rejected by that pre-existing, unrelated resource limit (not by isGaijiCodeSpec) well under a millisecond-scale budget — confirms the two safeguards compose without either one blowing up", () => {
+      const t = timeIt(() => {
+        const { nodes, diagnostics } = parse(`※［＃「x」、U+${"A".repeat(10_000)}］`);
+        expect(diagnostics.some((d) => d.kind === "resource-limit")).toBe(true);
+        expect(nodes.some((n) => n.type === "gaiji")).toBe(false);
+      });
+      expect(t).toBeLessThan(50);
+    });
+
+    it("scales roughly linearly for many gaiji annotations using 区点 notation (doubled-input check)", () => {
+      const unit = "本文※［＃「x」、60-8］";
+      const base = unit.repeat(20_000);
+      const t1 = timeIt(() => parse(base));
+      const t2 = timeIt(() => parse(base + base));
+      expect(t2).toBeLessThan(t1 * 8 + 100);
+    });
   });
 });
 

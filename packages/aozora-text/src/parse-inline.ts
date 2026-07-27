@@ -328,65 +328,106 @@ export function parseInlineText(chunk: string, options: ParseInlineOptions = {})
     }
   }
 
+  /** Maps every full-width ASCII variant (U+FF01–U+FF5E, the "Fullwidth
+   * Forms" block — full-width digits/letters/punctuation, e.g. "０"–"９",
+   * "Ａ"–"Ｚ", "＋") to its ordinary half-width ASCII counterpart
+   * (U+0021–U+007E) via the standard fixed -0xFEE0 offset between the two
+   * blocks. Used so `isGaijiCodeSpec` (below) can accept 全角 digits (区点
+   * numbers, 水準 level digits) and 全角 "Ｕ＋" with a SINGLE consistent
+   * rule instead of duplicating half-width/full-width variants inside
+   * every character class — real Aozora files mix both conventions (spec
+   * review: "６０-８" and "Ｕ＋XXXX" both appear), and matching only one of
+   * the two would just be another under-acceptance regression of the same
+   * shape this whole allowlist exists to avoid. Never applied to
+   * `description` or any other document text — only to the already-
+   * isolated trailing code-spec candidate, so this can never alter what a
+   * reader actually sees for anything except deciding "is this a code
+   * spec". */
+  function normalizeFullWidthAscii(value: string): string {
+    return value.replace(/[！-～]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xfee0));
+  }
+
   /** True iff `spec` (already trimmed) looks like an attempted 外字 code
    * specification, spec §9.10 — the SOLE place this project decides "is
    * this a code spec, or is it ordinary text" (handleAnnotation's gaiji
-   * branch below is the only caller; keeping this list in exactly one
+   * branch below is the only caller; keeping this decision in exactly one
    * place is deliberate, so it can never quietly drift out of sync with
-   * itself). Real-world Aozora Bunko 外字注記 uses three notations, all
-   * accepted here:
-   * - `U+...`: a Unicode code point hex escape (spec's own example). Only
-   *   the `U+` PREFIX is checked, not that the rest is valid hex —
-   *   `applyGaiji`'s own regex + `isValidUnicodeScalarValue` already do
-   *   that strict check to decide whether to actually resolve a
-   *   character; a malformed one (wrong digit count, non-hex digits, an
-   *   out-of-range/surrogate/noncharacter code point) is still a genuine
-   *   *attempt* at this notation and must keep degrading to the
+   * itself). Checked against `normalizeFullWidthAscii(spec)` throughout —
+   * see that function's doc comment — so half-width and full-width digit
+   * conventions are accepted identically. Real-world Aozora Bunko 外字注記
+   * uses two notation families, both accepted here:
+   *
+   * - `U+<tail>` (half- or full-width "Ｕ＋"): a Unicode code point hex
+   *   escape (spec's own example) — accepted when `<tail>` is ASCII
+   *   letters/digits ONLY (any length, including empty), deliberately NOT
+   *   validated as actually-well-formed hex here: `applyGaiji`'s own
+   *   regex + `isValidUnicodeScalarValue` already do that strict check to
+   *   decide whether to actually resolve a character, and a malformed
+   *   attempt (wrong digit count, non-hex letters, an out-of-range/
+   *   surrogate/noncharacter code point) must keep degrading to the
    *   description-only fallback exactly as it always has (spec's own
    *   existing tests: rejects U+D800/U+110000/U+FFFE/U+ZZZZ, all still
    *   `{ type: "gaiji", description }`, never a raw annotation) — this
-   *   function must NOT re-validate hex shape, only the `U+` attempt
-   *   itself, or it would re-introduce exactly the same class of
-   *   under-acceptance this whole allowlist exists to avoid.
-   * - `区-点` (e.g. "60-8"): JIS X 0208 区点番号 — two decimal numbers
-   *   joined by a hyphen, no `水準` prefix.
-   * - `第N水準面-区-点` (e.g. "第3水準1-14-95", "第４水準2-88-74"): a
-   *   JIS X 0213 補助漢字 reference — "第" + a level digit (1–4, half- or
-   *   full-width — real files vary) + "水準" + THREE decimal numbers
-   *   (面-区-点) joined by hyphens. Real examples: this project's own
+   *   function must NOT re-validate hex shape, only that the tail is at
+   *   least PLAUSIBLY code-like (ASCII alnum), or it would re-introduce
+   *   exactly the under-acceptance class this allowlist exists to avoid.
+   *   The ASCII-alnum requirement is what's new here versus an earlier,
+   *   too-loose version of this same gate that accepted ANY trailing
+   *   content after `U+`/`Ｕ＋` — which meant a nested-quote continuation
+   *   that merely happened to *start* with "U+" (e.g. "U+ある特殊文字を
+   *   指す") got routed into `applyGaiji` and its Japanese-text tail
+   *   silently discarded as a "malformed hex spec": the exact same
+   *   silent-content-loss failure mode this whole area of the file exists
+   *   to eliminate, just triggered by "U+" instead of a nested 「」.
+   * - `<n1>-<n2>[-<n3>...]`, optionally prefixed `第<level>水準` (e.g.
+   *   "60-8", "第3水準1-14-95", "1-84-17" with no prefix, "第４水準2-88-74"
+   *   with a full-width level digit): Aozora Bunko's 区点/水準 notation —
+   *   JIS X 0208 区点番号 is un-prefixed 区-点 (2 numbers); JIS X 0213
+   *   補助漢字 references add a `第N水準` prefix (N is 1–4) and a 面-区-点
+   *   triple (3 numbers) — but real files are not perfectly uniform about
+   *   which shape carries the prefix (this fix's own regression report:
+   *   "1-84-17" with 3 numbers and NO 水準 prefix), so the prefix is
+   *   optional and the number-group count is 2-or-more rather than fixed
+   *   at exactly 2 or exactly 3. Real examples: this project's own
    *   claudedocs/aozora-fallback-boundary-improvement-spec.md:399
    *   (「さんずい＋幼」、60-8, from 青空文庫's 浄火) plus this fix's own
-   *   regression report (第3水準1-14-95, 第4水準2-88-74) — unlike `U+`,
-   *   these two are checked with a strict shape (not just a prefix): they
-   *   have no pre-existing "malformed but still accepted" contract to
-   *   preserve, so keeping them shape-strict is the more conservative
-   *   choice; a malformed 区点/水準 spec (which no known real file has)
-   *   falls through as ordinary text instead — fail-soft, verbatim, never
-   *   silently dropped either way.
+   *   regression reports (第3水準1-14-95, 第4水準2-88-74, 1-84-17). Unlike
+   *   `U+`, this family has no pre-existing "malformed but still
+   *   accepted" contract to preserve, so it stays shape-strict (a run of
+   *   2+ hyphen-joined decimal groups, optionally 水準-prefixed) rather
+   *   than similarly loose — a genuinely malformed 区点/水準 spec (no
+   *   known real file has one) falls through as ordinary text instead,
+   *   fail-soft, verbatim, never silently dropped either way.
    *
    * Deliberately an ALLOWLIST, not a "reject Japanese prose" denylist:
    * `applyGaiji` never actually resolves 区点/水準 forms to a real
    * character (there is no JIS-charset table in this codebase — only a
-   * well-formed `U+XXXX` ever produces a real `unicode` value), so this
-   * only decides "route through applyGaiji's description-only fallback
-   * (spec's existing, unchanged behavior for any spec it can't resolve)
-   * vs. fall through as ordinary text". Under-accepting a real code spec
-   * here would silently degrade a clean 外字 display into raw bracket
-   * notation (this fix's own regression, caused by an earlier version of
-   * this same gate that only recognized `U+`); over-accepting something
-   * that merely *looks* like one is harmless (still only ever produces a
-   * description-only fallback) — so this list errs generous on exactly
-   * the axis where erring the other way is a content-safety problem.
+   * well-formed half-width `U+XXXX` ever produces a real `unicode`
+   * value), so this only decides "route through applyGaiji's
+   * description-only fallback (spec's existing, unchanged behavior for
+   * any spec it can't resolve) vs. fall through as ordinary text".
+   * Under-accepting a real code spec here would silently degrade a clean
+   * 外字 display into raw bracket notation (this fix's own regression,
+   * caused by an earlier, narrower version of this same gate); the `U+`
+   * branch's ASCII-alnum requirement is the one place this file
+   * deliberately does NOT "err generous" the same way, because over-
+   * accepting there is exactly what re-opened the silent-content-loss
+   * hole this paragraph starts with.
    *
-   * Complexity: no nested/repeated quantifiers anywhere (`\d+` used at
-   * top level only, never inside another repeated group like `(\d+-)+`)
-   * — no catastrophic backtracking, O(spec.length) same as every other
-   * regex in this file (spec §17's O(n) guarantee). */
+   * Complexity: no nested/repeated quantifiers anywhere — `\d+` and
+   * `[0-9A-Za-z]` are each used at a single quantifier level, never
+   * wrapped in another repeated group (e.g. never shaped like `(\d+-)+`
+   * where the same characters could be reattributed between an inner and
+   * outer `+`), so there is no catastrophic-backtracking case: every
+   * branch is O(spec.length), same as every other regex in this file
+   * (spec §17's O(n) guarantee; see parse-inline.test.ts's performance
+   * assertions for this function specifically). */
   function isGaijiCodeSpec(spec: string): boolean {
-    if (spec.startsWith("U+")) return true;
-    if (/^\d+-\d+$/.test(spec)) return true;
-    if (/^第[0-9０-９]水準\d+-\d+-\d+$/.test(spec)) return true;
-    return false;
+    const normalized = normalizeFullWidthAscii(spec);
+    if (normalized.startsWith("U+")) {
+      return /^[0-9A-Za-z]*$/.test(normalized.slice(2));
+    }
+    return /^(?:第[0-9]水準)?\d+(?:-\d+)+$/.test(normalized);
   }
 
   function applyPostConstruct(
@@ -425,22 +466,21 @@ export function parseInlineText(chunk: string, options: ParseInlineOptions = {})
     // itself contain a nested 「...」 pair (findGaijiOuterClose handles
     // that); a malformed-but-attempted code spec (wrong digit count, a
     // code shape isGaijiCodeSpec accepts but applyGaiji can't actually
-    // resolve — everything except well-formed `U+XXXX` falls in this
-    // bucket, since only that form ever maps to a real character) still
-    // resolves to the "no Unicode" description-only fallback rather than
-    // falling through to a generic raw annotation — that part of the
-    // original design is unchanged, see applyGaiji's own validation. What
-    // matters here is only "does this look like ANY of the code spec
-    // shapes Aozora Bunko actually uses" (isGaijiCodeSpec — U+XXXX hex,
-    // 区点番号, or 第N水準面区点; see its own doc comment for real
-    // examples and why this must be an allowlist of known shapes, not a
-    // narrower "starts with U+" check, which under-accepted the very
-    // common 区点/水準 forms and silently discarded real body text that
-    // happened to follow a 、 right after a nested description's inner 」
-    // — spec §4.3's regression this file exists to prevent). Trailing
-    // content that matches none of those shapes falls through instead,
-    // ending up verbatim in the generic raw-annotation branch at the
-    // bottom of this function, never dropped.
+    // resolve — everything except well-formed half-width `U+XXXX` falls
+    // in this bucket, since only that exact form ever maps to a real
+    // character) still resolves to the "no Unicode" description-only
+    // fallback rather than falling through to a generic raw annotation —
+    // that part of the original design is unchanged, see applyGaiji's own
+    // validation. What matters here is only "does this look like ANY of
+    // the code spec shapes Aozora Bunko actually uses, without also being
+    // so loose it swallows unrelated prose" (isGaijiCodeSpec — U+<ASCII
+    // alnum tail>, 区点番号, or (optionally 水準-prefixed) N-or-more
+    // hyphen-joined numbers; see its own doc comment for the full
+    // reasoning, real examples, and the two separate under/over-
+    // acceptance regressions this exact function's history already went
+    // through). Trailing content that matches none of those shapes falls
+    // through instead, ending up verbatim in the generic raw-annotation
+    // branch at the bottom of this function, never dropped.
     if (rawBody.startsWith("「")) {
       const closeIdx = findGaijiOuterClose(rawBody);
       if (closeIdx !== undefined) {

@@ -533,3 +533,30 @@ describe("unclosed-range diagnostics report the range's own opening line, not a 
     expect(diag?.line).toBe(7);
   });
 });
+
+describe("同一行見出し — MAX_HEADING_SPLIT_SLACK boundary (spec §17's O(1)-candidates bound)", () => {
+  // MAX_HEADING_SPLIT_SLACK is a bound on the candidate *index* distance
+  // from the midpoint, not directly on the before/target length
+  // difference — each 1-unit step moves that difference by 2, so the
+  // constant (32) tolerates a length difference of up to ~64, not 32. Both
+  // sides of that boundary are asserted below. The padding is placed
+  // BETWEEN the visible text and the ［＃「 marker (trailing on `before`,
+  // not leading on the whole line): padding at the very start/end of the
+  // *entire line* would be stripped by parseOutsideSegment's own
+  // line-level `.trim()` before matchSameLineHeading ever sees it, which
+  // would defeat the point of this test (it'd degenerate to before/target
+  // being byte-identical again, delta=0, telling us nothing about the
+  // slack boundary at all). 青空文庫 files conventionally use
+  // ［＃N字下げ］ rather than literal spaces for indentation, so this is a
+  // real but low-impact edge case in practice.
+  it("a before/target length difference of 64 (within the boundary) is still recognized as a heading", () => {
+    const doc = parseAozoraDocument(`はしがき${"　".repeat(64)}［＃「はしがき」は中見出し］`);
+    expect(doc.blocks[0].type).toBe("heading");
+  });
+
+  it("a before/target length difference of 66 (past the boundary) falls back to a paragraph", () => {
+    const doc = parseAozoraDocument(`はしがき${"　".repeat(66)}［＃「はしがき」は中見出し］`);
+    expect(doc.blocks[0].type).toBe("paragraph");
+    expect(doc.blocks.every((b) => b.type !== "heading")).toBe(true);
+  });
+});

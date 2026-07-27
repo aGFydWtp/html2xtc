@@ -108,12 +108,23 @@ const HEADING_SAME_LINE_SUFFIX_RE = /」は((?:同行|窓)?(?:大|中|小)見出
  * target, spec §9.3. `.length === 3` holds because every one of ［, ＃, 「
  * is a single UTF-16 code unit (none is a surrogate pair). */
 const HEADING_SAME_LINE_MARKER = "［＃「";
-/** Bound on how far a same-line 見出し's real `［＃「` split point may sit
- * from `s`'s arithmetic midpoint (see `matchSameLineHeading`'s doc comment)
- * — generous enough to tolerate any realistic amount of incidental
+/** Bound on `delta` — the candidate split index's distance from `s`'s
+ * arithmetic midpoint (see `matchSameLineHeading`'s doc comment) —
+ * generous enough to tolerate any realistic amount of incidental
  * whitespace around the quoted title (every real occurrence found has
  * none at all: `before === target` exactly) while still keeping the
- * candidate search a fixed constant, never proportional to line length. */
+ * candidate search a fixed constant, never proportional to line length.
+ *
+ * This is a bound on the *index* distance, not directly on
+ * `|before.length - target.length|`: each 1-unit step in `delta` moves
+ * `before.length` and `target.length` in OPPOSITE directions (one grows by
+ * 1, the other shrinks by 1), so the length difference this actually
+ * tolerates is DOUBLE this constant — 32 here means `before`/`target` can
+ * differ by up to 64 characters (e.g. from whitespace padding) and still
+ * be found; a difference of 66 or more falls outside every checked
+ * candidate and is treated as no match (falls back to an ordinary
+ * paragraph, same as any other non-matching same-line heading). See
+ * parse-document.test.ts's boundary tests for both sides of this. */
 const MAX_HEADING_SPLIT_SLACK = 32;
 const HEADING_RANGE_START_BODY_RE = /^ここから((?:同行|窓)?(?:大|中|小)見出し)$/;
 const HEADING_RANGE_END_BODY_RE = /^ここで((?:同行|窓)?(?:大|中|小)見出し)終わり$/;
@@ -650,19 +661,23 @@ function parseBlocks(bodyText: string, ctx: DocumentParseContext): AozoraBlock[]
    * `before.length + target.length` is FIXED for a given `s` regardless of
    * which "［＃「" occurrence is the real split point — meaning
    * `before.length - target.length` grows strictly monotonically (by
-   * exactly 2 per character) as the candidate split index increases. Real
-   * usage has `before === target` byte-for-byte (spec §9.3's own example;
-   * every occurrence seen in practice), so the true split sits exactly at
-   * `s`'s midpoint; `.trim()` exists only to tolerate a little incidental
+   * exactly 2 per 1-character shift of the candidate split index) as the
+   * candidate index moves away from `s`'s midpoint. Real usage has
+   * `before === target` byte-for-byte (spec §9.3's own example; every
+   * occurrence seen in practice), so the true split sits exactly at the
+   * midpoint; `.trim()` exists only to tolerate a little incidental
    * whitespace around the title, not a structurally different string, so
-   * the true split can never be more than `MAX_LENGTH_SLACK` characters
-   * from that midpoint either. Candidates are therefore checked in
-   * increasing distance from the midpoint and the search gives up once
-   * that budget is exhausted — a document packed with the literal 3-char
-   * "［＃「" sequence can make at most `MAX_LENGTH_SLACK` candidates reach
-   * the actually-expensive `.trim()`/comparison step, however many raw
-   * occurrences of "［＃「" the line contains, so this can never become the
-   * O(occurrences × line length) blowup an unbounded scan would risk. */
+   * the true split can never be more than `MAX_HEADING_SPLIT_SLACK`
+   * *index* steps from that midpoint either — i.e. `before`/`target` can
+   * differ in raw length by up to `2 * MAX_HEADING_SPLIT_SLACK` characters
+   * (see that constant's own doc comment) and still be found. Candidates
+   * are therefore checked in increasing distance from the midpoint and the
+   * search gives up once that budget is exhausted — a document packed with
+   * the literal 3-char "［＃「" sequence can make at most
+   * `MAX_HEADING_SPLIT_SLACK` candidates reach the actually-expensive
+   * `.trim()`/comparison step, however many raw occurrences of "［＃「" the
+   * line contains, so this can never become the O(occurrences × line
+   * length) blowup an unbounded scan would risk. */
   function matchSameLineHeading(trimmedLine: string): { level: HeadingLevel; variant: HeadingVariant; before: string } | undefined {
     const end = HEADING_SAME_LINE_SUFFIX_RE.exec(trimmedLine);
     if (!end) return undefined;

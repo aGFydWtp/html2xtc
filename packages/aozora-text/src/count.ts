@@ -9,15 +9,15 @@ import type { AozoraBlock, AozoraDocument, AozoraInline } from "./types";
  * PreparedTextDocument.diagnostics.recognizedAnnotations).
  *
  * Counted (spec §9): inline ruby/emphasis/decoration/tcy/gaiji, block
- * heading/pageBreak, and a paragraph whose `indentEm` or `align` is defined
- * (字下げ/地付き/中央寄せ recognition). Every count is per-node — a
- * decoration wrapping a ruby counts as 2, not 1 — and traversal recurses
- * into every nested `children`/`base` array.
+ * heading/pageBreak, and a paragraph whose `indentEm`, `align`, or `boxed`
+ * is defined (字下げ/地付き/中央寄せ/罫囲み recognition). Every count is
+ * per-node — a decoration wrapping a ruby counts as 2, not 1 — and
+ * traversal recurses into every nested `children`/`base` array.
  *
  * NOT counted: plain `text` nodes, `rawAnnotation` (inline or block — those
  * are tallied separately as unsupported/malformed, see
  * src/text-prepare.ts's prepareAozora), and an undecorated paragraph
- * (indentEm and align both undefined).
+ * (indentEm, align, and boxed all undefined/false).
  */
 export function countRecognizedAnnotations(document: AozoraDocument): number {
   return countBlocks(document.blocks) + countBlocks(document.bibliography);
@@ -28,7 +28,7 @@ function countBlocks(blocks: AozoraBlock[]): number {
   for (const block of blocks) {
     switch (block.type) {
       case "paragraph":
-        if (block.indentEm !== undefined || block.align !== undefined) {
+        if (block.indentEm !== undefined || block.align !== undefined || block.boxed === true) {
           count += 1;
         }
         count += countInline(block.children);

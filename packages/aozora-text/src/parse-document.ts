@@ -314,14 +314,23 @@ const AGARI_RE = /^［＃地から(\d+)字上げ］$/;
 const CENTER_SINGLE_RE = /^［＃中央寄せ］$/;
 const CENTER_RANGE_START_RE = /^［＃ここから中央寄せ］$/;
 const CENTER_RANGE_END_RE = /^［＃ここで中央寄せ終わり］$/;
+// 罫囲み (spec §9's ruled-box range — frame only, spec explicitly excludes
+// inferring table columns from full-width-space-separated content, see
+// render-html.ts's renderBlocksWithBoxes doc comment): range-only, unlike
+// 字下げ／中央寄せ there is no recognized one-shot ［＃罫囲み］ form (real
+// Aozora usage never has one — only the ここから／ここで pair), so there is
+// deliberately no BOX_SINGLE_RE alongside these two.
+const BOX_RANGE_START_RE = /^［＃ここから罫囲み］$/;
+const BOX_RANGE_END_RE = /^［＃ここで罫囲み終わり］$/;
 
 /** Whole-line, no-other-content-on-the-line test for whether `trimmed`
- * (already a single physical line) is one of the 9 non-heading control
- * annotations — used only to decide whether to flush the buffered plain
+ * (already a single physical line) is one of the 11 non-heading control
+ * annotations — used both to decide whether to flush the buffered plain
  * lines *before* calling `handleControlChunk` (spec: a control line must
- * never be glued into the paragraph that precedes it). `handleControlChunk`
- * re-tests each pattern itself; this is deliberately a cheap OR of the same
- * regexes; it does no mutation. */
+ * never be glued into the paragraph that precedes it) and, inside
+ * `splitByHeadingRanges`, to decide whether a still-open 見出しレンジ should
+ * be truncated. `handleControlChunk` re-tests each pattern itself; this is
+ * deliberately a cheap OR of the same regexes; it does no mutation. */
 function looksLikeControlLine(trimmed: string): boolean {
   return (
     PAGE_BREAK_RE.test(trimmed) ||
@@ -332,13 +341,23 @@ function looksLikeControlLine(trimmed: string): boolean {
     AGARI_RE.test(trimmed) ||
     CENTER_SINGLE_RE.test(trimmed) ||
     CENTER_RANGE_START_RE.test(trimmed) ||
-    CENTER_RANGE_END_RE.test(trimmed)
+    CENTER_RANGE_END_RE.test(trimmed) ||
+    BOX_RANGE_START_RE.test(trimmed) ||
+    BOX_RANGE_END_RE.test(trimmed)
   );
 }
 
 const MAX_INDENT_EM = 30;
 
-type BlockRangeFrame = { kind: "indent"; em: number } | { kind: "align"; value: "center" };
+/** `"box"` (罫囲み) carries no payload — unlike indent's `em` or align's
+ * fixed `"center"` value, being inside a box is a plain boolean condition
+ * (see `paragraph.boxed`, types.ts), so its frame is just a tag. It shares
+ * this same stack (and therefore MAX_RANGE_NESTING_DEPTH's shared budget,
+ * spec §17) with indent/align rather than getting its own — a document can
+ * freely nest e.g. 中央寄せ inside 罫囲み or vice versa, and the resource
+ * limit is meant to bound *any* combination of open ranges, not each kind
+ * independently. */
+type BlockRangeFrame = { kind: "indent"; em: number } | { kind: "align"; value: "center" } | { kind: "box" };
 interface PendingOneShot {
   indentEm?: number;
   align?: "center" | "end";
@@ -399,6 +418,13 @@ function parseBlocks(bodyText: string, ctx: DocumentParseContext): AozoraBlock[]
       if (rangeStack[i].kind === "align") return "center";
     }
     return undefined;
+  }
+
+  /** Unlike indent/align, 罫囲み has no one-shot form (no `pending.boxed`
+   * to check first) — a paragraph is boxed iff a `"box"` frame is anywhere
+   * on the open range stack. */
+  function currentBoxed(): boolean {
+    return rangeStack.some((frame) => frame.kind === "box");
   }
 
   function pushRawAnnotationBlock(text: string): void {
@@ -525,12 +551,34 @@ function parseBlocks(bodyText: string, ctx: DocumentParseContext): AozoraBlock[]
       return true;
     }
 
+    if (BOX_RANGE_START_RE.test(trimmed)) {
+      if (rangeStack.length >= MAX_RANGE_NESTING_DEPTH) {
+        pushRawAnnotationBlock(trimmed);
+        ctx.pushDiagnostic("resource-limit", startLine, "罫囲み");
+      } else {
+        rangeStack.push({ kind: "box" });
+      }
+      return true;
+    }
+
+    if (BOX_RANGE_END_RE.test(trimmed)) {
+      const topIdx = rangeStack.length - 1;
+      if (topIdx >= 0 && rangeStack[topIdx].kind === "box") {
+        rangeStack.pop();
+      } else {
+        pushRawAnnotationBlock(trimmed);
+        ctx.pushDiagnostic("unmatched-end", startLine, "罫囲み終わり");
+      }
+      return true;
+    }
+
     return false;
   }
 
   function buildParagraph(chunk: string, startLine: number): AozoraBlock {
     const indentEm = currentIndentEm();
     const align = currentAlign();
+    const boxed = currentBoxed();
     pending = {};
     const children = parseInlineText(chunk, {
       line: startLine,
@@ -541,6 +589,7 @@ function parseBlocks(bodyText: string, ctx: DocumentParseContext): AozoraBlock[]
       children,
       ...(indentEm !== undefined ? { indentEm } : {}),
       ...(align !== undefined ? { align } : {}),
+      ...(boxed ? { boxed: true } : {}),
     };
     return block;
   }
@@ -628,10 +677,12 @@ function parseBlocks(bodyText: string, ctx: DocumentParseContext): AozoraBlock[]
 
   // Range annotations still open at the end of this region (spec §17's
   // scope restriction applied to block ranges too): fail soft — the
-  // remaining content already emitted keeps whatever indent/align it had,
-  // just diagnose that the range was never closed.
+  // remaining content already emitted keeps whatever indent/align/box it
+  // had, just diagnose that the range was never closed.
   for (let i = 0; i < rangeStack.length; i++) {
-    ctx.pushDiagnostic("unclosed-range", 0, rangeStack[i].kind === "indent" ? "字下げ" : "中央寄せ");
+    const frame = rangeStack[i];
+    const label = frame.kind === "indent" ? "字下げ" : frame.kind === "align" ? "中央寄せ" : "罫囲み";
+    ctx.pushDiagnostic("unclosed-range", 0, label);
   }
 
   return blocks;

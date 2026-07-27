@@ -249,6 +249,47 @@ function headingHasChapterName(children: AozoraInline[]): boolean {
   return normalizeChapterName(headingPlainText(children)).length > 0;
 }
 
+/**
+ * Groups consecutive `boxed` `paragraph` blocks (罫囲み range, spec §9 —
+ * `paragraph.boxed`, types.ts) into one shared `<div class="aozora-box">`
+ * wrapper — grouping is a rendering-only concern layered on top of the flat
+ * AST (types.ts's `AozoraBlock` deliberately stays non-recursive), so it has
+ * to happen here rather than in the parser. Deliberately does NOT try to
+ * infer table columns from the boxed content (spec: full-width-space-
+ * separated text stays plain text inside the box, not a `<table>` — see
+ * types.ts's `boxed` doc comment) — every member paragraph is rendered
+ * exactly as `renderOne` would render it standalone (own jisage_N/
+ * chitsuki_N/aozora-center class if any, plus a chapter marker if it's the
+ * (impossible, since boxed only ever applies to `paragraph` blocks, never
+ * `heading`) chapter heading); only the outer wrapper is new. One `<div>`
+ * per *maximal* run of consecutive boxed paragraphs — a non-boxed block (or
+ * a `heading`/`pageBreak`/`rawAnnotation` block, none of which can carry
+ * `boxed`) always ends the current run, so three separately-typed
+ * paragraphs never collapse into fewer boxes than the source had ranges,
+ * and a single multi-paragraph range never gets split into several boxes
+ * just because it spans more than one AozoraBlock. */
+function renderBlocksWithBoxes(blocks: AozoraBlock[], renderOne: (block: AozoraBlock) => string): string[] {
+  const parts: string[] = [];
+  let i = 0;
+  while (i < blocks.length) {
+    const block = blocks[i];
+    if (block.type === "paragraph" && block.boxed === true) {
+      const inner: string[] = [];
+      while (i < blocks.length) {
+        const candidate = blocks[i];
+        if (candidate.type !== "paragraph" || candidate.boxed !== true) break;
+        inner.push(renderOne(candidate));
+        i++;
+      }
+      parts.push(`<div class="aozora-box">\n${inner.join("\n")}\n</div>`);
+      continue;
+    }
+    parts.push(renderOne(block));
+    i++;
+  }
+  return parts;
+}
+
 /** Renders the document body (spec §9) — NOT the 底本 bibliography, which
  * has its own renderer below so callers can place it on a separate page.
  * Every heading at the document's chosen chapter level
@@ -261,19 +302,18 @@ function headingHasChapterName(children: AozoraInline[]): boolean {
 export function renderDocumentToHtml(document: AozoraDocument): string {
   const chapterLevel = determineChapterHeadingLevel(document);
   let chapterIndex = 0;
-  return document.blocks
-    .map((block) => {
-      if (
-        block.type === "heading" &&
-        block.level === chapterLevel &&
-        headingHasChapterName(block.children)
-      ) {
-        chapterIndex++;
-        return renderBlock(block, formatChapterMarker(chapterIndex));
-      }
-      return renderBlock(block);
-    })
-    .join("\n");
+  const renderOne = (block: AozoraBlock): string => {
+    if (
+      block.type === "heading" &&
+      block.level === chapterLevel &&
+      headingHasChapterName(block.children)
+    ) {
+      chapterIndex++;
+      return renderBlock(block, formatChapterMarker(chapterIndex));
+    }
+    return renderBlock(block);
+  };
+  return renderBlocksWithBoxes(document.blocks, renderOne).join("\n");
 }
 
 /** Plain text of a heading's children for the XTC chapter name (spec: no
@@ -375,7 +415,7 @@ export function renderBibliographyToHtml(bibliography: AozoraBlock[]): string {
   if (bibliography.length === 0) {
     return "";
   }
-  return `<div class="bibliographical_information">\n${bibliography.map((block) => renderBlock(block)).join("\n")}\n</div>`;
+  return `<div class="bibliographical_information">\n${renderBlocksWithBoxes(bibliography, (block) => renderBlock(block)).join("\n")}\n</div>`;
 }
 
 /** Flattens every piece of user-visible text in the document (paragraph/

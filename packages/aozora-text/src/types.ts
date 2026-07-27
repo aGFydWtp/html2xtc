@@ -36,13 +36,26 @@ export interface AozoraDocument {
  * emits (see render-html.ts's paragraphClassName): `align !== "end"` maps a
  * defined `indentEm` to `jisage_<N>` (字下げ, indent from the start edge),
  * `align === "end"` maps it to `chitsuki_<N>` (地付き/地から字上げ, indent
- * from the end edge, `chitsuki_0` when `indentEm` is absent or 0). */
+ * from the end edge, `chitsuki_0` when `indentEm` is absent or 0).
+ *
+ * `boxed` (罫囲み, spec §9's ここから罫囲み／ここで罫囲み終わり range —
+ * frame-only, never table-column inference; see parse-document.ts's
+ * `BlockRangeFrame`'s `"box"` kind) marks a paragraph as belonging to a
+ * ruled-box region, independent of `indentEm`/`align` (a paragraph can be
+ * boxed AND indented/centered at once). Deliberately does NOT introduce a
+ * nested/recursive block shape: `AozoraBlock` stays a flat union so every
+ * existing consumer that walks `document.blocks` linearly (src/text-html.ts,
+ * src/text-prepare.ts's extractChapters/extractPlainText) keeps working
+ * unmodified. Grouping consecutive `boxed` paragraphs into one shared
+ * `<div>` wrapper is a rendering-only concern — see render-html.ts's
+ * `renderBlocksWithBoxes`. */
 export type AozoraBlock =
   | {
       type: "paragraph";
       children: AozoraInline[];
       indentEm?: number;
       align?: "start" | "center" | "end";
+      boxed?: boolean;
     }
   | {
       type: "heading";

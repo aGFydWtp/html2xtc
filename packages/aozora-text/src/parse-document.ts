@@ -301,7 +301,7 @@ function splitByHeadingRanges(text: string, ctx: DocumentParseContext): TextSegm
       // EOF" without also re-introducing the chunk-boundary blindness this
       // rewrite exists to remove; that trade-off is accepted here.
       if (isAloneOnOwnLine(text, bracketIdx, closeIdx) && looksLikeControlLine(text.slice(bracketIdx, closeIdx + 1))) {
-        ctx.pushDiagnostic("unclosed-range", 0, headingLabelText(open.level, open.variant));
+        ctx.pushDiagnostic("unclosed-range", open.startLine, headingLabelText(open.level, open.variant));
         outsideStart = open.markerStart;
         outsideStartLine = open.startLine;
         open = undefined;
@@ -314,7 +314,7 @@ function splitByHeadingRanges(text: string, ctx: DocumentParseContext): TextSegm
   }
 
   if (open) {
-    ctx.pushDiagnostic("unclosed-range", 0, headingLabelText(open.level, open.variant));
+    ctx.pushDiagnostic("unclosed-range", open.startLine, headingLabelText(open.level, open.variant));
     segments.push({ kind: "outside", text: text.slice(open.markerStart, n), startLine: open.startLine });
   } else if (n > outsideStart) {
     segments.push({ kind: "outside", text: text.slice(outsideStart, n), startLine: outsideStartLine });
@@ -382,8 +382,16 @@ const MAX_INDENT_EM = 30;
  * spec §17) with indent/align rather than getting its own — a document can
  * freely nest e.g. 中央寄せ inside 罫囲み or vice versa, and the resource
  * limit is meant to bound *any* combination of open ranges, not each kind
- * independently. */
-type BlockRangeFrame = { kind: "indent"; em: number } | { kind: "align"; value: "center" } | { kind: "box" };
+ * independently. Every variant carries the 1-based line its opening
+ * ここから… marker was found on, so an eventual "unclosed-range" diagnostic
+ * (parseBlocks' final cleanup loop) can point at where the range actually
+ * started instead of a fixed 0 — a document-wide search for "which range
+ * never closed" is useless without it once the open range is thousands of
+ * lines away from EOF. */
+type BlockRangeFrame =
+  | { kind: "indent"; em: number; startLine: number }
+  | { kind: "align"; value: "center"; startLine: number }
+  | { kind: "box"; startLine: number };
 interface PendingOneShot {
   indentEm?: number;
   align?: "center" | "end";
@@ -518,7 +526,7 @@ function parseBlocks(bodyText: string, ctx: DocumentParseContext): AozoraBlock[]
         pushRawAnnotationBlock(trimmed);
         ctx.pushDiagnostic("resource-limit", startLine, "字下げ");
       } else {
-        rangeStack.push({ kind: "indent", em });
+        rangeStack.push({ kind: "indent", em, startLine });
       }
       return true;
     }
@@ -561,7 +569,7 @@ function parseBlocks(bodyText: string, ctx: DocumentParseContext): AozoraBlock[]
         pushRawAnnotationBlock(trimmed);
         ctx.pushDiagnostic("resource-limit", startLine, "中央寄せ");
       } else {
-        rangeStack.push({ kind: "align", value: "center" });
+        rangeStack.push({ kind: "align", value: "center", startLine });
       }
       return true;
     }
@@ -582,7 +590,7 @@ function parseBlocks(bodyText: string, ctx: DocumentParseContext): AozoraBlock[]
         pushRawAnnotationBlock(trimmed);
         ctx.pushDiagnostic("resource-limit", startLine, "罫囲み");
       } else {
-        rangeStack.push({ kind: "box" });
+        rangeStack.push({ kind: "box", startLine });
       }
       return true;
     }
@@ -747,11 +755,15 @@ function parseBlocks(bodyText: string, ctx: DocumentParseContext): AozoraBlock[]
   // Range annotations still open at the end of this region (spec §17's
   // scope restriction applied to block ranges too): fail soft — the
   // remaining content already emitted keeps whatever indent/align/box it
-  // had, just diagnose that the range was never closed.
+  // had, just diagnose that the range was never closed. Reports each
+  // frame's own opening line (`frame.startLine`, threaded through every
+  // rangeStack.push call site above) rather than a fixed 0 — a range that
+  // opened thousands of lines before EOF is unfindable from "line 0" alone
+  // in a real document.
   for (let i = 0; i < rangeStack.length; i++) {
     const frame = rangeStack[i];
     const label = frame.kind === "indent" ? "字下げ" : frame.kind === "align" ? "中央寄せ" : "罫囲み";
-    ctx.pushDiagnostic("unclosed-range", 0, label);
+    ctx.pushDiagnostic("unclosed-range", frame.startLine, label);
   }
 
   return blocks;

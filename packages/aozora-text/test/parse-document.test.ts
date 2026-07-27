@@ -493,3 +493,43 @@ describe("罫囲み (ruled-box range, spec §9 — frame only, no table-column i
     expect(doc.diagnostics.some((d) => d.kind === "unclosed-range")).toBe(true);
   });
 });
+
+describe("unclosed-range diagnostics report the range's own opening line, not a fixed 0", () => {
+  it("a 見出しレンジ unclosed at EOF points at the ここから line, however far from EOF it is", () => {
+    const filler = Array.from({ length: 30 }, (_, i) => `本文${i}`).join("\n\n");
+    const doc = parseAozoraDocument(`${filler}\n\n［＃ここから大見出し］\n\n本文の続き`);
+    const diag = doc.diagnostics.find((d) => d.kind === "unclosed-range");
+    expect(diag).toBeDefined();
+    expect(diag?.line).toBe(61);
+  });
+
+  it("a 見出しレンジ truncated by an intervening control annotation points at the ここから line, not the control line", () => {
+    const doc = parseAozoraDocument(
+      ["本文0", "", "［＃ここから中見出し］", "見出しらしき文", "［＃改ページ］", "本文"].join("\n"),
+    );
+    const diag = doc.diagnostics.find((d) => d.kind === "unclosed-range");
+    expect(diag).toBeDefined();
+    expect(diag?.line).toBe(3); // the ここから中見出し line, not the ［＃改ページ］ line (5)
+  });
+
+  it("an unclosed 字下げ range points at its ここから line", () => {
+    const doc = parseAozoraDocument("本文0\n\n本文1\n\n［＃ここから3字下げ］\n\n本文2");
+    const diag = doc.diagnostics.find((d) => d.kind === "unclosed-range");
+    expect(diag).toBeDefined();
+    expect(diag?.line).toBe(5);
+  });
+
+  it("an unclosed 中央寄せ range points at its ここから line", () => {
+    const doc = parseAozoraDocument("本文0\n\n［＃ここから中央寄せ］\n\n本文1");
+    const diag = doc.diagnostics.find((d) => d.kind === "unclosed-range");
+    expect(diag).toBeDefined();
+    expect(diag?.line).toBe(3);
+  });
+
+  it("an unclosed 罫囲み range points at its ここから line", () => {
+    const doc = parseAozoraDocument("本文0\n\n本文1\n\n本文2\n\n［＃ここから罫囲み］\n\n本文3");
+    const diag = doc.diagnostics.find((d) => d.kind === "unclosed-range" && d.annotationName === "罫囲み");
+    expect(diag).toBeDefined();
+    expect(diag?.line).toBe(7);
+  });
+});

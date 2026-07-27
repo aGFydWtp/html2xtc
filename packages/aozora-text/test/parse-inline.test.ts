@@ -246,6 +246,53 @@ describe("外字 (spec §9.10)", () => {
     const { nodes } = parse("※［＃「あ「い」う」、U+ZZZZ］");
     expect(nodes).toEqual([{ type: "gaiji", description: "あ「い」う" }]);
   });
+
+  describe("区点／水準 notation (regression: an earlier fix for the nested-quote content-loss bug only recognized U+, silently breaking this very common real-world 外字 notation)", () => {
+    it("plain 区点番号 (real example: claudedocs/aozora-fallback-boundary-improvement-spec.md:399's 浄火 file) resolves as gaiji, description-only, ※ consumed, no diagnostic", () => {
+      const { nodes, diagnostics } = parse("※［＃「さんずい＋幼」、60-8］");
+      expect(nodes).toEqual([{ type: "gaiji", description: "さんずい＋幼" }]);
+      expect(diagnostics).toEqual([]);
+      // The ※ placeholder must be consumed (not left behind as literal
+      // text alongside the gaiji node) — this is asserted implicitly by
+      // `nodes` above containing nothing but the single gaiji node, but
+      // spelled out explicitly here too since a regression that routes
+      // this input to the generic raw-annotation branch instead would
+      // leave "※" as its own leading text node (this fix's exact bug).
+      expect(nodes.some((n) => n.type === "text" && n.value.includes("※"))).toBe(false);
+    });
+
+    it("第3水準 面区点 notation resolves as gaiji, description-only, ※ consumed, no diagnostic", () => {
+      const { nodes, diagnostics } = parse("※［＃「口＋世」、第3水準1-14-95］");
+      expect(nodes).toEqual([{ type: "gaiji", description: "口＋世" }]);
+      expect(diagnostics).toEqual([]);
+      expect(nodes.some((n) => n.type === "text" && n.value.includes("※"))).toBe(false);
+    });
+
+    it("第4水準 with a different code also resolves as gaiji", () => {
+      const { nodes } = parse("※［＃「〜」、第4水準2-88-74］");
+      expect(nodes).toEqual([{ type: "gaiji", description: "〜" }]);
+    });
+
+    it("a full-width level digit (第４水準, real-file variation) is also recognized", () => {
+      const { nodes } = parse("※［＃「口＋世」、第４水準1-14-95］");
+      expect(nodes).toEqual([{ type: "gaiji", description: "口＋世" }]);
+    });
+
+    it("区点/水準 notation still works alongside a nested 「」 in the description", () => {
+      const { nodes } = parse("※［＃「あ「い」う」、60-8］");
+      expect(nodes).toEqual([{ type: "gaiji", description: "あ「い」う" }]);
+    });
+
+    it("ordinary Japanese prose following a nested 「」's inner 」 is still NOT mistaken for a code spec (the original bug this whole area exists to fix)", () => {
+      const { nodes, diagnostics } = parse("［＃「あれ「これ」、それ」という趣旨の注記］");
+      expect(nodes.some((n) => n.type === "gaiji")).toBe(false);
+      expect(nodes).toContainEqual({
+        type: "rawAnnotation",
+        text: "［＃「あれ「これ」、それ」という趣旨の注記］",
+      });
+      expect(diagnostics.some((d) => d.kind === "unsupported-annotation")).toBe(true);
+    });
+  });
 });
 
 describe("未対応注記 (spec §9.11)", () => {

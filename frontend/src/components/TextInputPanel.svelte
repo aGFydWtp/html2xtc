@@ -62,7 +62,7 @@
   let autoTitle = $state("");
 
   function deriveTitleFromFileName(name: string): string {
-    return name.replace(/\.txt$/i, "").slice(0, 100);
+    return name.replace(/\.(txt|md|markdown)$/i, "").slice(0, 100);
   }
 
   $effect(() => {

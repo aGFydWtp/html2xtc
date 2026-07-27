@@ -143,6 +143,63 @@ describe("renderDocumentToHtml — 罫囲み (boxed paragraph grouping)", () => 
     const boxOpenCount = (html.match(/<div class="aozora-box">/g) ?? []).length;
     expect(boxOpenCount).toBe(1);
   });
+
+  it("a pageBreak interrupting a still-open 罫囲み range (parser never closes it for page breaks) splits rendering into two separate boxes", () => {
+    // parse-document.ts's rangeStack keeps tagging paragraphs boxed:true
+    // across a 改ページ that appears inside an unclosed 罫囲み range (the
+    // range only ever closes on a matching ここで罫囲み終わり) — this is
+    // exactly that AST shape, fed straight to the renderer.
+    const html = renderDocumentToHtml(
+      doc([
+        { type: "paragraph", boxed: true, children: [{ type: "text", value: "枠1行目" }] },
+        { type: "pageBreak", kind: "page" },
+        { type: "paragraph", boxed: true, children: [{ type: "text", value: "枠2行目" }] },
+      ]),
+    );
+    expect(html).toBe(
+      '<div class="aozora-box">\n<p>枠1行目</p>\n</div>\n<div class="aozora-page-break" aria-hidden="true"></div>\n<div class="aozora-box">\n<p>枠2行目</p>\n</div>',
+    );
+    const boxOpenCount = (html.match(/<div class="aozora-box">/g) ?? []).length;
+    expect(boxOpenCount).toBe(2);
+  });
+
+  it("a heading interrupting a still-open 罫囲み range also splits rendering into two separate boxes", () => {
+    const html = renderDocumentToHtml(
+      doc([
+        { type: "paragraph", boxed: true, children: [{ type: "text", value: "枠1行目" }] },
+        { type: "heading", level: 3, variant: "normal", children: [{ type: "text", value: "見出し" }] },
+        { type: "paragraph", boxed: true, children: [{ type: "text", value: "枠2行目" }] },
+      ]),
+    );
+    const boxOpenCount = (html.match(/<div class="aozora-box">/g) ?? []).length;
+    expect(boxOpenCount).toBe(2);
+    expect(html).toContain("<h4");
+  });
+
+  it("neither split keeps the outer, non-boxed paragraphs — only the boxed runs on either side of the interruption end up inside a box", () => {
+    const html = renderDocumentToHtml(
+      doc([
+        { type: "paragraph", children: [{ type: "text", value: "枠外(前)" }] },
+        { type: "paragraph", boxed: true, children: [{ type: "text", value: "枠1" }] },
+        { type: "pageBreak", kind: "page" },
+        { type: "paragraph", boxed: true, children: [{ type: "text", value: "枠2" }] },
+        { type: "paragraph", children: [{ type: "text", value: "枠外(後)" }] },
+      ]),
+    );
+    expect(html).toBe(
+      [
+        "<p>枠外(前)</p>",
+        '<div class="aozora-box">',
+        "<p>枠1</p>",
+        "</div>",
+        '<div class="aozora-page-break" aria-hidden="true"></div>',
+        '<div class="aozora-box">',
+        "<p>枠2</p>",
+        "</div>",
+        "<p>枠外(後)</p>",
+      ].join("\n"),
+    );
+  });
 });
 
 describe("renderDocumentToHtml — heading", () => {

@@ -267,7 +267,23 @@ function headingHasChapterName(children: AozoraInline[]): boolean {
  * `boxed`) always ends the current run, so three separately-typed
  * paragraphs never collapse into fewer boxes than the source had ranges,
  * and a single multi-paragraph range never gets split into several boxes
- * just because it spans more than one AozoraBlock. */
+ * just because it spans more than one AozoraBlock.
+ *
+ * A `heading` or `pageBreak` interrupting an *otherwise still-open* 罫囲み
+ * range (parse-document.ts never closes the range for these — only a
+ * matching ここで罫囲み終わり does, spec §9's range semantics apply
+ * uniformly regardless of what's inside) therefore always splits that one
+ * range into two separate `<div class="aozora-box">` wrappers here, one on
+ * each side of the interrupting block. This is intentional, not an
+ * oversight: 罫囲み is a same-page visual frame (spec §9's ruled box), and
+ * a single `<div>` spanning a page break or a heading would not mean
+ * anything as one printed frame even if the markup allowed it — splitting
+ * at the natural page/section boundary is the only rendering that makes
+ * sense here. No diagnostic is raised for this case (unlike an actually
+ * malformed range) — the range itself is still perfectly well-formed
+ * Aozora notation, and every member paragraph keeps `boxed: true` exactly
+ * as parsed; only the *rendering* naturally divides into two frames, which
+ * is not a state worth warning about. */
 function renderBlocksWithBoxes(blocks: AozoraBlock[], renderOne: (block: AozoraBlock) => string): string[] {
   const parts: string[] = [];
   let i = 0;

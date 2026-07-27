@@ -137,7 +137,7 @@ X-Pdf-Options: <PdfConvertOptions の JSON を base64url エンコード>
 
 ### POST /jobs/text
 
-手元のプレーンテキスト（.txt）ファイルをアップロードし、読書向けに再組版してから非同期変換ジョブを作成する（`frontend/` の TXT アップロード UI から使用）。`X-Text-Options` の `inputFormat`（後述）で「プレーンテキスト」「青空文庫形式」を選べる。`inputFormat: "plain"`（既定・省略時）では本文を常にプレーンテキストとして扱い、HTML/Markdown としては一切解釈しない（`<script>`・`#見出し`・`**強調**` 等はすべてそのまま文字として表示する）。`inputFormat: "aozora"` では共有パッケージ `packages/aozora-text/`（純粋 TypeScript・DOM 非依存。バックエンドは相対 import、フロントエンドは tsconfig paths + vite alias `@html2xtc/aozora-text` で同一ソースを参照し、パーサーを複製しない）の AST パーサー/レンダラーを経由して青空文庫の記法を解釈する。
+手元のテキストファイル（.txt / .md / .markdown）をアップロードし、読書向けに再組版してから非同期変換ジョブを作成する（`frontend/` の TXT アップロード UI から使用）。`X-Text-Options` の `inputFormat`（後述）で「プレーンテキスト」「Markdown」「青空文庫形式」を選べる。`inputFormat: "plain"`（既定・省略時）では本文を常にプレーンテキストとして扱い、HTML/Markdown としては一切解釈しない（`<script>`・`#見出し`・`**強調**` 等はすべてそのまま文字として表示する）。`inputFormat: "aozora"` では共有パッケージ `packages/aozora-text/`（純粋 TypeScript・DOM 非依存。バックエンドは相対 import、フロントエンドは tsconfig paths + vite alias `@html2xtc/aozora-text` で同一ソースを参照し、パーサーを複製しない）の AST パーサー/レンダラーを経由して青空文庫の記法を解釈する。`inputFormat: "markdown"` では共有パッケージ `packages/markdown-text/`（同じく純粋 TypeScript・DOM 非依存。`markdown-it`（完全固定バージョン、`html`/`linkify` 無効化）をバックエンド/フロントエンドそれぞれが個別に import してインスタンスを注入し、パーサー設定・トークン走査・許可リストレンダラーの実体だけを共有パッケージ側に置く — 詳細後述）の allowlist レンダラーを経由して Markdown の主要構文を読書向け HTML へ変換する。
 
 ```http
 POST /jobs/text
@@ -149,10 +149,10 @@ X-Text-Options: <TextConvertOptions の JSON を base64url エンコード>
 <TXT バイト列>
 ```
 
-- `Content-Type`: `text/plain` または `application/octet-stream`（メディアタイプパラメータは無視）のみ許可。それ以外は 415。バイナリ判定・文字コード検証自体は Workflow 側（下記 `prepare-text` ステップ）で行う — Worker 受付時は本文を一切バッファしない（後述）ため、ここでは実施できない。
+- `Content-Type`: `text/plain`・`text/markdown`・`application/octet-stream`（メディアタイプパラメータは無視）のみ許可。それ以外は 415。WebUI は Markdown ファイルでも既存実装との互換性のため引き続き `text/plain` で送信してよい（実際にどの構文として解釈するかを決めるのは `Content-Type` ではなく後述の `inputFormat`）。バイナリ判定・文字コード検証自体は Workflow 側（下記 `prepare-text` ステップ）で行う — Worker 受付時は本文を一切バッファしない（後述）ため、ここでは実施できない。
 - `Content-Length`: 必須（未指定は 411）。0 以下・非数値は 400。上限（5 MiB = 5,242,880 バイト固定）超過は 413。
-- `X-File-Name`（任意）: `POST /jobs/pdf` と同じ規則（制御文字・パス区切り除去、NFC 正規化、255 文字まで切り詰め、空なら `document.txt`、拡張子が無ければ `.txt` を付与）。デコード失敗時も 400 にはせず既定ファイル名へフォールバックする。表示・XTC タイトル候補にのみ使う。
-- `X-Text-Options`（任意）: `TextConvertOptions`（**入力形式**（`inputFormat`: `"plain"`（既定）または `"aozora"`。未指定は `"plain"` へフェイルソフト、それ以外の値は 400）・文字コード指定・横書き/縦書き・フォント・文字サイズ・行間・段落間隔・余白・文字揃え・空行上限・空白保持・`joinHardWrappedLines`（`inputFormat: "aozora"` では常に無視される — 注記や組版上の改行を保護するため。値自体は 400 にはならない）・ページ番号・表題・著者。既定値・各項目の制約は `src/text-options.ts` の `DEFAULT_TEXT_OPTIONS`/`validateTextConvertOptions` を参照）を JSON 化して base64url エンコードした値。省略時は既定値を使う。デコード失敗・JSON 不正・スキーマ違反（値の暗黙補正はしない）はいずれも 400。
+- `X-File-Name`（任意）: `POST /jobs/pdf` と同じ規則（制御文字・パス区切り除去、NFC 正規化、255 文字まで切り詰め、空なら `document.txt`、拡張子が無ければ `.txt` を付与）。デコード失敗時も 400 にはせず既定ファイル名へフォールバックする。表示・XTC タイトル候補にのみ使う（`inputFormat: "markdown"` では `.md`/`.markdown` 拡張子もタイトル候補算出時に除去する）。
+- `X-Text-Options`（任意）: `TextConvertOptions`（**入力形式**（`inputFormat`: `"plain"`（既定）・`"aozora"`・`"markdown"`。未指定は `"plain"` へフェイルソフト、それ以外の値（例 `"md"`・`"commonmark"`）は 400）・文字コード指定・横書き/縦書き・フォント・文字サイズ・行間・段落間隔・余白・文字揃え・空行上限・空白保持・`joinHardWrappedLines`（`inputFormat: "aozora"`/`"markdown"` では常に無視される — Markdown では空行・行送り・インデント自体が構文であり、青空文庫では注記や組版上の改行を保護するため。値自体は 400 にはならない）・ページ番号・表題・著者。既定値・各項目の制約は `src/text-options.ts` の `DEFAULT_TEXT_OPTIONS`/`validateTextConvertOptions` を参照）を JSON 化して base64url エンコードした値。省略時は既定値を使う。デコード失敗・JSON 不正・スキーマ違反（値の暗黙補正はしない）はいずれも 400。
 - リクエストボディは Worker 側で `ArrayBuffer` へ全量展開せず、ストリームのまま R2（`input/{jobId}/source.txt`）へ保存する。保存後に R2 オブジェクトサイズと申告 `Content-Length` を比較し、不一致なら入力を削除して 400（Workflow は開始しない）。
 
 成功時 202:
@@ -166,7 +166,7 @@ X-Text-Options: <TextConvertOptions の JSON を base64url エンコード>
 | 400 | `Content-Length` が 0 以下/非数値、`X-Text-Options` のデコード・JSON・スキーマ検証失敗、保存後サイズ不一致 |
 | 411 | `Content-Length` 未指定 |
 | 413 | 申告サイズが上限超過 |
-| 415 | `Content-Type` が `text/plain`/`application/octet-stream` 以外 |
+| 415 | `Content-Type` が `text/plain`/`text/markdown`/`application/octet-stream` 以外 |
 | 429 | IP ごとのレート制限超過（`POST /convert`・`POST /jobs`・`POST /jobs/pdf` と共通の窓。`Retry-After` ヘッダ付き） |
 | 500 | R2 保存失敗、または Workflow インスタンス作成失敗（いずれの場合も保存済み入力 TXT は best-effort で削除する） |
 
@@ -174,11 +174,19 @@ X-Text-Options: <TextConvertOptions の JSON を base64url エンコード>
 
 **対応文字コード**: UTF-8・UTF-8 BOM・Shift_JIS/Windows-31J（内部的には CP932 としてデコード）。UTF-16・EUC-JP・ISO-2022-JP は非対応（UTF-16 BOM 検出時は明示的に拒否）。`encoding: "auto"` は UTF-8 の厳密デコードを先に試し、失敗した場合のみ CP932 へフォールバックする（`encoding-japanese` を固定バージョンで同梱。workerd の `TextDecoder("shift_jis")` には依存しない）。
 
-**上限**: ファイルサイズ 5 MiB・文字数 2,000,000・行数 200,000・1 行あたり 100,000 文字・生成 HTML 12 MiB。いずれかを超えると Workflow が `failed` になり、エラーメッセージから条件（文字コード不明・UTF-16・バイナリ・文字数超過・行数超過・空ファイル・変換後 PDF サイズ超過・変換失敗）を区別できる（`src/text-upload.ts` の `textPrepareErrorMessage`）。`inputFormat: "aozora"` はさらにパーサー内部の上限を持つ（注記1件 4,096 コードポイント・ルビ読み 256 コードポイント・範囲注記の入れ子 32・保持する診断 200 件・AST ノード数 1,000,000）。単体の上限超過は原文をそのまま表示するフェイルソフトになり、AST 全体の上限超過（`AozoraAstLimitExceededError`）のみ本文を含まない決定的なエラーで Workflow を失敗させる。
+**上限**: ファイルサイズ 5 MiB・文字数 2,000,000・行数 200,000・1 行あたり 100,000 文字・生成 HTML 12 MiB。いずれかを超えると Workflow が `failed` になり、エラーメッセージから条件（文字コード不明・UTF-16・バイナリ・文字数超過・行数超過・空ファイル・変換後 PDF サイズ超過・変換失敗）を区別できる（`src/text-upload.ts` の `textPrepareErrorMessage`）。`inputFormat: "aozora"` はさらにパーサー内部の上限を持つ（注記1件 4,096 コードポイント・ルビ読み 256 コードポイント・範囲注記の入れ子 32・保持する診断 200 件・AST ノード数 1,000,000）。単体の上限超過は原文をそのまま表示するフェイルソフトになり、AST 全体の上限超過（`AozoraAstLimitExceededError`）のみ本文を含まない決定的なエラーで Workflow を失敗させる。`inputFormat: "markdown"` は `markdown-it` のトークン総数 500,000・トークンの入れ子深さ 50 を超えると、本文・見出し・URL・コード内容を含まない決定的なエラー（`MarkdownComplexityLimitError`）で Workflow を失敗させる（`markdown-it` 自体の `maxNesting` オプションはブロック要素の入れ子しか防げない — 強調のようなインライン要素の入れ子は際限なく深くなり得るため、パース後にトークン自身の深さを別途検証している）。章として抽出する見出しの最大件数は既存の Container 側上限（200 章、`src/container.ts`）にそのまま従う — Markdown 専用の上限は追加しない。
 
 **`inputFormat: "aozora"` で対応する構文（MVP、`packages/aozora-text/`）**: 表題・著者の標準ヘッダー抽出／ルビ（`<ruby>` 生成、明示的・暗黙的な親文字指定）／改ページ・改丁・見開き・段組み変更／大・中・小見出し（ノーマル・インライン・窓）／傍点（ゴマ・白ゴマ・黒丸・白丸・黒三角・白三角・二重丸・蛇の目・×、計9種）／傍線・太字・斜体／字下げ・地付き・地からの字上げ／中央寄せ／縦中横／`U+...` 形式の Unicode 外字（実文字へ変換）／未対応の注記（本文を欠落させず注記文字のまま表示するフェイルソフト、警告件数のみ WebUI に表示）。
 
 **`inputFormat: "aozora"` で対応しないもの（MVP、仕様書 §16）**: 青空文庫注記仕様の完全準拠・旧形式や暫定形式との完全互換・挿絵/外字画像の取得・ZIP 内 TXT と画像の同時アップロード・外部画像 URL 参照・左ルビ・ルビの複雑な重なり・複雑な注記範囲の交差・割り注・罫囲みや複雑な表・訓点/返り点の厳密組版・改丁/改見開きの左右ページ厳密制御・目次ページの自動生成・注記からの任意 CSS/HTML 生成・青空文庫以外の独自拡張記法・Markdown との混在解釈・入力内容のサーバー保存期間の延長・パーサー診断内容の永続保存。`inputFormat: "plain"`（既定）は引き続き Markdown/HTML の解釈・青空文庫注記・ルビ/傍点/脚注/目次を一切行わない。
+
+**`inputFormat: "markdown"` で対応する構文（MVP、`packages/markdown-text/`、`markdown-it` 14.3.0 固定）**: 段落／ATX・Setext 見出し（h1〜h6）／強調・太字・取り消し線／順序なし・順序付き（`start` 属性つき）・入れ子リスト／引用／インラインコード／fenced・indented コードブロック（言語指定によるシンタックスハイライトは行わない）／水平線／テーブル（`table`/`thead`/`tbody`/`tr`/`th`/`td`。列の左右揃えは反映しない）／hard break（`<br>`）／日本語・絵文字・サロゲートペア。**リンクは URL・属性を一切出力せず、表示文字列（`[label](url)` の `label`、または autolink 自身の URL 文字列）だけを `<span class="md-link">` として表示する**（`href` を含む一切の属性を出力しない — `javascript:` 等のスキームを特別扱いして通す処理も存在しない）。**画像は `<img>` を出力せず、alt テキストがあれば `［画像: <alt>］`、無ければ `［画像］` というプレースホルダーのみを表示する**（画像 URL は一切表示せず、取得もしない）。生の HTML（`<script>`・`<style>`・`<iframe>` 等）はエスケープ済みの文字列としてそのまま画面に見える文字になり、実行可能なタグには一切ならない（`markdown-it` の `html: false` に加え、レンダラー自体が固定の許可タグ・許可属性のみを生成する allowlist 方式で、markdown-it 標準の HTML レンダラーやサニタイザーは経由しない）。出力可能なタグは `p h1〜h6 em strong s ul ol li blockquote code pre hr br table thead tbody tr th td span` のみ、属性は `ol[start]` の検証済み整数・固定クラス（`md-link`/`md-image-placeholder`/`xtc-chapter-marker`）・章マーカーの固定 `aria-hidden="true"` のみで、ユーザー入力由来の属性名・属性値は一切コピーしない。
+
+**`inputFormat: "markdown"` の章抽出規則**: 文書中に非空の H1 が 1 つ以上あれば全 H1 を、無ければ全 H2 を章とする（H1/H2 とも無ければ章なし。H3 以下は常に章にならない）。章名は太字・コード等の装飾を除いたプレーンテキスト（`packages/aozora-text/` の `normalizeChapterName` で空白を正規化）。マーカー形式・採番・埋め込み HTML・CSS は既存の青空文庫向け実装（`packages/aozora-text/src/chapters.ts` の `XtcChapter`/`formatChapterMarker`/`renderChapterMarkerHtml`/`XTC_CHAPTER_MARKER_CSS`）をそのまま再利用し、Markdown 専用のマーカー実装は持たない。
+
+**`inputFormat: "markdown"` のタイトル解決（仕様書 §10）**: `X-Text-Options` の `title` が空でなければそれを採用、次に最初の非空 H1 のプレーンテキスト、次にファイル名から `.txt`/`.md`/`.markdown` を除いた値、最後に `Untitled`。H1 由来のタイトルは XTC メタデータのタイトル候補としては使うが、本文中に別の見出し（`book-header`）として重複挿入することはない（`title` を明示した場合のみ本文冒頭に表示する）。
+
+**`inputFormat: "markdown"` で対応しないもの（MVP）**: 生 HTML の実行・描画・Markdown と青空文庫記法の混在解釈・外部/ローカル画像の取得または埋め込み・Mermaid/PlantUML/Graphviz・数式レンダリング・シンタックスハイライト・YAML/TOML フロントマターの解釈・脚注プラグイン・GitHub 形式タスクリストの UI 化・ユーザー指定の Markdown 拡張プラグイン・Markdown 内 CSS/JavaScript・リンク先ページの取得・Markdown ファイルと画像フォルダをまとめた ZIP 入力・Markdown を経由した EPUB 変換。
 
 **対応しないもの（MVP、共通）**: OCR・外部 CSS/外部 JavaScript の参照・複数 TXT の結合・ページ単位の個別書式・変換開始後のジョブキャンセル。
 
@@ -329,6 +337,7 @@ R2 上の XTC を `application/octet-stream` + `Content-Length` + `Content-Dispo
 | アップロード TXT の上限（`POST /jobs/text`） | 5 MiB（固定） | `src/text-normalize.ts` の `MAX_TEXT_FILE_BYTES`（コード定数、env var 化はしていない） |
 | TXT の文字数・行数・行長上限 | 2,000,000 文字・200,000 行・1 行 100,000 文字 | `src/text-normalize.ts` の `MAX_TEXT_CHARS`/`MAX_TEXT_LINES`/`MAX_LINE_CHARS` |
 | TXT から生成する HTML の上限 | 12 MiB | `src/text-normalize.ts` の `MAX_GENERATED_HTML_BYTES` |
+| Markdown（`inputFormat: "markdown"`）のトークン総数・入れ子深さ上限 | 500,000 トークン・深さ 50 | `packages/markdown-text/src/types.ts` の `MAX_MARKDOWN_TOKENS`/`MARKDOWN_MAX_NESTING`（コード定数、env var 化はしていない） |
 | アップロード EPUB の上限（`POST /jobs/epub`） | 48 MiB（コード上の既定 50331648 バイト） | Worker の var `MAX_UPLOAD_EPUB_BYTES`（バイト数。`src/epub-upload.ts` の `resolveMaxUploadEpubBytes`） |
 | EPUB 展開後の合計サイズ上限 | 192 MiB（コード上の既定 201326592 バイト） | Worker の var `MAX_EPUB_UNCOMPRESSED_BYTES`（`src/epub/archive.ts` の `resolveMaxEpubUncompressedBytes`） |
 | EPUB 内 1 エントリあたりの展開後サイズ上限 | 32 MiB（コード上の既定 33554432 バイト） | Worker の var `MAX_EPUB_ENTRY_BYTES`（`src/epub/archive.ts` の `resolveMaxEpubEntryBytes`） |

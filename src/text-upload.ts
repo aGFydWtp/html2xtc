@@ -9,6 +9,7 @@ import {
 } from "./text-decode";
 import { EmptyTextError, LineTooLongError, TextTooLongError, TooManyLinesError } from "./text-normalize";
 import type { Env } from "./types";
+import { MarkdownComplexityLimitError } from "../packages/markdown-text/src/index";
 
 /**
  * POST /jobs/text support (text-upload spec §11): header validation and the
@@ -23,16 +24,22 @@ import type { Env } from "./types";
  * every other job-creation endpoint in this codebase.
  */
 
-const ALLOWED_TEXT_CONTENT_TYPES = new Set(["text/plain", "application/octet-stream"]);
+// text/markdown is accepted for API clients that send it explicitly
+// (markdown-conversion spec §5.2/§19); the WebUI keeps sending
+// text/plain for Markdown files too, for backward compatibility with
+// existing upload code — inputFormat, not Content-Type, is what actually
+// selects the Markdown parser (src/text-prepare.ts's prepareTextDocument).
+const ALLOWED_TEXT_CONTENT_TYPES = new Set(["text/plain", "text/markdown", "application/octet-stream"]);
 
 /**
- * Content-Type check (spec §11.2): text/plain or application/octet-stream,
- * media-type parameters ignored, case-insensitive. Unlike the PDF path this
- * can't gate application/octet-stream on "extension/content validation
- * succeeded" at this point in the request — spec §13.3 forbids buffering the
- * body here (it streams straight to R2), so the actual binary/encoding
- * checks the spec describes for octet-stream run later, in the prepare-text
- * Workflow step, once the (size-bounded) file is read back from R2.
+ * Content-Type check (spec §11.2, extended by markdown-conversion spec §5.2):
+ * text/plain, text/markdown, or application/octet-stream, media-type
+ * parameters ignored, case-insensitive. Unlike the PDF path this can't gate
+ * application/octet-stream on "extension/content validation succeeded" at
+ * this point in the request — spec §13.3 forbids buffering the body here
+ * (it streams straight to R2), so the actual binary/encoding checks the
+ * spec describes for octet-stream run later, in the prepare-text Workflow
+ * step, once the (size-bounded) file is read back from R2.
  */
 export function isAllowedTextContentType(headerValue: string | null): boolean {
   if (headerValue === null) {
@@ -170,6 +177,12 @@ export function textPrepareErrorMessage(error: unknown): string {
   }
   if (error instanceof LineTooLongError) {
     return "a line exceeds the maximum line length";
+  }
+  if (error instanceof MarkdownComplexityLimitError) {
+    // Already a fixed, content-free string (markdown-conversion spec §14) —
+    // returned as-is rather than a separate literal here, so there is only
+    // one place that owns its exact wording.
+    return error.message;
   }
   return "failed to convert text to XTC";
 }

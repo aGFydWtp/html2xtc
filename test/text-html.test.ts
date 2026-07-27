@@ -6,6 +6,7 @@ import type { AozoraDocument } from "../packages/aozora-text/src/types";
 import { DEFAULT_TEXT_OPTIONS } from "../src/text-options";
 import {
   buildAozoraContentHtml,
+  buildMarkdownContentHtml,
   buildPlainTextContentHtml,
   buildTextArticleHtml,
   buildTextDocumentShell,
@@ -75,6 +76,13 @@ describe("resolveDocumentTitle", () => {
   it("trims whitespace-only titles before falling back", () => {
     expect(resolveDocumentTitle("   ", "doc.txt")).toBe("doc");
   });
+
+  it("strips .md and .markdown extensions too (markdown-conversion spec §10.1)", () => {
+    expect(resolveDocumentTitle("", "notes.md")).toBe("notes");
+    expect(resolveDocumentTitle("", "notes.markdown")).toBe("notes");
+    expect(resolveDocumentTitle("", "notes.MD")).toBe("notes");
+    expect(resolveDocumentTitle("", ".markdown")).toBe("Untitled");
+  });
 });
 
 describe("buildTextPrintCss", () => {
@@ -141,6 +149,16 @@ describe("buildTextPrintCss", () => {
     expect(preserved).toContain("tab-size: 4;");
     const notPreserved = buildTextPrintCss({ ...DEFAULT_TEXT_OPTIONS, preserveSpaces: false });
     expect(notPreserved).not.toContain("white-space: pre-wrap;");
+  });
+
+  it("never pre-wraps .content for Markdown, even when preserveSpaces is true (markdown-conversion spec §8)", () => {
+    const css = buildTextPrintCss({
+      ...DEFAULT_TEXT_OPTIONS,
+      inputFormat: "markdown",
+      preserveSpaces: true,
+    });
+    expect(css).not.toContain("white-space: pre-wrap;\n    tab-size: 4;");
+    expect(css).not.toMatch(/\.content\s*{\s*white-space: pre-wrap;/);
   });
 });
 
@@ -273,7 +291,39 @@ describe("buildAozoraContentHtml", () => {
   });
 });
 
+describe("buildMarkdownContentHtml", () => {
+  it("brands the given HTML fragment as SafeGeneratedHtml without altering it", () => {
+    const fragment = '<p><span class="md-link">a</span></p>';
+    const branded = buildMarkdownContentHtml(fragment);
+    // SafeGeneratedHtml is a branded string type, not a wrapper object.
+    expect(branded).toBe(fragment);
+  });
+});
+
 describe("buildTextDocumentShell", () => {
+  it("includes the Markdown CSS only when inputFormat is markdown", () => {
+    const contentHtml = buildMarkdownContentHtml('<p><span class="md-link">a</span></p>');
+    const markdownHtml = buildTextDocumentShell({
+      contentHtml,
+      options: { ...DEFAULT_TEXT_OPTIONS, inputFormat: "markdown" },
+      documentTitle: "T",
+      displayTitle: "",
+      author: "",
+    });
+    expect(markdownHtml).toContain(".md-link");
+    expect(markdownHtml).toContain(".md-image-placeholder");
+
+    const plainHtml = buildTextDocumentShell({
+      contentHtml: buildPlainTextContentHtml("本文"),
+      options: { ...DEFAULT_TEXT_OPTIONS, inputFormat: "plain" },
+      documentTitle: "T",
+      displayTitle: "",
+      author: "",
+    });
+    expect(plainHtml).not.toContain(".md-link");
+    expect(plainHtml).not.toContain(".md-image-placeholder");
+  });
+
   it("includes the aozora CSS only when inputFormat is aozora", () => {
     const contentHtml = buildPlainTextContentHtml("本文");
     const aozoraHtml = buildTextDocumentShell({

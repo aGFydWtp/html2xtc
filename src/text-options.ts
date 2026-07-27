@@ -18,9 +18,11 @@ export type TextAlign = "start" | "justify";
  * (the default, including when the field is entirely absent — spec §5.3)
  * keeps every existing byte-identical behavior. `"aozora"` routes the body
  * through the shared @html2xtc/aozora-text AST parser/renderer instead
- * (src/text-prepare.ts's prepareTextDocument).
+ * (src/text-prepare.ts's prepareTextDocument). `"markdown"` (markdown-
+ * conversion spec §5.1) routes it through the shared
+ * @html2xtc/markdown-text parser/renderer instead.
  */
-export type TextInputFormat = "plain" | "aozora";
+export type TextInputFormat = "plain" | "aozora" | "markdown";
 
 export interface TextConvertOptions {
   inputFormat: TextInputFormat;
@@ -41,13 +43,24 @@ export interface TextConvertOptions {
     left: number;
   };
   textAlign: TextAlign;
+  /**
+   * Ignored when inputFormat is "markdown" (markdown-conversion spec §8):
+   * blank lines are Markdown structure, not decoration, so
+   * normalizeMarkdownSource (text-normalize.ts) never collapses them. Kept
+   * in this schema (never rejected, never removed) purely for backward
+   * compatibility with stored plain/aozora payloads.
+   */
   maxConsecutiveBlankLines: number;
+  /** Ignored when inputFormat is "markdown" (markdown-conversion spec §8):
+   * see maxConsecutiveBlankLines's doc comment for why. */
   preserveSpaces: boolean;
   /**
    * Joins hard-wrapped lines within a paragraph (text-normalize.ts's
    * joinWrappedLines heuristic) instead of keeping every single newline as
    * <br>. Many Japanese-book TXT sources are fixed-width hard-wrapped, so
-   * this defaults to true.
+   * this defaults to true. Ignored when inputFormat is "markdown"
+   * (markdown-conversion spec §8): see maxConsecutiveBlankLines's doc
+   * comment for why.
    */
   joinHardWrappedLines: boolean;
   showPageNumbers: boolean;
@@ -115,7 +128,7 @@ export function validateTextConvertOptions(value: unknown): TextOptionsResult {
   // field — is treated as "plain", not rejected. A present-but-unknown
   // value is still a hard 400, like every other field here.
   const inputFormatRaw = v.inputFormat === undefined ? "plain" : v.inputFormat;
-  if (inputFormatRaw !== "plain" && inputFormatRaw !== "aozora") {
+  if (inputFormatRaw !== "plain" && inputFormatRaw !== "aozora" && inputFormatRaw !== "markdown") {
     return { ok: false, error: "invalid inputFormat" };
   }
   const inputFormat = inputFormatRaw;

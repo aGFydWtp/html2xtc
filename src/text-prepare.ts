@@ -8,14 +8,27 @@ import {
   parseAozoraDocument,
 } from "../packages/aozora-text/src/index";
 import type { XtcChapter } from "../packages/aozora-text/src/index";
+import { createMarkdownConverter, MARKDOWN_IT_OPTIONS } from "../packages/markdown-text/src/index";
+import MarkdownIt from "markdown-it";
 import {
   buildAozoraContentHtml,
+  buildMarkdownContentHtml,
   buildPlainTextContentHtml,
   buildTextDocumentShell,
   resolveDocumentTitle,
 } from "./text-html";
-import { normalizeForAozora, normalizeText } from "./text-normalize";
+import { normalizeForAozora, normalizeMarkdownSource, normalizeText } from "./text-normalize";
 import type { TextConvertOptions } from "./text-options";
+
+/**
+ * The one shared Markdown converter instance this backend ever uses (spec
+ * §6.3's concept example) — constructed once at module scope, reused across
+ * every prepareMarkdown call, exactly like a module-scope `markdownIt`
+ * instance would be. `@html2xtc/markdown-text` never imports `markdown-it`
+ * itself (spec §6.3) — only this file does, and only to build the one
+ * instance handed to createMarkdownConverter's factory.
+ */
+const markdownConverter = createMarkdownConverter(() => new MarkdownIt(MARKDOWN_IT_OPTIONS));
 
 /**
  * Single preparation entrypoint shared by production conversion
@@ -62,6 +75,12 @@ export interface PreparedTextDocument {
     malformedAnnotations: number;
     truncatedDiagnostics: boolean;
   };
+  /** Markdown parse's total token count (markdown-conversion spec §14/§20's
+   * "tokenCount=" log field) — undefined for `plain`/`aozora` inputFormat,
+   * where there is no such concept. Purely for observability
+   * (src/workflow.ts's prepare-text step logs this); never read by any
+   * downstream conversion step. */
+  markdownTokenCount?: number;
 }
 
 export interface PrepareTextDocumentInput {
@@ -195,14 +214,80 @@ function prepareAozora(input: PrepareTextDocumentInput): PreparedTextDocument {
 }
 
 /**
+ * Prepares a Markdown decoded TXT upload (or preview body) for HTML
+ * generation (markdown-conversion spec §12). Title priority (spec §10.1):
+ * explicit options.title, then the first non-empty H1's plain text, then
+ * the filename/"Untitled" fallback chain (resolveDocumentTitle) — NEVER the
+ * H1 text passed as `displayTitle` (spec §10.2's "H1由来タイトルを
+ * `displayTitle` に渡さない"): an H1-derived title must never also be
+ * inserted as a duplicate in-body `book-header`, since the H1 itself is
+ * already part of contentHtml. `displayTitle` is therefore always exactly
+ * `explicitTitle` — empty unless the user set options.title.
+ */
+function prepareMarkdown(input: PrepareTextDocumentInput): PreparedTextDocument {
+  const { decodedText, filename, options } = input;
+  const normalized = normalizeMarkdownSource(decodedText);
+  const parsed = markdownConverter.parse(normalized.text);
+
+  const explicitTitle = options.title.trim();
+  const documentTitle =
+    explicitTitle.length > 0
+      ? explicitTitle
+      : parsed.firstH1 !== undefined && parsed.firstH1.length > 0
+        ? parsed.firstH1
+        : resolveDocumentTitle("", filename);
+  const author = options.author.trim();
+
+  const contentHtml = buildMarkdownContentHtml(parsed.contentHtml);
+  const html = buildTextDocumentShell({
+    contentHtml,
+    options,
+    documentTitle,
+    displayTitle: explicitTitle,
+    author,
+  });
+
+  return {
+    html,
+    documentTitle,
+    author,
+    searchableText: parsed.plainText,
+    characterCount: codePointLength(normalized.text),
+    lineCount: lineCountOf(normalized.text),
+    controlCharsRemoved: normalized.controlCharsRemoved,
+    chapters: parsed.chapters,
+    chapterHeadingLevel: parsed.chapterHeadingLevel,
+    diagnostics: EMPTY_DIAGNOSTICS,
+    markdownTokenCount: parsed.tokenCount,
+  };
+}
+
+/**
  * Prepares a decoded TXT upload (or preview body) for HTML generation,
  * branching on `options.inputFormat` (spec §5.1). `plain` reproduces the
  * pre-existing normalizeText → resolveDocumentTitle → buildTextArticleHtml
  * pipeline exactly; `aozora` normalizes per spec §10.2's different order
  * (no blank-line collapsing / hard-wrap joining before parsing —
  * joinHardWrappedLines is ignored entirely, spec §10.3) and routes the body
- * through the shared @html2xtc/aozora-text AST parser/renderer.
+ * through the shared @html2xtc/aozora-text AST parser/renderer; `markdown`
+ * (markdown-conversion spec §12) normalizes per its own different order (no
+ * blank-line collapsing / hard-wrap joining / trailing-whitespace trimming
+ * before parsing — maxConsecutiveBlankLines/preserveSpaces/
+ * joinHardWrappedLines are all ignored entirely, spec §8) and routes the
+ * body through the shared @html2xtc/markdown-text parser/renderer. The
+ * `default` branch below is `plain`'s — not just for an explicit
+ * `"plain"`, but also for the historical "field entirely absent" shape
+ * (TextInputFormat's own doc comment), matching validateTextConvertOptions'
+ * identical backward-compatibility stance.
  */
 export function prepareTextDocument(input: PrepareTextDocumentInput): PreparedTextDocument {
-  return input.options.inputFormat === "aozora" ? prepareAozora(input) : preparePlain(input);
+  switch (input.options.inputFormat) {
+    case "aozora":
+      return prepareAozora(input);
+    case "markdown":
+      return prepareMarkdown(input);
+    case "plain":
+    default:
+      return preparePlain(input);
+  }
 }

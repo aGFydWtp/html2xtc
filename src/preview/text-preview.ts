@@ -32,6 +32,7 @@ import type { TextConvertOptions } from "../text-options";
 import { prepareTextDocument } from "../text-prepare";
 import type { Env } from "../types";
 import { AozoraAstLimitExceededError } from "../../packages/aozora-text/src/index";
+import { MarkdownComplexityLimitError } from "../../packages/markdown-text/src/index";
 
 // --- Limits (spec §5.3/§6.2, §27's recommendation) -------------------------
 
@@ -505,6 +506,17 @@ export async function handleTextPreview(request: Request, env: Env): Promise<Res
       // fail-soft per spec §17/§4.3: a content-free, condition-specific
       // error, never an uncaught 500 and never any document content in the
       // response (AozoraAstLimitExceededError's own message holds none).
+      return jsonError(
+        413,
+        "TEXT_TOO_LONG",
+        "preview text exceeds the supported document complexity limit",
+      );
+    }
+    if (error instanceof MarkdownComplexityLimitError) {
+      // Same fail-soft stance as AozoraAstLimitExceededError above
+      // (markdown-conversion spec §21) — deterministic for this exact
+      // preview body, and MarkdownComplexityLimitError's own message is
+      // already content-free.
       return jsonError(
         413,
         "TEXT_TOO_LONG",

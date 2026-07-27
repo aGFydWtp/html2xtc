@@ -173,19 +173,24 @@ describe("validateTextConvertOptions", () => {
     expect(result).toEqual({ ok: true, options: DEFAULT_TEXT_OPTIONS });
   });
 
-  it("accepts an explicit inputFormat of plain or aozora", () => {
+  it("accepts an explicit inputFormat of plain, aozora, or markdown", () => {
     expect(
       validateTextConvertOptions({ ...DEFAULT_TEXT_OPTIONS, inputFormat: "plain" }),
     ).toEqual({ ok: true, options: { ...DEFAULT_TEXT_OPTIONS, inputFormat: "plain" } });
     expect(
       validateTextConvertOptions({ ...DEFAULT_TEXT_OPTIONS, inputFormat: "aozora" }),
     ).toEqual({ ok: true, options: { ...DEFAULT_TEXT_OPTIONS, inputFormat: "aozora" } });
-  });
-
-  it("rejects an invalid inputFormat", () => {
     expect(
       validateTextConvertOptions({ ...DEFAULT_TEXT_OPTIONS, inputFormat: "markdown" }),
-    ).toEqual({ ok: false, error: "invalid inputFormat" });
+    ).toEqual({ ok: true, options: { ...DEFAULT_TEXT_OPTIONS, inputFormat: "markdown" } });
+  });
+
+  it("rejects an unknown inputFormat (spec §22.1: 'md'/'commonmark' etc. are not aliases)", () => {
+    for (const invalid of ["md", "commonmark", "MARKDOWN", "html", ""]) {
+      expect(
+        validateTextConvertOptions({ ...DEFAULT_TEXT_OPTIONS, inputFormat: invalid }),
+      ).toEqual({ ok: false, error: "invalid inputFormat" });
+    }
   });
 
   it("ignores unknown extra properties", () => {

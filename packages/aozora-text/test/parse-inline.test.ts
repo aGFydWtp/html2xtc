@@ -217,6 +217,35 @@ describe("外字 (spec §9.10)", () => {
     const { nodes } = parse("※［＃「x」、U+ZZZZ］");
     expect(nodes).toEqual([{ type: "gaiji", description: "x" }]);
   });
+
+  it("does not lose body text following a nested 「」 pair whose inner 」 used to be mistaken for the closing quote (regression: reviewer-reproduced silent content loss)", () => {
+    const { nodes, diagnostics } = parse("［＃「あれ「これ」、それ」という趣旨の注記］");
+    // Never becomes a gaiji node at all (there's no real "、U+XXXX" tail
+    // here) — the whole original bracketed annotation must survive
+    // verbatim as a raw annotation instead, with none of it discarded.
+    expect(nodes.some((n) => n.type === "gaiji")).toBe(false);
+    expect(nodes).toContainEqual({
+      type: "rawAnnotation",
+      text: "［＃「あれ「これ」、それ」という趣旨の注記］",
+    });
+    expect(diagnostics.some((d) => d.kind === "unsupported-annotation")).toBe(true);
+  });
+
+  it("resolves a description containing its own nested 「」 pair when a valid U+XXXX spec follows", () => {
+    const { nodes, diagnostics } = parse("※［＃「あ「い」う」、U+82B1］");
+    expect(nodes).toEqual([{ type: "gaiji", unicode: "\u{82B1}", description: "あ「い」う" }]);
+    expect(diagnostics).toEqual([]);
+  });
+
+  it("resolves a description containing its own nested 「」 pair with no Unicode spec at all", () => {
+    const { nodes } = parse("※［＃「あ「い」う」］");
+    expect(nodes).toEqual([{ type: "gaiji", description: "あ「い」う" }]);
+  });
+
+  it("a malformed-but-attempted hex spec (starts with U+) after a nested description still degrades to description-only, not a raw annotation", () => {
+    const { nodes } = parse("※［＃「あ「い」う」、U+ZZZZ］");
+    expect(nodes).toEqual([{ type: "gaiji", description: "あ「い」う" }]);
+  });
 });
 
 describe("未対応注記 (spec §9.11)", () => {

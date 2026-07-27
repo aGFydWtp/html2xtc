@@ -229,6 +229,36 @@ export function parseInlineText(chunk: string, options: ParseInlineOptions = {})
     return true;
   }
 
+  /** Finds the index of the `」` that closes `rawBody`'s outer `「` (spec
+   * §9.10's 外字 description quote — `rawBody[0]` is already known to be
+   * `「` by the caller), tracking `「`/`」` nesting depth instead of
+   * stopping at the first `」` regardless of nesting. This is what lets a
+   * description that itself quotes something (e.g. `「あ「い」う」、
+   * U+XXXX` — the whole `あ「い」う` is the description) be found
+   * correctly; a single `[^」]*` capture cannot express "skip past a
+   * balanced nested pair", so it used to stop at the first `」` no matter
+   * what came after it (spec §4.3 regression this replaces: unrelated text
+   * that happened to follow a 、 right after that first, wrong `」` was
+   * silently discarded as a "malformed hex spec" — see the caller).
+   * Returns undefined if depth never returns to 0 (no real closing 」 for
+   * this 「 anywhere in the body) — the caller falls through to ordinary
+   * unsupported-annotation handling, the same fail-soft as an unclosed
+   * ［＃ or 《, spec §17. O(rawBody.length), single left-to-right pass, no
+   * backtracking; rawBody is already capped at MAX_ANNOTATION_CODEPOINTS
+   * by the caller before this ever runs. */
+  function findGaijiOuterClose(rawBody: string): number | undefined {
+    let depth = 0;
+    for (let i = 0; i < rawBody.length; i++) {
+      const ch = rawBody[i];
+      if (ch === "「") depth++;
+      else if (ch === "」") {
+        depth--;
+        if (depth === 0) return i;
+      }
+    }
+    return undefined;
+  }
+
   function applyGaiji(description: string, unicodeSpecRaw: string | undefined): void {
     let unicode: string | undefined;
     if (unicodeSpecRaw !== undefined) {
@@ -330,14 +360,37 @@ export function parseInlineText(chunk: string, options: ParseInlineOptions = {})
       return;
     }
 
-    // 外字 (spec §9.10): 「description」[、U+XXXX] — matched broadly (any
-    // trailing content after the closing 」, not just well-formed U+ hex)
-    // so an invalid hex spec still resolves to the "no Unicode" fallback
-    // instead of falling all the way through to a generic raw annotation.
-    const gaijiMatch = /^「([^」]*)」(?:、\s*(.+))?$/.exec(rawBody);
-    if (gaijiMatch) {
-      applyGaiji(gaijiMatch[1], gaijiMatch[2]);
-      return;
+    // 外字 (spec §9.10): 「description」[、U+XXXX]. `description` may
+    // itself contain a nested 「...」 pair (findGaijiOuterClose handles
+    // that); a malformed-but-attempted hex spec (wrong digit count, "U+"
+    // present but not valid hex, an out-of-range/surrogate/noncharacter
+    // code point) still resolves to the "no Unicode" description-only
+    // fallback rather than falling through to a generic raw annotation —
+    // that part of the original design is unchanged, see applyGaiji's own
+    // validation. What's new: trailing content that doesn't even start
+    // with "U+" once trimmed is no longer accepted as an "invalid hex
+    // spec" at all — it's essentially never really a hex-spec attempt, and
+    // treating it as one is exactly what silently discarded real body text
+    // (spec §4.3's regression this replaces). That content instead falls
+    // through, ending up verbatim in the generic raw-annotation branch at
+    // the bottom of this function, never dropped.
+    if (rawBody.startsWith("「")) {
+      const closeIdx = findGaijiOuterClose(rawBody);
+      if (closeIdx !== undefined) {
+        const description = rawBody.slice(1, closeIdx);
+        const afterClose = rawBody.slice(closeIdx + 1);
+        if (afterClose.length === 0) {
+          applyGaiji(description, undefined);
+          return;
+        }
+        const trailing = /^、\s*(.+)$/.exec(afterClose);
+        if (trailing && trailing[1].trim().startsWith("U+")) {
+          applyGaiji(description, trailing[1]);
+          return;
+        }
+        // afterClose exists but isn't even a "、<looks like U+...>" shape
+        // — falls through below, verbatim.
+      }
     }
 
     const rangeEndMatch = /^ここで(.+)終わり$/.exec(rawBody);

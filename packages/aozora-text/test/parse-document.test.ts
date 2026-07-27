@@ -60,6 +60,61 @@ describe("見出し (spec §9.3 / §18.3)", () => {
   });
 });
 
+describe("見出し — quoted title containing its own nested 「」 (regression: real files whose title text itself quotes something)", () => {
+  it("a title with one nested 「」 pair in the middle (real-file line 89)", () => {
+    const doc = parseAozoraDocument("なぜ「今」、時間哲学なのか［＃「なぜ「今」、時間哲学なのか」は小見出し］");
+    expect(doc.blocks).toEqual<AozoraBlock[]>([
+      { type: "heading", level: 3, variant: "normal", children: [{ type: "text", value: "なぜ「今」、時間哲学なのか" }] },
+    ]);
+  });
+
+  it("a title starting with 「 — the quoted target itself begins with 「 (real-file line 1105)", () => {
+    const doc = parseAozoraDocument("「統握-内容」図式［＃「「統握-内容」図式」は小見出し］");
+    expect(doc.blocks).toEqual<AozoraBlock[]>([
+      { type: "heading", level: 3, variant: "normal", children: [{ type: "text", value: "「統握-内容」図式" }] },
+    ]);
+  });
+
+  it("a title with two separate nested 「」 pairs (real-file line 100)", () => {
+    const doc = parseAozoraDocument(
+      "第Ⅰ部「概念のツールボックス」――考えるための道具を揃える［＃「第Ⅰ部「概念のツールボックス」――考えるための道具を揃える」は大見出し］",
+    );
+    expect(doc.blocks).toEqual<AozoraBlock[]>([
+      {
+        type: "heading",
+        level: 1,
+        variant: "normal",
+        children: [{ type: "text", value: "第Ⅰ部「概念のツールボックス」――考えるための道具を揃える" }],
+      },
+    ]);
+  });
+
+  it("still falls back to a paragraph when before/target genuinely don't match, even with nested 「」 present", () => {
+    const doc = parseAozoraDocument("違う「文字」列［＃「一致し「ない」」は大見出し］");
+    expect(doc.blocks.every((b) => b.type !== "heading")).toBe(true);
+    expect(doc.blocks[0].type).toBe("paragraph");
+  });
+
+  it("does not crash or blow up on a pathological line packed with the literal ［＃「 marker", () => {
+    const pathological = "［＃「".repeat(2000) + "x" + "」は大見出し］";
+    expect(() => parseAozoraDocument(pathological)).not.toThrow();
+    const doc = parseAozoraDocument(pathological);
+    expect(doc.blocks.every((b) => b.type !== "heading")).toBe(true);
+  });
+
+  it("scales roughly linearly for many same-line heading lines each containing nested 「」 (spec §17/§18.7)", () => {
+    const unit = "なぜ「今」なのか［＃「なぜ「今」なのか」は小見出し］\n\n";
+    const base = unit.repeat(20_000);
+    const t1 = performance.now();
+    parseAozoraDocument(base);
+    const d1 = performance.now() - t1;
+    const t2 = performance.now();
+    parseAozoraDocument(base + base);
+    const d2 = performance.now() - t2;
+    expect(d2).toBeLessThan(d1 * 8 + 200);
+  });
+});
+
 describe("字下げ (spec §9.6 / §18.3)", () => {
   it("a single ［＃N字下げ］ applies only to the next paragraph", () => {
     const doc = parseAozoraDocument("［＃3字下げ］\n\n字下げされた段落\n\n通常の段落");

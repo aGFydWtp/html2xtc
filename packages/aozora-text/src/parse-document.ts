@@ -88,7 +88,33 @@ function headingLabelText(level: HeadingLevel, variant: HeadingVariant): string 
   return `${variantPrefix}${levelWord}見出し`;
 }
 
-const HEADING_SAME_LINE_RE = /^([\s\S]*)［＃「([^」]*)」は((?:同行|窓)?(?:大|中|小)見出し)］$/;
+/** Matches only the *suffix* `」は<label>］` (spec §9.3's same-line 見出し
+ * form), deliberately not the whole `before［＃「target」は<label>］` shape
+ * in one regex: a single `[^」]*` capture for `target` can't tell a nested
+ * 「」 pair *inside* the quoted title (spec §9.3's title text itself may
+ * contain one, e.g. 確固とした「私」の解体) from the title's own closing
+ * quote, so it silently stops at the first inner 」 and fails to match at
+ * all. `matchSameLineHeading` below finds the correct 「 split point
+ * itself, using the *existing* `before.trim() === target.trim()`
+ * requirement as the actual validator instead of a regex capture boundary
+ * — see its doc comment. No leading `[\s\S]*` here (unlike the old regex)
+ * is deliberate too: an unanchored suffix-only pattern like this one still
+ * only costs O(line length) to locate (every rejected start position fails
+ * in O(1) on its very first required literal character, 」), so it stays
+ * within this file's O(n) guarantee (same proof shape as tokenize.ts's
+ * module doc) without needing `^` at all. */
+const HEADING_SAME_LINE_SUFFIX_RE = /」は((?:同行|窓)?(?:大|中|小)見出し)］$/;
+/** The fixed 3-character marker that opens a same-line 見出し's quoted
+ * target, spec §9.3. `.length === 3` holds because every one of ［, ＃, 「
+ * is a single UTF-16 code unit (none is a surrogate pair). */
+const HEADING_SAME_LINE_MARKER = "［＃「";
+/** Bound on how far a same-line 見出し's real `［＃「` split point may sit
+ * from `s`'s arithmetic midpoint (see `matchSameLineHeading`'s doc comment)
+ * — generous enough to tolerate any realistic amount of incidental
+ * whitespace around the quoted title (every real occurrence found has
+ * none at all: `before === target` exactly) while still keeping the
+ * candidate search a fixed constant, never proportional to line length. */
+const MAX_HEADING_SPLIT_SLACK = 32;
 const HEADING_RANGE_START_BODY_RE = /^ここから((?:同行|窓)?(?:大|中|小)見出し)$/;
 const HEADING_RANGE_END_BODY_RE = /^ここで((?:同行|窓)?(?:大|中|小)見出し)終わり$/;
 /** Whole-line form of the end marker, for recognizing a *lone* (no
@@ -600,15 +626,58 @@ function parseBlocks(bodyText: string, ctx: DocumentParseContext): AozoraBlock[]
    * doesn't equal the preceding text on that line isn't really a same-line
    * heading marker — the caller falls through to ordinary paragraph
    * handling, where parse-inline.ts's own quoted-target lookup fails the
-   * same way and fails soft. */
+   * same way and fails soft.
+   *
+   * Finding the 「＃「」 split point itself (spec §9.3, rather than trusting
+   * a single greedy/lazy regex capture for `target`) is what lets this
+   * recognize a title that itself contains a 「」 pair (e.g. 確固とした
+   * 「私」の解体) — `before.trim() === target.trim()` is still the ONLY
+   * acceptance test, exactly as before; this only changes how candidate
+   * `before`/`target` splits are generated, never loosens what counts as a
+   * match.
+   *
+   * Candidate search, bounded to O(1) work per line (spec §17 / this
+   * file's O(n) guarantee): `s` (the line with the `」は<label>］` suffix
+   * already stripped) has the shape `before + "［＃「" + target`, so
+   * `before.length + target.length` is FIXED for a given `s` regardless of
+   * which "［＃「" occurrence is the real split point — meaning
+   * `before.length - target.length` grows strictly monotonically (by
+   * exactly 2 per character) as the candidate split index increases. Real
+   * usage has `before === target` byte-for-byte (spec §9.3's own example;
+   * every occurrence seen in practice), so the true split sits exactly at
+   * `s`'s midpoint; `.trim()` exists only to tolerate a little incidental
+   * whitespace around the title, not a structurally different string, so
+   * the true split can never be more than `MAX_LENGTH_SLACK` characters
+   * from that midpoint either. Candidates are therefore checked in
+   * increasing distance from the midpoint and the search gives up once
+   * that budget is exhausted — a document packed with the literal 3-char
+   * "［＃「" sequence can make at most `MAX_LENGTH_SLACK` candidates reach
+   * the actually-expensive `.trim()`/comparison step, however many raw
+   * occurrences of "［＃「" the line contains, so this can never become the
+   * O(occurrences × line length) blowup an unbounded scan would risk. */
   function matchSameLineHeading(trimmedLine: string): { level: HeadingLevel; variant: HeadingVariant; before: string } | undefined {
-    const m = HEADING_SAME_LINE_RE.exec(trimmedLine);
-    if (!m) return undefined;
-    const [, before, target, label] = m;
-    const info = parseHeadingLabel(label);
+    const end = HEADING_SAME_LINE_SUFFIX_RE.exec(trimmedLine);
+    if (!end) return undefined;
+    const info = parseHeadingLabel(end[1]);
     if (!info) return undefined;
-    if (before.trim() !== target.trim()) return undefined;
-    return { level: info.level, variant: info.variant, before };
+
+    const s = trimmedLine.slice(0, end.index); // "before［＃「target"
+    const markerLen = HEADING_SAME_LINE_MARKER.length; // 3
+    const midpoint = (s.length - markerLen) / 2; // before.length when before.length === target.length exactly
+
+    for (let delta = 0; delta <= MAX_HEADING_SPLIT_SLACK; delta++) {
+      const candidates = delta === 0 ? [Math.round(midpoint)] : [Math.round(midpoint) - delta, Math.round(midpoint) + delta];
+      for (const idx of candidates) {
+        if (idx < 0 || idx + markerLen > s.length) continue;
+        if (s.slice(idx, idx + markerLen) !== HEADING_SAME_LINE_MARKER) continue;
+        const before = s.slice(0, idx);
+        const target = s.slice(idx + markerLen);
+        if (before.trim() === target.trim()) {
+          return { level: info.level, variant: info.variant, before };
+        }
+      }
+    }
+    return undefined;
   }
 
   function parseOutsideSegment(segment: OutsideSegment): void {

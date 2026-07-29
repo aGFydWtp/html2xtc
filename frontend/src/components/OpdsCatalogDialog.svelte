@@ -175,21 +175,19 @@
     </div>
   {/if}
 
-  <div class="dlg-actions">
+  <div class="dlg-actions" class:dlg-actions-solo={opdsStore.catalogStep !== "select"}>
     {#if opdsStore.catalogStep === "select"}
       <div class="dlg-actions-left">
         <button type="button" class="dlg-cancel" onclick={onReplaceConnection}>{t("memlane_replace_connection")}</button>
         <button type="button" class="dlg-cancel dlg-disconnect" disabled={opdsStore.disconnectBusy} onclick={() => void onDisconnect()}>{t("memlane_disconnect")}</button>
       </div>
       <div class="dlg-actions-right">
-        <button type="button" class="dlg-cancel" onclick={close}>{t("cancel")}</button>
+        <button type="button" class="dlg-outline" onclick={close}>{t("cancel")}</button>
         <button type="button" class="dlg-convert" disabled={!canGoToOptions} onclick={onNext}>{t("memlane_to_options")}</button>
       </div>
     {:else}
-      <div class="dlg-actions-left">
-        <button type="button" class="dlg-cancel" onclick={onBack}>{t("memlane_back_to_selection")}</button>
-      </div>
       <div class="dlg-actions-right">
+        <button type="button" class="dlg-outline" onclick={onBack}>{t("memlane_back_to_selection")}</button>
         <button type="button" class="dlg-convert" disabled={!canImport} onclick={() => void onImport()}>
           {opdsStore.importBusy ? t("memlane_importing") : t("memlane_import")(opdsStore.selectedCount)}
         </button>
@@ -254,12 +252,20 @@
     display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
     padding: 14px 22px 18px; flex: none;
   }
+  .dlg-actions-solo { justify-content: flex-end; }
   .dlg-actions-left, .dlg-actions-right { display: flex; align-items: center; gap: 16px; }
   .dlg-cancel {
     border: 0; background: none; font: inherit; font-size: 14px; color: var(--muted);
     text-decoration: underline; cursor: pointer; padding: 0;
   }
   .dlg-disconnect:disabled { opacity: .5; cursor: default; }
+  .dlg-outline {
+    padding: 9px 23px; font: inherit; font-size: 14px; font-weight: 700; letter-spacing: .08em;
+    border: 1px solid var(--ink); border-radius: 4px; background: var(--card); color: var(--ink);
+    cursor: pointer; white-space: nowrap;
+  }
+  .dlg-outline:hover { background: var(--panel); }
+  .dlg-outline:disabled { opacity: .55; cursor: default; }
   .dlg-convert {
     padding: 10px 24px; font: inherit; font-size: 14px; font-weight: 700; letter-spacing: .08em;
     border: 0; border-radius: 4px; background: var(--ink); color: var(--ink-text); cursor: pointer;

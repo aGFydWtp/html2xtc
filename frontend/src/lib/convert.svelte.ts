@@ -24,6 +24,8 @@ interface JobStatusResponse {
   status: string;
   title?: unknown;
   error?: string;
+  /** completed かつサーバーが機種を記録しているジョブにのみ含まれる（"x3" | "x4"）。 */
+  device?: unknown;
 }
 
 // 画面上部（旧 #current）に表示する 1 件分のエントリ。
@@ -447,6 +449,7 @@ async function poll(p: Poller): Promise<void> {
       // 投入元が付けた表示タイトル（青空文庫の作品名など）は保持し、無い場合のみ
       // サーバー由来タイトルを採用する。
       if (typeof body.title === "string" && body.title && !job.title) job.title = body.title;
+      if (typeof body.device === "string" && body.device) job.device = body.device;
       if (body.error) job.error = body.error;
       jobsStore.upsert({ ...job });
       current.upsert(job.jobId, { ...job }, null);

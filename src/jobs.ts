@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 aGFydWtp
 
+import { isDeviceId } from "./devices";
+import type { DeviceId } from "./devices";
 import type { Env } from "./types";
 
 /**
@@ -119,6 +121,17 @@ export interface JobStatusBody {
   downloadUrl?: string;
   /** Page title of the converted document, when one could be extracted. */
   title?: string;
+  /**
+   * Device this job was actually converted for ("x3" | "x4" — src/devices.ts
+   * DeviceId), read back from the Workflow's own run() output (see
+   * deviceFromOutput). Optional and only ever present once the job is
+   * complete and the output carries a recognized value: a job that predates
+   * this field, or whose output is missing/malformed for any reason, omits
+   * it rather than guessing — the frontend treats an absent device as "x3"
+   * on its own, so this must never be defaulted here (that would conflate
+   * "unknown" with "known to be x3").
+   */
+  device?: DeviceId;
   error?: string;
 }
 
@@ -162,11 +175,13 @@ export function mapInstanceStatus(
       return { jobId, status: "queued" };
     case "complete": {
       const title = titleFromOutput(instance.output);
+      const device = deviceFromOutput(instance.output);
       return {
         jobId,
         status: "completed",
         downloadUrl: `/jobs/${jobId}/download`,
         ...(title !== undefined ? { title } : {}),
+        ...(device !== undefined ? { device } : {}),
       };
     }
     case "errored":
@@ -228,11 +243,13 @@ export function mapTextInstanceStatus(
       return { jobId, status: "queued" };
     case "complete": {
       const title = titleFromOutput(instance.output);
+      const device = deviceFromOutput(instance.output);
       return {
         jobId,
         status: "completed",
         downloadUrl: `/jobs/${jobId}/download`,
         ...(title !== undefined ? { title } : {}),
+        ...(device !== undefined ? { device } : {}),
       };
     }
     case "errored":
@@ -268,11 +285,13 @@ export function mapEpubInstanceStatus(
       return { jobId, status: "queued" };
     case "complete": {
       const title = titleFromOutput(instance.output);
+      const device = deviceFromOutput(instance.output);
       return {
         jobId,
         status: "completed",
         downloadUrl: `/jobs/${jobId}/download`,
         ...(title !== undefined ? { title } : {}),
+        ...(device !== undefined ? { device } : {}),
       };
     }
     case "errored":
@@ -357,6 +376,22 @@ export function titleFromOutput(output: unknown): string | undefined {
     return undefined;
   }
   return sanitizeTitle((output as { title?: unknown }).title as string);
+}
+
+/**
+ * Extracts the target device from an unknown-shaped Workflow run() output
+ * (mirrors titleFromOutput above). Every run() branch in src/workflow.ts
+ * returns `device` alongside `xtcKey`/`title`, but a job created before this
+ * field existed has no such property — returns undefined rather than
+ * defaulting to "x3" (see JobStatusBody.device's doc comment for why that
+ * distinction matters to the caller).
+ */
+export function deviceFromOutput(output: unknown): DeviceId | undefined {
+  if (typeof output !== "object" || output === null) {
+    return undefined;
+  }
+  const device = (output as { device?: unknown }).device;
+  return isDeviceId(device) ? device : undefined;
 }
 
 /**

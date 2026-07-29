@@ -7,6 +7,7 @@
   import { effectiveStatus, formatDate, jobsStore } from "../lib/jobs.svelte";
   import { libraryStore } from "../lib/library.svelte";
   import { openPreview, previewBroken } from "../lib/preview.svelte";
+  import DeviceTag from "./DeviceTag.svelte";
 
   // 全行で共有する操作メニュー（ポップオーバー）1 個。
   // Popover API 非対応ブラウザ（Chrome <114, Safari <17, Firefox <125）は
@@ -127,6 +128,7 @@
         <li>
           <div class="info">
             <div class="job-title" class:dim={!done}>
+              <DeviceTag device={j.device} />
               {#if j.sourceType === "pdf"}<span class="src-badge">PDF</span>{:else if j.sourceType === "txt"}<span class="src-badge">TXT</span>{:else if j.sourceType === "epub"}<span class="src-badge">EPUB</span>{/if}
               {j.title || j.sourceLabel}
             </div>

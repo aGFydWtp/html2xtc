@@ -258,7 +258,6 @@ export interface Messages {
   memlane_selected_count: (n: number, max: number) => string;
   memlane_import: (n: number) => string;
   memlane_importing: string;
-  memlane_import_started: (n: number) => string;
   memlane_import_partial_failed: (n: number) => string;
   memlane_invalid_url: string;
   memlane_https_required: string;
@@ -273,6 +272,8 @@ export interface Messages {
   memlane_back: string;
   memlane_next: string;
   memlane_previous: string;
+  memlane_to_options: string;
+  memlane_back_to_selection: string;
 
   status: Record<JobStatus, string>;
 
@@ -769,7 +770,6 @@ export const I18N: Record<Lang, Messages> = {
     memlane_selected_count: (n, max) => `${n} / ${max} 件選択中`,
     memlane_import: (n) => n > 0 ? `${n} 件を取り込む` : "取り込む",
     memlane_importing: "取り込み中…",
-    memlane_import_started: (n) => `${n}件の変換を開始しました`,
     memlane_import_partial_failed: (n) => `${n}件は取り込みを開始できませんでした`,
     memlane_invalid_url: "URLが正しくありません。",
     memlane_https_required: "https:// で始まるURLを入力してください。",
@@ -784,6 +784,8 @@ export const I18N: Record<Lang, Messages> = {
     memlane_back: "戻る",
     memlane_next: "次へ",
     memlane_previous: "前へ",
+    memlane_to_options: "次へ",
+    memlane_back_to_selection: "戻る",
 
     status: { queued: "待機中", preparing: "本文を組版中", rendering: "PDF 生成中", converting: "XTC 変換中", completed: "✓ 完了", failed: "失敗", expired: "期限切れ" },
 
@@ -1271,7 +1273,6 @@ export const I18N: Record<Lang, Messages> = {
     memlane_selected_count: (n, max) => `${n} / ${max} selected`,
     memlane_import: (n) => n > 0 ? `Import ${n} selected` : "Import",
     memlane_importing: "Importing…",
-    memlane_import_started: (n) => `Started converting ${n} item(s)`,
     memlane_import_partial_failed: (n) => `${n} item(s) could not be imported`,
     memlane_invalid_url: "The URL is not valid.",
     memlane_https_required: "Please enter a URL starting with https://.",
@@ -1286,6 +1287,8 @@ export const I18N: Record<Lang, Messages> = {
     memlane_back: "Back",
     memlane_next: "Next",
     memlane_previous: "Previous",
+    memlane_to_options: "Next",
+    memlane_back_to_selection: "Back",
 
     status: { queued: "Queued", preparing: "Preparing text", rendering: "Rendering PDF", converting: "Converting to XTC", completed: "✓ Done", failed: "Failed", expired: "Expired" },
 

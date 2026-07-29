@@ -133,6 +133,9 @@
       {/snippet}
     </FileDropZone>
     {#if fileError}<div class="error-text">{fileError}</div>{/if}
+    {#if opdsStore.importSummary && opdsStore.importSummary.failedCount > 0}
+      <div class="error-text">{t("memlane_import_partial_failed")(opdsStore.importSummary.failedCount)}</div>
+    {/if}
   {/if}
 </section>
 

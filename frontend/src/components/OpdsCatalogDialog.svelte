@@ -2,6 +2,9 @@
 <script lang="ts">
   // 汎用OPDSカタログダイアログ（仕様書 §8.4）。コンポーネント自体は汎用だが、
   // 初期リリースではMemlane専用ラベルで開く（仕様書 §28）。
+  // 2ステップ構成: ステップ1「選択」→ステップ2「変換オプション」。ステップ状態
+  // (opdsStore.catalogStep) は store 側で持つ（ダイアログ開閉状態など、既存の
+  // カタログダイアログ関連 state と同じ置き場所に揃えている）。
   import { registerCreatedJob } from "../lib/convert.svelte";
   import { DEFAULT_EPUB_OPTIONS, isValidEpubOptions, type EpubConvertOptions } from "../lib/epub-options";
   import { t } from "../lib/i18n.svelte";
@@ -37,6 +40,7 @@
   });
 
   const optionsValid = $derived(isValidEpubOptions(epubOptions));
+  const canGoToOptions = $derived(opdsStore.selectedCount > 0 && !opdsStore.importBusy);
   const canImport = $derived(
     opdsStore.selectedCount > 0 && optionsValid && !opdsStore.importBusy,
   );
@@ -55,16 +59,23 @@
     await opdsStore.goToNavigationEntry(cursor);
   }
 
+  function onNext(): void {
+    if (!canGoToOptions) return;
+    opdsStore.goToOptionsStep();
+  }
+
+  function onBack(): void {
+    opdsStore.backToSelectStep();
+  }
+
   async function onImport(): Promise<void> {
     if (!canImport) return;
     await opdsStore.startImport(epubOptions, registerCreatedJob);
-    // 全件開始できたらダイアログを閉じ、裏で動いている既存のジョブ UI を見せる
-    // （青空文庫ダイアログと同じ流儀）。一部失敗したときは何件落ちたかを
-    // 読ませたいので開いたままにする。
-    const summary = opdsStore.importSummary;
-    if (summary !== null && summary.failedCount === 0) {
-      opdsStore.closeCatalogDialog();
-    }
+    // 成否にかかわらず常にダイアログを閉じ、裏で動いている既存のジョブ UI で
+    // 各ジョブのステータスを見せる（青空文庫ダイアログと同じ流儀）。開始に
+    // 失敗した件数はジョブが作られず既存のジョブ UI に現れないため、
+    // ConvertForm 側で importSummary.failedCount を読んで表示する。
+    opdsStore.closeCatalogDialog();
   }
 
   // Library.svelte の削除確認と同じ流儀（native confirm）。
@@ -94,87 +105,96 @@
     <button type="button" class="dlg-x" aria-label={t("cancel")} onclick={close}>×</button>
   </div>
 
-  <div class="dlg-toolbar">
-    {#if opdsStore.canGoBack}
-      <button type="button" class="toolbar-btn" onclick={() => void opdsStore.goBack()}>← {t("memlane_back")}</button>
-    {/if}
-    {#if opdsStore.catalogPage?.searchSupported}
-      <form class="search-form" onsubmit={onSearchSubmit}>
-        <input
-          bind:value={searchText}
-          type="search"
-          autocomplete="off"
-          spellcheck="false"
-          placeholder={t("memlane_search_placeholder")}
-          aria-label={t("memlane_search_placeholder")}
-        />
-      </form>
-    {/if}
-  </div>
-
-  <div class="dlg-list-head">
-    <span>{opdsStore.selectedCount > 0 || opdsStore.catalogPage ? t("memlane_selected_count")(opdsStore.selectedCount, OPDS_SELECTION_MAX) : ""}</span>
-  </div>
-
-  {#if opdsStore.catalogLoading}
-    <div class="dlg-list dlg-list-status"><div class="dlg-status">{t("memlane_catalog_loading")}</div></div>
-  {:else if errorText}
-    <div class="dlg-list dlg-list-status">
-      <div class="dlg-status error-text">{t("memlane_catalog_failed")}<br />{errorText}</div>
+  {#if opdsStore.catalogStep === "select"}
+    <div class="dlg-toolbar">
+      {#if opdsStore.canGoBack}
+        <button type="button" class="toolbar-btn" onclick={() => void opdsStore.goBack()}>← {t("memlane_back")}</button>
+      {/if}
+      {#if opdsStore.catalogPage?.searchSupported}
+        <form class="search-form" onsubmit={onSearchSubmit}>
+          <input
+            bind:value={searchText}
+            type="search"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder={t("memlane_search_placeholder")}
+            aria-label={t("memlane_search_placeholder")}
+          />
+        </form>
+      {/if}
     </div>
-  {:else if opdsStore.catalogPage && opdsStore.catalogPage.entries.length === 0}
-    <div class="dlg-list dlg-list-status"><div class="dlg-status">{t("memlane_catalog_empty")}</div></div>
-  {:else if opdsStore.catalogPage}
+
+    <div class="dlg-list-head">
+      <span>{opdsStore.selectedCount > 0 || opdsStore.catalogPage ? t("memlane_selected_count")(opdsStore.selectedCount, OPDS_SELECTION_MAX) : ""}</span>
+    </div>
+
+    {#if opdsStore.catalogLoading}
+      <div class="dlg-list dlg-list-status"><div class="dlg-status">{t("memlane_catalog_loading")}</div></div>
+    {:else if errorText}
+      <div class="dlg-list dlg-list-status">
+        <div class="dlg-status error-text">{t("memlane_catalog_failed")}<br />{errorText}</div>
+      </div>
+    {:else if opdsStore.catalogPage && opdsStore.catalogPage.entries.length === 0}
+      <div class="dlg-list dlg-list-status"><div class="dlg-status">{t("memlane_catalog_empty")}</div></div>
+    {:else if opdsStore.catalogPage}
+      <ul class="dlg-list">
+        {#each opdsStore.catalogPage.entries as entry (entry.id)}
+          <OpdsEntryRow
+            {entry}
+            selected={entry.kind === "publication" && opdsStore.isSelected(entry.id)}
+            selectionDisabled={opdsStore.selectedCount >= OPDS_SELECTION_MAX}
+            onToggle={(checked) => entry.kind === "publication" && onToggle(entry, checked)}
+            onNavigate={(cursor) => void onNavigate(cursor)}
+          />
+        {/each}
+      </ul>
+    {/if}
+
+    {#if opdsStore.catalogPage?.previousCursor || opdsStore.catalogPage?.nextCursor}
+      <div class="dlg-pagination">
+        {#if opdsStore.catalogPage.previousCursor}
+          <button type="button" class="dlg-cancel" onclick={() => void opdsStore.goPrevious()}>← {t("memlane_previous")}</button>
+        {/if}
+        {#if opdsStore.catalogPage.nextCursor}
+          <button type="button" class="dlg-cancel" onclick={() => void opdsStore.goNext()}>{t("memlane_next")} →</button>
+        {/if}
+      </div>
+    {/if}
+  {:else}
+    <div class="dlg-list-head">
+      <span>{t("memlane_selected_count")(opdsStore.selectedCount, OPDS_SELECTION_MAX)}</span>
+    </div>
     <ul class="dlg-list">
-      {#each opdsStore.catalogPage.entries as entry (entry.id)}
-        <OpdsEntryRow
-          {entry}
-          selected={entry.kind === "publication" && opdsStore.isSelected(entry.id)}
-          selectionDisabled={opdsStore.selectedCount >= OPDS_SELECTION_MAX}
-          onToggle={(checked) => entry.kind === "publication" && onToggle(entry, checked)}
-          onNavigate={(cursor) => void onNavigate(cursor)}
-        />
+      {#each [...opdsStore.selected.values()] as entry (entry.id)}
+        <li class="dlg-summary-item">{entry.title}</li>
       {/each}
     </ul>
-  {/if}
 
-  {#if opdsStore.catalogPage?.previousCursor || opdsStore.catalogPage?.nextCursor}
-    <div class="dlg-pagination">
-      {#if opdsStore.catalogPage.previousCursor}
-        <button type="button" class="dlg-cancel" onclick={() => void opdsStore.goPrevious()}>← {t("memlane_previous")}</button>
-      {/if}
-      {#if opdsStore.catalogPage.nextCursor}
-        <button type="button" class="dlg-cancel" onclick={() => void opdsStore.goNext()}>{t("memlane_next")} →</button>
-      {/if}
-    </div>
-  {/if}
-
-  {#if opdsStore.selectedCount > 0}
     <div class="dlg-options">
       <EpubOptions bind:options={epubOptions} />
     </div>
   {/if}
 
-  {#if opdsStore.importSummary}
-    <div class="import-summary">
-      <div>{t("memlane_import_started")(opdsStore.importSummary.startedCount)}</div>
-      {#if opdsStore.importSummary.failedCount > 0}
-        <div class="error-text">{t("memlane_import_partial_failed")(opdsStore.importSummary.failedCount)}</div>
-      {/if}
-    </div>
-  {/if}
-
   <div class="dlg-actions">
-    <div class="dlg-actions-left">
-      <button type="button" class="dlg-cancel" onclick={onReplaceConnection}>{t("memlane_replace_connection")}</button>
-      <button type="button" class="dlg-cancel dlg-disconnect" disabled={opdsStore.disconnectBusy} onclick={() => void onDisconnect()}>{t("memlane_disconnect")}</button>
-    </div>
-    <div class="dlg-actions-right">
-      <button type="button" class="dlg-cancel" onclick={close}>{t("cancel")}</button>
-      <button type="button" class="dlg-convert" disabled={!canImport} onclick={() => void onImport()}>
-        {opdsStore.importBusy ? t("memlane_importing") : t("memlane_import")(opdsStore.selectedCount)}
-      </button>
-    </div>
+    {#if opdsStore.catalogStep === "select"}
+      <div class="dlg-actions-left">
+        <button type="button" class="dlg-cancel" onclick={onReplaceConnection}>{t("memlane_replace_connection")}</button>
+        <button type="button" class="dlg-cancel dlg-disconnect" disabled={opdsStore.disconnectBusy} onclick={() => void onDisconnect()}>{t("memlane_disconnect")}</button>
+      </div>
+      <div class="dlg-actions-right">
+        <button type="button" class="dlg-cancel" onclick={close}>{t("cancel")}</button>
+        <button type="button" class="dlg-convert" disabled={!canGoToOptions} onclick={onNext}>{t("memlane_to_options")}</button>
+      </div>
+    {:else}
+      <div class="dlg-actions-left">
+        <button type="button" class="dlg-cancel" onclick={onBack}>{t("memlane_back_to_selection")}</button>
+      </div>
+      <div class="dlg-actions-right">
+        <button type="button" class="dlg-convert" disabled={!canImport} onclick={() => void onImport()}>
+          {opdsStore.importBusy ? t("memlane_importing") : t("memlane_import")(opdsStore.selectedCount)}
+        </button>
+      </div>
+    {/if}
   </div>
 </dialog>
 
@@ -225,9 +245,10 @@
   .dlg-list { list-style: none; margin: 0; padding: 0 22px; overflow-y: auto; flex: 1; min-height: 100px; }
   .dlg-list-status { display: block; }
   .dlg-status { padding: 16px 2px; font-size: 14px; color: var(--muted); }
+  .dlg-summary-item { padding: 10px 2px; font-size: 14px; border-bottom: 1px solid var(--line); }
+  .dlg-summary-item:last-child { border-bottom: none; }
   .dlg-pagination { display: flex; justify-content: space-between; padding: 8px 22px; flex: none; }
   .dlg-options { padding: 4px 22px 0; flex: none; }
-  .import-summary { padding: 8px 22px 0; font-size: 13px; flex: none; }
   .error-text { color: #b3261e; }
   .dlg-actions {
     display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;

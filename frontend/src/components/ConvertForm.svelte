@@ -108,22 +108,22 @@
   {:else if epubFile}
     <EpubInputPanel file={epubFile} onRemove={onRemoveFile} />
   {:else}
-    <div class="device-toggle" role="group" aria-label={t("device_toggle_label")}>
-      <div class="seg-pill">
-        <button
-          type="button"
-          aria-pressed={targetDeviceStore.device === "x3"}
-          onclick={() => targetDeviceStore.set("x3")}
-        >X3</button>
-        <button
-          type="button"
-          aria-pressed={targetDeviceStore.device === "x4"}
-          onclick={() => targetDeviceStore.set("x4")}
-        >X4</button>
-      </div>
-    </div>
     <div class="form-note"><span>{t("agree_before")}</span><a href="/about#terms">{t("agree_link")}</a><span>{t("agree_after")}</span></div>
     <FileDropZone onFileSelected={(f) => void onFileSelected(f)}>
+      <div class="device-toggle" role="group" aria-label={t("device_toggle_label")}>
+        <div class="seg-pill">
+          <button
+            type="button"
+            aria-pressed={targetDeviceStore.device === "x3"}
+            onclick={() => targetDeviceStore.set("x3")}
+          >X3</button>
+          <button
+            type="button"
+            aria-pressed={targetDeviceStore.device === "x4"}
+            onclick={() => targetDeviceStore.set("x4")}
+          >X4</button>
+        </div>
+      </div>
       <form {onsubmit}>
         <div class="input-row">
           <input

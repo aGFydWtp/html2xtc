@@ -170,7 +170,6 @@
   .bulk-bar.invisible { visibility: hidden; }
   .bulk-bar > :global(*) { flex: none; }
   .bulk-bar .bulk-count { font-size: 14px; color: var(--muted2); margin-right: 4px; white-space: nowrap; }
-  /* ConvertForm.svelte の button.secondary（「青空文庫から選択」）と同じ見た目 */
   .bulk-bar .bulk-btn {
     padding: 8px 18px; font: inherit; font-size: 14px; font-weight: 500; border-radius: 4px;
     border: 1px solid var(--ink); background: var(--card); color: var(--ink); cursor: pointer;

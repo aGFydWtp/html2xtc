@@ -125,9 +125,9 @@
       </form>
       {#snippet below()}
         <div class="source-buttons">
-          <button type="button" class="secondary" onclick={() => aozora.show()}>{t("aozora_open")}</button>
+          <button type="button" class="link" onclick={() => aozora.show()}>{t("aozora_open")}</button>
           {#if authStore.ready && authStore.account && publicConfigStore.opdsImportEnabled}
-            <button type="button" class="secondary" onclick={() => void opdsStore.openMemlane()}>{t("memlane_open")}</button>
+            <button type="button" class="link" onclick={() => void opdsStore.openMemlane()}>{t("memlane_open")}</button>
           {/if}
         </div>
       {/snippet}
@@ -159,10 +159,19 @@
   }
   button.primary:disabled { opacity: .55; cursor: default; }
   .form-note { font-size: 14px; color: var(--muted); margin: 0 0 10px; }
-  .source-buttons { margin-top: 16px; display: flex; gap: 10px; flex-wrap: wrap; }
-  button.secondary {
-    padding: 8px 18px; font: inherit; font-size: 14px; font-weight: 500; border-radius: 4px;
-    border: 1px solid var(--ink); background: var(--card); color: var(--ink); cursor: pointer;
+  .source-buttons {
+    margin-top: 16px; display: flex; justify-content: center; align-items: center;
+    gap: 10px; flex-wrap: wrap;
   }
-  button.secondary:hover { background: var(--panel); }
+  button.link {
+    padding: 8px 6px; font: inherit; font-size: 14px; font-weight: 500;
+    border: 0; background: none; color: var(--muted2); text-decoration: underline;
+    cursor: pointer;
+  }
+  button.link:hover { color: var(--ink); }
+  button.link:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+  @media (max-width: 600px) {
+    .source-buttons { flex-direction: column; }
+  }
 </style>

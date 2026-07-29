@@ -10,6 +10,8 @@
     disabled?: boolean;
     heading?: boolean;
     indent?: boolean;
+    /** Short informational note rendered after the label (e.g. a resolution-mismatch warning on a device entry). Does not affect disabled/selectable state. */
+    note?: string;
   }
 
   // aria-controls 用のインスタンスごとの一意 id。
@@ -149,7 +151,7 @@
         class:indent={item.indent}
         disabled={item.disabled}
         onclick={() => select(item)}
-      >{item.label}</button>
+      >{item.label}{#if item.note}<span class="menu-note">{item.note}</span>{/if}</button>
     {/if}
   {/each}
 </div>
@@ -189,4 +191,5 @@
   .row-menu .danger { color: var(--error); }
   .row-menu .heading { padding: 8px 12px 2px; font-size: 14px; color: var(--faint); cursor: default; }
   .row-menu .indent { padding-left: 24px; }
+  .row-menu .menu-note { display: block; font-size: 11px; color: var(--muted2); }
 </style>

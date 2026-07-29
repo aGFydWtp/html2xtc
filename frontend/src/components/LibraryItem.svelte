@@ -4,6 +4,7 @@
   import { formatDate } from "../lib/jobs.svelte";
   import { t } from "../lib/i18n.svelte";
   import { formatSize, libraryStore, type LibraryItem } from "../lib/library.svelte";
+  import { isResolutionMismatch } from "../lib/resolution-mismatch";
   import RowMenu, { type RowMenuItem } from "./RowMenu.svelte";
 
   interface Props {
@@ -71,7 +72,17 @@
     } else {
       out.push({ label: t("library_add_to_device"), heading: true });
       for (const d of activeDevices) {
-        out.push({ label: d.name, indent: true, disabled: addingToDevice, onSelect: () => void addToDevice(d.id) });
+        // 比較は device 文字列ではなく width/height で行う（機種が増えても変わらない、
+        // migrations/app/0006_pairing_declared_device.sql の設計意図）。d.width/height が
+        // null（機種/解像度不明）なら警告は出さない。ブロックはしないので選択肢は常に有効。
+        const mismatch = isResolutionMismatch({ width: item.width, height: item.height }, { width: d.width, height: d.height });
+        out.push({
+          label: d.name,
+          indent: true,
+          disabled: addingToDevice,
+          note: mismatch ? t("device_library_resolution_mismatch") : undefined,
+          onSelect: () => void addToDevice(d.id),
+        });
       }
     }
     out.push({ label: t("library_delete"), danger: true, disabled: deleting, onSelect: () => void onDelete() });

@@ -11,6 +11,15 @@ export interface LibraryItem {
   sha256: string | null;
   createdAt: string;
   updatedAt: string;
+  /** Target device this XTC was converted for ("x3" | "x4", src/devices.ts). */
+  device: string;
+  /**
+   * Output px width/height applied at conversion time (src/library/service.ts's
+   * LibraryItemDto) — NOT measured from the converter's actual output. Used
+   * for the resolution-mismatch warning (see resolution-mismatch.ts).
+   */
+  width: number;
+  height: number;
 }
 
 interface ItemsResponse {
@@ -29,6 +38,9 @@ function parseItem(raw: unknown): LibraryItem | null {
     || typeof r.sizeBytes !== "number"
     || typeof r.createdAt !== "string"
     || typeof r.updatedAt !== "string"
+    || typeof r.device !== "string"
+    || typeof r.width !== "number"
+    || typeof r.height !== "number"
   ) return null;
   return {
     id: r.id,
@@ -38,6 +50,9 @@ function parseItem(raw: unknown): LibraryItem | null {
     sha256: typeof r.sha256 === "string" ? r.sha256 : null,
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
+    device: r.device,
+    width: r.width,
+    height: r.height,
   };
 }
 

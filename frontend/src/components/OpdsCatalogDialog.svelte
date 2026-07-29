@@ -58,6 +58,13 @@
   async function onImport(): Promise<void> {
     if (!canImport) return;
     await opdsStore.startImport(epubOptions, registerCreatedJob);
+    // 全件開始できたらダイアログを閉じ、裏で動いている既存のジョブ UI を見せる
+    // （青空文庫ダイアログと同じ流儀）。一部失敗したときは何件落ちたかを
+    // 読ませたいので開いたままにする。
+    const summary = opdsStore.importSummary;
+    if (summary !== null && summary.failedCount === 0) {
+      opdsStore.closeCatalogDialog();
+    }
   }
 
   // Library.svelte の削除確認と同じ流儀（native confirm）。

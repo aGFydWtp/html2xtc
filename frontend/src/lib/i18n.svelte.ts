@@ -453,6 +453,51 @@ export interface Messages {
   pairing_reject: string;
   pairing_not_found: string;
   pairing_action_failed: string;
+
+  // --- 標準 OPDS 端末の手動登録・接続情報 (OPDS Phase 2 §10) -----------------
+  devices_manual_add_btn: string;
+  devices_manual_dialog_title: string;
+  devices_manual_name_label: string;
+  devices_manual_model_label: string;
+  devices_manual_model_x3: string;
+  devices_manual_model_x4: string;
+  devices_manual_model_other: string;
+  devices_manual_width_label: string;
+  devices_manual_height_label: string;
+  devices_manual_description: string;
+  devices_manual_submit: string;
+  devices_manual_error_name: string;
+  devices_manual_error_model: string;
+  devices_manual_error_resolution: string;
+  devices_manual_error_limit: string;
+  devices_manual_error_unauthorized: string;
+  devices_manual_error_csrf: string;
+  devices_manual_error_generic: string;
+  devices_manual_badge: string;
+  devices_manual_rotate: string;
+  devices_manual_rotate_confirm: string;
+  devices_manual_rotate_error_revoked: string;
+  devices_manual_rotate_error_generic: string;
+
+  opds_credentials_title: string;
+  opds_field_server_name: string;
+  opds_field_catalog_url: string;
+  opds_field_username: string;
+  opds_field_password: string;
+  opds_copy_btn: string;
+  opds_copy_all_btn: string;
+  opds_copied: string;
+  opds_copy_failed: string;
+  opds_password_warning: string;
+  opds_confirm_saved_label: string;
+  opds_close_confirm: string;
+  opds_crosspoint_heading: string;
+  opds_crosspoint_step1: string;
+  opds_crosspoint_step2: string;
+  opds_crosspoint_step3: string;
+  opds_crosspoint_step4: string;
+  opds_crosspoint_step5: string;
+  opds_crosspoint_step6: string;
 }
 
 export const I18N: Record<Lang, Messages> = {
@@ -880,6 +925,50 @@ export const I18N: Record<Lang, Messages> = {
     pairing_reject: "拒否する",
     pairing_not_found: "ペアリングが見つかりません。コードの有効期限が切れている可能性があります。",
     pairing_action_failed: "操作に失敗しました。もう一度お試しください。",
+
+    devices_manual_add_btn: "標準 OPDS 端末を追加",
+    devices_manual_dialog_title: "標準 OPDS 端末を追加",
+    devices_manual_name_label: "端末名",
+    devices_manual_model_label: "端末モデル",
+    devices_manual_model_x3: "Xteink X3",
+    devices_manual_model_x4: "Xteink X4",
+    devices_manual_model_other: "その他",
+    devices_manual_width_label: "幅（px）",
+    devices_manual_height_label: "高さ（px）",
+    devices_manual_description: "登録後に表示される OPDS 接続情報を端末へ入力します。パスワードは一度しか表示されません。",
+    devices_manual_submit: "端末を登録",
+    devices_manual_error_name: "端末名を入力してください（1〜100文字）。",
+    devices_manual_error_model: "対応していない端末モデルです。",
+    devices_manual_error_resolution: "解像度の指定が正しくありません。幅・高さは正の整数で入力してください。",
+    devices_manual_error_limit: "端末数の上限に達しています。",
+    devices_manual_error_unauthorized: "ログインの有効期限が切れました。再度ログインしてください。",
+    devices_manual_error_csrf: "リクエストが拒否されました。ページを再読み込みしてからもう一度お試しください。",
+    devices_manual_error_generic: "端末の登録に失敗しました。もう一度お試しください。",
+    devices_manual_badge: "標準 OPDS",
+    devices_manual_rotate: "接続情報を再発行",
+    devices_manual_rotate_confirm: "再発行すると、現在のパスワードでは接続できなくなります。端末側の OPDS 設定を更新する必要があります。",
+    devices_manual_rotate_error_revoked: "この端末は解除済みのため、接続情報を再発行できません。",
+    devices_manual_rotate_error_generic: "接続情報の再発行に失敗しました。もう一度お試しください。",
+
+    opds_credentials_title: "OPDS 接続情報",
+    opds_field_server_name: "サーバー名",
+    opds_field_catalog_url: "カタログ URL",
+    opds_field_username: "ユーザー名",
+    opds_field_password: "パスワード",
+    opds_copy_btn: "コピー",
+    opds_copy_all_btn: "まとめてコピー",
+    opds_copied: "コピーしました",
+    opds_copy_failed: "自動コピーに失敗しました。選択されたテキストを Ctrl+C（Mac は ⌘+C）でコピーしてください。",
+    opds_password_warning: "このパスワードはこの画面を閉じると再表示できません。安全な場所へ保存するか、今すぐ端末へ設定してください。",
+    opds_confirm_saved_label: "接続情報を保存しました",
+    opds_close_confirm: "接続情報を保存したことを確認していません。本当に閉じますか？パスワードは二度と表示されません。",
+    opds_crosspoint_heading: "CrossPoint での設定手順",
+    opds_crosspoint_step1: "CrossPoint で Settings → System → OPDS Servers を開く",
+    opds_crosspoint_step2: "Add Server を選ぶ",
+    opds_crosspoint_step3: "Server Name に「html2xtc」を入力",
+    opds_crosspoint_step4: "OPDS Server URL に上記の URL を入力",
+    opds_crosspoint_step5: "Username と Password に上記のユーザー名・パスワードを入力",
+    opds_crosspoint_step6: "保存後、OPDS ライブラリを開く",
   },
   en: {
     brand: "XTC Converter",
@@ -1307,6 +1396,50 @@ export const I18N: Record<Lang, Messages> = {
     pairing_reject: "Reject",
     pairing_not_found: "Pairing not found. The code may have expired.",
     pairing_action_failed: "The action failed. Please try again.",
+
+    devices_manual_add_btn: "Add a standard OPDS device",
+    devices_manual_dialog_title: "Add a standard OPDS device",
+    devices_manual_name_label: "Device name",
+    devices_manual_model_label: "Device model",
+    devices_manual_model_x3: "Xteink X3",
+    devices_manual_model_x4: "Xteink X4",
+    devices_manual_model_other: "Other",
+    devices_manual_width_label: "Width (px)",
+    devices_manual_height_label: "Height (px)",
+    devices_manual_description: "Enter the OPDS connection details shown after registration on your device. The password is shown only once.",
+    devices_manual_submit: "Register device",
+    devices_manual_error_name: "Please enter a device name (1–100 characters).",
+    devices_manual_error_model: "That device model isn't supported.",
+    devices_manual_error_resolution: "The resolution is invalid. Width and height must be positive integers.",
+    devices_manual_error_limit: "You've reached the device limit.",
+    devices_manual_error_unauthorized: "Your session has expired. Please log in again.",
+    devices_manual_error_csrf: "The request was rejected. Please reload the page and try again.",
+    devices_manual_error_generic: "Failed to register the device. Please try again.",
+    devices_manual_badge: "Standard OPDS",
+    devices_manual_rotate: "Reissue connection details",
+    devices_manual_rotate_confirm: "Reissuing will disconnect the current password. You'll need to update the OPDS settings on the device.",
+    devices_manual_rotate_error_revoked: "This device has been unpaired, so its connection details can't be reissued.",
+    devices_manual_rotate_error_generic: "Failed to reissue the connection details. Please try again.",
+
+    opds_credentials_title: "OPDS connection details",
+    opds_field_server_name: "Server name",
+    opds_field_catalog_url: "Catalog URL",
+    opds_field_username: "Username",
+    opds_field_password: "Password",
+    opds_copy_btn: "Copy",
+    opds_copy_all_btn: "Copy all",
+    opds_copied: "Copied",
+    opds_copy_failed: "Automatic copy failed. Please copy the selected text with Ctrl+C (⌘+C on Mac).",
+    opds_password_warning: "This password can't be shown again once you close this screen. Save it somewhere safe, or set it up on the device right now.",
+    opds_confirm_saved_label: "I've saved the connection details",
+    opds_close_confirm: "You haven't confirmed you saved the connection details. Close anyway? The password can't be shown again.",
+    opds_crosspoint_heading: "Setup steps in CrossPoint",
+    opds_crosspoint_step1: "In CrossPoint, open Settings → System → OPDS Servers",
+    opds_crosspoint_step2: "Choose Add Server",
+    opds_crosspoint_step3: "Enter “html2xtc” for Server Name",
+    opds_crosspoint_step4: "Enter the URL above for OPDS Server URL",
+    opds_crosspoint_step5: "Enter the Username and Password above",
+    opds_crosspoint_step6: "After saving, open the OPDS library",
   },
 };
 

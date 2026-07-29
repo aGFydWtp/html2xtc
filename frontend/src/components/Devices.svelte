@@ -1,7 +1,12 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import { authStore } from "../lib/auth.svelte";
-  import { openDevicesHowtoDialog, openLoginDialog } from "../lib/authDialogs.svelte";
+  import {
+    openDevicesHowtoDialog,
+    openLoginDialog,
+    openManualOpdsDeviceDialog,
+    openOpdsCredentialsDialog,
+  } from "../lib/authDialogs.svelte";
   import { devicesStore, type Device } from "../lib/devices.svelte";
   import { t } from "../lib/i18n.svelte";
   import { formatDate } from "../lib/jobs.svelte";
@@ -19,6 +24,9 @@
   let nameInput = $state("");
   let busyId = $state<string | null>(null);
   let editingLibraryFor = $state<Device | null>(null);
+  /** 接続情報の再発行に失敗した端末（成功時は OpdsCredentialsDialog を開くだけで一覧を書き換えないため、失敗時だけこの id で行内にエラーを出す）。 */
+  let rotateFailedId = $state<string | null>(null);
+  let rotateFailedCode = $state<string | null>(null);
 
   function startRename(device: Device): void {
     renamingId = device.id;
@@ -41,8 +49,33 @@
     busyId = null;
   }
 
+  async function onRotateToken(device: Device): Promise<void> {
+    if (!confirm(t("devices_manual_rotate_confirm"))) return;
+    busyId = device.id;
+    rotateFailedId = null;
+    rotateFailedCode = null;
+    const result = await devicesStore.rotateDeviceToken(device.id);
+    busyId = null;
+    if (result.ok) {
+      openOpdsCredentialsDialog(device.name, result.opds);
+    } else {
+      rotateFailedId = device.id;
+      rotateFailedCode = result.code;
+    }
+  }
+
+  function rotateErrorText(code: string | null): string {
+    return code === "DEVICE_REVOKED" ? t("devices_manual_rotate_error_revoked") : t("devices_manual_rotate_error_generic");
+  }
+
   function lastSeenText(device: Device): string {
     return device.lastSeenAt ? formatDate(device.lastSeenAt) : t("devices_last_seen_never");
+  }
+
+  function deviceModelLabel(device: Device): string | null {
+    if (device.device === "x3") return t("devices_manual_model_x3");
+    if (device.device === "x4") return t("devices_manual_model_x4");
+    return null;
   }
 
   // App.svelte はタブ状態を自身の onMount 内 popstate リスナーで管理しており、
@@ -63,6 +96,7 @@
   {:else}
     <div class="device-actions">
       <button type="button" class="bulk-btn" onclick={openDevicesHowtoDialog}>{t("devices_howto_btn")}</button>
+      <button type="button" class="bulk-btn" onclick={openManualOpdsDeviceDialog}>{t("devices_manual_add_btn")}</button>
     </div>
     {#if devicesStore.loadState === "loading" || devicesStore.loadState === "idle"}
       <p class="note">{t("library_loading")}</p>
@@ -93,15 +127,28 @@
               </div>
             {:else}
               <div class="info">
-                <div class="title">{device.name}</div>
+                <div class="title">
+                  {device.name}
+                  {#if device.registrationMethod === "manual_opds"}<span class="method-badge">{t("devices_manual_badge")}</span>{/if}
+                </div>
                 <div class="meta">
+                  {#if deviceModelLabel(device)}<span>{deviceModelLabel(device)}</span>{/if}
+                  {#if device.width && device.height}<span>{device.width} × {device.height}</span>{/if}
                   <span>{lastSeenText(device)}</span>
                 </div>
+                {#if rotateFailedId === device.id}<p class="error-text">{rotateErrorText(rotateFailedCode)}</p>{/if}
               </div>
               <RowMenu
                 items={[
                   { label: t("devices_rename"), onSelect: () => startRename(device) },
                   { label: t("devices_edit_library"), onSelect: () => (editingLibraryFor = device) },
+                  ...(device.registrationMethod === "manual_opds"
+                    ? [{
+                        label: t("devices_manual_rotate"),
+                        disabled: busyId === device.id,
+                        onSelect: () => void onRotateToken(device),
+                      }]
+                    : []),
                   {
                     label: t("devices_revoke"),
                     danger: true,
@@ -144,8 +191,12 @@
   ul.items li.device-row + li.device-row { border-top: 1px solid var(--line); }
   ul.items li.device-row:last-child { border-bottom: 1px solid var(--line); }
   .info { flex: 1; min-width: 0; }
-  .info .title { font-weight: 600; }
+  .info .title { font-weight: 600; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .info .meta { display: flex; gap: 10px; flex-wrap: wrap; font-family: var(--mono); font-size: 14px; color: var(--faint); margin-top: 4px; }
+  .method-badge {
+    font-size: 11px; font-weight: 500; color: var(--muted2); border: 1px solid var(--line);
+    border-radius: 3px; padding: 1px 6px; white-space: nowrap;
+  }
   .edit-fields { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 0; }
   .edit-fields input {
     padding: 8px 10px; font: inherit; font-size: 14px; border: 1.5px solid var(--ink);

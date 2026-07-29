@@ -34,6 +34,8 @@ export interface DeviceRecord {
   device: string | null;
   width: number | null;
   height: number | null;
+  /** 'pairing' | 'manual_opds' (migrations/app/0007_device_registration_method.sql) — identifies whether this row was created by QR pairing approval or by manual OPDS device creation (src/devices/service.ts's createManualOpdsDevice). Purely descriptive: both kinds of device are authenticated, listed, and revoked identically. */
+  registrationMethod: string;
 }
 
 interface DeviceRow {
@@ -49,6 +51,7 @@ interface DeviceRow {
   device: string | null;
   width: number | null;
   height: number | null;
+  registration_method: string;
 }
 
 function fromDeviceRow(row: DeviceRow): DeviceRecord {
@@ -65,12 +68,13 @@ function fromDeviceRow(row: DeviceRow): DeviceRecord {
     device: row.device,
     width: row.width,
     height: row.height,
+    registrationMethod: row.registration_method,
   };
 }
 
 /** Never includes token_hash (plan §9.3 "token_hashは返さない") — every device read in this module goes through this column list. */
 const DEVICE_COLUMNS =
-  "id, account_id, name, status, library_version, created_at, updated_at, last_seen_at, revoked_at, device, width, height";
+  "id, account_id, name, status, library_version, created_at, updated_at, last_seen_at, revoked_at, device, width, height, registration_method";
 
 export interface NewDevice {
   id: string;
@@ -82,14 +86,16 @@ export interface NewDevice {
   device: string | null;
   width: number | null;
   height: number | null;
+  /** Defaults to 'pairing' (same as the column's own DB DEFAULT, migrations/app/0007) when omitted — approvePairingForAccount (src/devices/pairings.ts) never passes this field, so its behavior is unchanged. Manual OPDS device creation (src/devices/service.ts) always passes 'manual_opds' explicitly. */
+  registrationMethod?: "pairing" | "manual_opds";
 }
 
-/** Inserts a new active device (status='active', library_version=1). Used by approvePairingForAccount (src/devices/pairings.ts). */
+/** Inserts a new active device (status='active', library_version=1). Used by approvePairingForAccount (src/devices/pairings.ts) and createManualOpdsDevice (src/devices/service.ts). */
 export async function insertDevice(db: D1Database, device: NewDevice): Promise<void> {
   await db
     .prepare(
-      `INSERT INTO devices (id, account_id, name, token_hash, status, library_version, created_at, updated_at, device, width, height)
-       VALUES (?, ?, ?, ?, 'active', 1, ?, ?, ?, ?, ?)`,
+      `INSERT INTO devices (id, account_id, name, token_hash, status, library_version, created_at, updated_at, device, width, height, registration_method)
+       VALUES (?, ?, ?, ?, 'active', 1, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       device.id,
@@ -101,6 +107,7 @@ export async function insertDevice(db: D1Database, device: NewDevice): Promise<v
       device.device,
       device.width,
       device.height,
+      device.registrationMethod ?? "pairing",
     )
     .run();
 }
@@ -175,6 +182,34 @@ export async function revokeDeviceRow(
        WHERE id = ? AND account_id = ? AND status = 'active'`,
     )
     .bind(revokedAt, revokedAt, deviceId, accountId)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+/**
+ * Rewrites a device's token_hash in place (Phase2 spec §8.2 "接続情報の再発行"):
+ * conditional on account ownership *and* status='active', so a device that
+ * lost its 'active' status (revoked) between the caller's own status check
+ * and this write can never have its token silently replaced — the caller
+ * (src/devices/service.ts's rotateDeviceToken) treats a false return the
+ * same as its own pre-check failing (409 DEVICE_REVOKED). Because this is a
+ * single UPDATE, the moment it commits the old token_hash is gone — there is
+ * no window where both old and new tokens validate (spec §12 "新旧token の
+ * 長時間併存は認めない").
+ */
+export async function updateDeviceTokenHash(
+  db: D1Database,
+  accountId: string,
+  deviceId: string,
+  tokenHash: string,
+  updatedAt: string,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE devices SET token_hash = ?, updated_at = ?
+       WHERE id = ? AND account_id = ? AND status = 'active'`,
+    )
+    .bind(tokenHash, updatedAt, deviceId, accountId)
     .run();
   return (result.meta.changes ?? 0) > 0;
 }

@@ -5,6 +5,8 @@
 // 同期する」パターン。App.svelte から一度だけマウントされる各ダイアログを、
 // Header 等の別コンポーネントから開けるようにするための共有状態。
 
+import type { OpdsCredentials } from "./devices.svelte";
+
 export const loginDialog = $state({ open: false });
 
 export function openLoginDialog(): void {
@@ -91,4 +93,41 @@ export function openDevicesHowtoDialog(): void {
 }
 export function closeDevicesHowtoDialog(): void {
   devicesHowtoDialog.open = false;
+}
+
+// 標準 OPDS 端末の手動登録（OPDS Phase 2 §10.2）。devices タブの
+// 「標準 OPDS 端末を追加」ボタンと、成功後に開く接続情報ダイアログ
+// （opdsCredentialsDialog）の 2 段構成。
+export const manualOpdsDeviceDialog = $state({ open: false });
+
+export function openManualOpdsDeviceDialog(): void {
+  manualOpdsDeviceDialog.open = true;
+}
+export function closeManualOpdsDeviceDialog(): void {
+  manualOpdsDeviceDialog.open = false;
+}
+
+// OPDS 接続情報の表示（新規登録直後・token 再発行直後の両方から開く、
+// OPDS Phase 2 §10.3）。password は表示専用でこの画面が生きている間しか
+// 保持しない — close 時に必ず null へ戻す（§11 セキュリティ要件: token を
+// localStorage/sessionStorage/IndexedDB は元より、閉じた後の state にも残さない）。
+export const opdsCredentialsDialog = $state<{
+  open: boolean;
+  deviceName: string | null;
+  opds: OpdsCredentials | null;
+}>({
+  open: false,
+  deviceName: null,
+  opds: null,
+});
+
+export function openOpdsCredentialsDialog(deviceName: string, opds: OpdsCredentials): void {
+  opdsCredentialsDialog.deviceName = deviceName;
+  opdsCredentialsDialog.opds = opds;
+  opdsCredentialsDialog.open = true;
+}
+export function closeOpdsCredentialsDialog(): void {
+  opdsCredentialsDialog.open = false;
+  opdsCredentialsDialog.deviceName = null;
+  opdsCredentialsDialog.opds = null;
 }

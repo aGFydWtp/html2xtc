@@ -9,6 +9,7 @@ import { logAuditEvent } from "../security/audit";
 import { randomToken, sha256Hex, timingSafeEqual } from "../security/crypto";
 import { Errors } from "../security/errors";
 import type { Env } from "../types";
+import { issueDeviceCredential } from "./credentials";
 import {
   approvePairingRow,
   completePairingRow,
@@ -134,7 +135,6 @@ export function parsePairingSecretHeader(header: string | null): string | null {
 const PAIRING_TTL_MS = 10 * 60 * 1000;
 const PAIRING_POLL_INTERVAL_SECONDS = 5;
 const PAIRING_SECRET_BYTES = 32;
-const DEVICE_TOKEN_BYTES = 32;
 const MAX_USER_CODE_GENERATION_ATTEMPTS = 10;
 const MAX_REQUESTED_NAME_LENGTH = 100;
 const MAX_DEVICE_NAME_LENGTH = 100;
@@ -392,8 +392,10 @@ export async function approvePairingForAccount(
   }
 
   const deviceId = crypto.randomUUID();
-  const deviceToken = randomToken(DEVICE_TOKEN_BYTES);
-  const tokenHash = await sha256Hex(deviceToken);
+  // token 生成・ハッシュ化は src/devices/credentials.ts の共通実装（plan §9）——
+  // manual OPDS device creation/rotation (src/devices/service.ts) と同じ
+  // issueDeviceCredential を使う。
+  const { token: deviceToken, tokenHash } = await issueDeviceCredential();
   const nowIso = new Date().toISOString();
 
   await insertDevice(env.APP_DB, {

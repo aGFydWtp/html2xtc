@@ -245,11 +245,19 @@ D1側の状態（デバイス一覧・ペアリング状態等）は引き続き
   （`docs/security-model.md` §4）。切り分けるには:
   1. `npx wrangler d1 execute html2xtc-app --remote --command "SELECT id, status FROM devices WHERE id = '<deviceId>'"`
      で端末が存在するか・`status = 'active'` かを確認する。
-  2. `revoked` であれば新トークンを発行するAPIは存在しない——端末を再ペアリングする以外の
-     回復手段はない（`revoked` の端末は一覧からも非表示になる。plan §9.3）。
+  2. `revoked` であれば `POST /api/devices/{deviceId}/rotate-token` も `409 DEVICE_REVOKED`
+     になる——再有効化する手段はなく、端末を再登録する以外の回復手段はない（`revoked` の
+     端末は一覧からも非表示になる。plan §9.3）。
   3. `active` なのに401が続く場合は保存済み `deviceToken` の破損・取り違えを疑う。
-     トークン単体を再発行する手段はないため、WebUIから端末を解除し、端末を再ペアリング
-     する（`docs/pairing-protocol.md`）。
+     `POST /api/devices/{deviceId}/rotate-token`（Phase2、`docs/security-model.md` §9）を
+     実行すると新しい接続情報（deviceId/token）を発行できる。再発行後は旧tokenが即時
+     失効するため、端末側の設定を更新するまでその端末は利用できない点に注意する。
+     - API自体は `registration_method` を問わず動作するが、**WebUIの「接続情報を再発行」
+       メニューは手動登録した標準OPDS端末（`manual_opds`）にのみ表示される**。端末側に
+       接続情報を手入力する手段があるのが手動登録端末だけで、QRペアリング端末は再発行
+       してもアプリ側の設定を書き換えられないため。
+     - QRペアリングで登録した端末は、再ペアリングでのやり直し
+       （`docs/pairing-protocol.md`）が正規の回復手段。
 - `429`/`503`: 端末認証失敗レート制限（IP＋deviceId、60回/時）に達している可能性。
   `Retry-After` を確認し、それでも続く場合は正しい認証情報を使っているか再確認する
   （誤った認証情報でのリトライがさらに閾値を消費する）。

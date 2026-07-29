@@ -383,6 +383,7 @@ export interface Messages {
   library_add_to_device_none: string;
   library_add_to_device_done: string;
   library_add_to_device_failed: string;
+  library_add_to_device_hint: string;
   library_author_none: string;
   library_save: string;
   library_saving: string;
@@ -804,10 +805,11 @@ export const I18N: Record<Lang, Messages> = {
     library_deleting: "削除中…",
     library_delete_selected_failed: (n) => `${n}件の削除に失敗しました。`,
     library_selected_count: (n) => `${n} 件選択中`,
-    library_add_to_device: "端末に追加",
-    library_add_to_device_none: "端末に追加（端末未登録）",
-    library_add_to_device_done: "端末に追加しました。",
-    library_add_to_device_failed: "端末への追加に失敗しました。",
+    library_add_to_device: "端末の配信リストに追加",
+    library_add_to_device_none: "端末の配信リストに追加（端末未登録）",
+    library_add_to_device_done: "端末の配信リストに追加しました。",
+    library_add_to_device_failed: "端末の配信リストへの追加に失敗しました。",
+    library_add_to_device_hint: "追加したファイルは端末の OPDS ライブラリに表示されます。端末側でダウンロードしてください。",
     library_author_none: "著者（任意）",
     library_save: "ライブラリへ保存",
     library_saving: "保存中…",
@@ -1229,10 +1231,11 @@ export const I18N: Record<Lang, Messages> = {
     library_deleting: "Deleting…",
     library_delete_selected_failed: (n) => n === 1 ? "Failed to delete 1 item." : `Failed to delete ${n} items.`,
     library_selected_count: (n) => `${n} selected`,
-    library_add_to_device: "Add to device",
-    library_add_to_device_none: "Add to device (no devices)",
-    library_add_to_device_done: "Added to the device.",
-    library_add_to_device_failed: "Failed to add to the device.",
+    library_add_to_device: "Add to device catalog",
+    library_add_to_device_none: "Add to device catalog (no devices)",
+    library_add_to_device_done: "Added to device catalog.",
+    library_add_to_device_failed: "Failed to add to the device catalog.",
+    library_add_to_device_hint: "Added files appear in the device's OPDS library. Download them from the device.",
     library_author_none: "Author (optional)",
     library_save: "Save to library",
     library_saving: "Saving…",

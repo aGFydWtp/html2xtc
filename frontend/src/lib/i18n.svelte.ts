@@ -497,10 +497,6 @@ export interface Messages {
   devices_manual_model_label: string;
   devices_manual_model_x3: string;
   devices_manual_model_x4: string;
-  devices_manual_model_other: string;
-  devices_manual_width_label: string;
-  devices_manual_height_label: string;
-  devices_manual_description: string;
   devices_manual_submit: string;
   devices_manual_error_name: string;
   devices_manual_error_model: string;
@@ -999,13 +995,9 @@ export const I18N: Record<Lang, Messages> = {
     devices_manual_add_btn: "Xteink を登録",
     devices_manual_dialog_title: "Xteink を登録",
     devices_manual_name_label: "端末名",
-    devices_manual_model_label: "端末モデル",
+    devices_manual_model_label: "モデル",
     devices_manual_model_x3: "Xteink X3",
     devices_manual_model_x4: "Xteink X4",
-    devices_manual_model_other: "その他",
-    devices_manual_width_label: "幅（px）",
-    devices_manual_height_label: "高さ（px）",
-    devices_manual_description: "登録後に表示される OPDS 接続情報を端末へ入力します。パスワードは一度しか表示されません。",
     devices_manual_submit: "端末を登録",
     devices_manual_error_name: "端末名を入力してください（1〜100文字）。",
     devices_manual_error_model: "対応していない端末モデルです。",
@@ -1504,13 +1496,9 @@ export const I18N: Record<Lang, Messages> = {
     devices_manual_add_btn: "Register Xteink",
     devices_manual_dialog_title: "Register Xteink",
     devices_manual_name_label: "Device name",
-    devices_manual_model_label: "Device model",
+    devices_manual_model_label: "Model",
     devices_manual_model_x3: "Xteink X3",
     devices_manual_model_x4: "Xteink X4",
-    devices_manual_model_other: "Other",
-    devices_manual_width_label: "Width (px)",
-    devices_manual_height_label: "Height (px)",
-    devices_manual_description: "Enter the OPDS connection details shown after registration on your device. The password is shown only once.",
     devices_manual_submit: "Register device",
     devices_manual_error_name: "Please enter a device name (1–100 characters).",
     devices_manual_error_model: "That device model isn't supported.",

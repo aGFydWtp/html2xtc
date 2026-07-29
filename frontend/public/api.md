@@ -68,7 +68,7 @@ second.**
 Creates an asynchronous conversion job from a URL.
 
 ```json
-{ "url": "https://example.com/article", "mode": "extract", "layout": "vertical", "font": "BIZ UDMincho" }
+{ "url": "https://example.com/article", "mode": "extract", "layout": "vertical", "font": "BIZ UDMincho", "device": "x4" }
 ```
 
 | Field | Required | Notes |
@@ -77,6 +77,7 @@ Creates an asynchronous conversion job from a URL.
 | `mode` | no | `"full"` (default: render the page as-is) or `"extract"` (extract main article content first, degrading back to `"full"` automatically if extraction fails — always produces some output). Any other value is a `400`. |
 | `layout` | no | `"horizontal"` or `"vertical"`. Invalid/omitted values silently fall back to a default (never a `400`). |
 | `font` | no | A Google Fonts family name (letters, digits, spaces, hyphens; max 64 chars). Invalid or unavailable fonts silently fall back to a default. |
+| `device` | no | `"x3"` (528x792 px output, default) or `"x4"` (480x800 px output). Invalid/omitted values silently fall back to `"x3"` (never a `400`). |
 
 Success — `202`:
 
@@ -143,9 +144,11 @@ X-Pdf-Options: <base64url of a PdfConvertOptions JSON object>
   falls back to a default filename rather than erroring.
 - `X-Pdf-Options` is optional: base64url-encode the JSON form of
   `PdfConvertOptions` (see openapi.json for the full schema — page range,
-  rotation, crop, fit, margin, threshold, dithering, invert). Omit to use
-  defaults. Values are validated strictly: out-of-range fields are a `400`,
-  never silently clamped.
+  rotation, crop, fit, margin, threshold, dithering, invert, `device`
+  `"x3"`|`"x4"`). Omit to use defaults. Values are validated strictly:
+  out-of-range fields are a `400`, never silently clamped — an invalid
+  `device` is a `400` too, unlike the fail-soft `device` on `POST /jobs`
+  above.
 - Request body must be sent as raw bytes, not multipart/form-data.
 
 Success — `202`: same `{"jobId", "statusUrl"}` shape as `POST /jobs`.
@@ -189,9 +192,9 @@ X-Text-Options: <base64url of a TextConvertOptions JSON object>
 - `X-Text-Options` is optional: base64url-encode the JSON form of
   `TextConvertOptions` (see openapi.json — `inputFormat`
   `"plain"`|`"aozora"`|`"markdown"`, character encoding, layout, font, font
-  size, line height, margins, text align, blank-line handling, page
-  numbers, title, author). Omit to use defaults. Strict validation, same as
-  PDF options.
+  size, line height, margins, text align, blank-line handling, page numbers,
+  title, author, `device` `"x3"`|`"x4"`). Omit to use defaults. Strict
+  validation, same as PDF options — an invalid `device` is a `400`.
 - Supported character encodings: UTF-8 (with or without BOM) and Shift_JIS /
   Windows-31J. UTF-16, EUC-JP, and ISO-2022-JP are rejected.
 - Additional fixed limits: 2,000,000 characters, 200,000 lines, 100,000
@@ -231,8 +234,8 @@ X-Epub-Options: <base64url of an EpubConvertOptions JSON object>
 - `X-Epub-Options` is optional: base64url-encode the JSON form of
   `EpubConvertOptions` (see openapi.json — `layout` `"auto"`|`"horizontal"`|
   `"vertical"`, `font`, `fontSizePx` 12-40, `marginPx` 0-120,
-  `chapterPageBreak`, `includeCover`, `includeTableOfContents`). Omit to use
-  defaults.
+  `chapterPageBreak`, `includeCover`, `includeTableOfContents`, `device`
+  `"x3"`|`"x4"`). Omit to use defaults. An invalid `device` is a `400`.
 - The request body's first 4 bytes must look like a ZIP file, or the request
   is rejected with `400` before any deeper EPUB parsing happens.
 
@@ -294,7 +297,7 @@ job object), with `Content-Disposition: inline` and headers
 { "url": "https://example.com/article", "mode": "extract" }
 ```
 
-Same `url`/`mode`/`layout`/`font` fields as `POST /jobs`. Success — `200`:
+Same `url`/`mode`/`layout`/`font`/`device` fields as `POST /jobs`. Success — `200`:
 
 ```json
 { "jobId": "<uuid>", "downloadUrl": "/download/<uuid>" }

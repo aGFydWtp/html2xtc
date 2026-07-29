@@ -3,7 +3,7 @@
   "info": {
     "title": "html2xtc conversion API",
     "version": "1.0.0",
-    "description": "Public, unauthenticated API that converts a URL, an uploaded PDF, a plain-text file, or an EPUB into an XTC file for the Xteink X3 e-reader. Only the endpoints documented here are unauthenticated; every other route on this domain (/api/library/*, /api/devices/*, /opds/*, /internal/*, /api/auth/*) requires a session or shared secret and is intentionally omitted from this schema."
+    "description": "Public, unauthenticated API that converts a URL, an uploaded PDF, a plain-text file, or an EPUB into an XTC file for the Xteink X3 or X4 e-reader (a `device` field on the conversion endpoints selects which; default \"x3\"). Only the endpoints documented here are unauthenticated; every other route on this domain (/api/library/*, /api/devices/*, /opds/*, /internal/*, /api/auth/*) requires a session or shared secret and is intentionally omitted from this schema."
   },
   "servers": [
     { "url": "https://xtc.hr20k.com" }
@@ -384,6 +384,12 @@
           "font": {
             "type": "string",
             "description": "A Google Fonts family name (letters, digits, spaces, hyphens; max 64 characters). Invalid or unavailable values silently fall back to a default."
+          },
+          "device": {
+            "type": "string",
+            "enum": ["x3", "x4"],
+            "default": "x3",
+            "description": "Target Xteink device (528x792 px output for x3, 480x800 px for x4). Invalid or omitted values silently fall back to \"x3\" (never a 400)."
           }
         },
         "required": ["url"]
@@ -398,7 +404,7 @@
       },
       "PdfConvertOptions": {
         "type": "object",
-        "description": "Applied in this fixed order: page selection -> rotation -> crop -> contain/cover -> margin -> grayscale -> 528x792 resample -> invert -> threshold/dithering -> XTC. Validated strictly: out-of-range values are rejected with 400, never silently clamped.",
+        "description": "Applied in this fixed order: page selection -> rotation -> crop -> contain/cover -> margin -> grayscale -> device-resolution resample (528x792 for x3, 480x800 for x4) -> invert -> threshold/dithering -> XTC. Validated strictly: out-of-range values are rejected with 400, never silently clamped.",
         "properties": {
           "pages": { "type": "string", "description": "Page-range syntax, e.g. \"1-\", \"1-3,5\". Default \"1-\" (all pages)." },
           "rotation": { "type": "integer", "enum": [0, 90, 180, 270], "default": 0 },
@@ -418,7 +424,13 @@
           "threshold": { "type": "integer", "minimum": 0, "maximum": 255, "default": 128 },
           "dither": { "type": "boolean", "default": true },
           "ditherStrength": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.8 },
-          "invert": { "type": "boolean", "default": false }
+          "invert": { "type": "boolean", "default": false },
+          "device": {
+            "type": "string",
+            "enum": ["x3", "x4"],
+            "default": "x3",
+            "description": "Target Xteink device. Omitted values default to \"x3\" (backward compatibility); a present-but-invalid value is a 400 like every other field here."
+          }
         }
       },
       "TextConvertOptions": {
@@ -448,7 +460,13 @@
           "joinHardWrappedLines": { "type": "boolean", "default": true, "description": "Ignored (always treated as false) when inputFormat is \"aozora\" or \"markdown\"." },
           "showPageNumbers": { "type": "boolean", "default": false, "description": "Always forced to false by POST /preview/text regardless of the submitted value." },
           "title": { "type": "string", "maxLength": 100, "default": "" },
-          "author": { "type": "string", "maxLength": 100, "default": "" }
+          "author": { "type": "string", "maxLength": 100, "default": "" },
+          "device": {
+            "type": "string",
+            "enum": ["x3", "x4"],
+            "default": "x3",
+            "description": "Target Xteink device. Omitted values default to \"x3\" (backward compatibility); a present-but-invalid value is a 400 like every other field here."
+          }
         }
       },
       "EpubConvertOptions": {
@@ -461,7 +479,13 @@
           "marginPx": { "type": "integer", "minimum": 0, "maximum": 120, "default": 40 },
           "chapterPageBreak": { "type": "boolean", "default": true },
           "includeCover": { "type": "boolean", "default": true },
-          "includeTableOfContents": { "type": "boolean", "default": false }
+          "includeTableOfContents": { "type": "boolean", "default": false },
+          "device": {
+            "type": "string",
+            "enum": ["x3", "x4"],
+            "default": "x3",
+            "description": "Target Xteink device. Omitted values default to \"x3\" (backward compatibility); a present-but-invalid value is a 400 like every other field here."
+          }
         }
       },
       "AozoraBook": {

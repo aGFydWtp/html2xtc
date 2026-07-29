@@ -10,6 +10,7 @@ import type { Router } from "../router";
 import { logAuditEvent } from "../security/audit";
 import { Errors } from "../security/errors";
 import type { Env } from "../types";
+import { normalizeDeclaredDevice } from "./declared-device";
 import {
   approvePairingForAccount,
   completePairingByDevice,
@@ -118,11 +119,18 @@ export function registerDeviceRoutes(router: Router): void {
       return limited;
     }
     const body = await readJsonBody(request);
-    const { requestedName } = body;
+    const { requestedName, deviceModel, width, height } = body;
     if (requestedName !== undefined && typeof requestedName !== "string") {
       throw Errors.badRequest("INVALID_REQUESTED_NAME", "requestedName must be a string");
     }
-    const result = await startPairing(env, requestedName ?? null);
+    // deviceModel/width/height (crosspoint-jp firmware, plan-adjacent but
+    // undocumented in the original phase plan): fail-soft, never a 400. A
+    // legacy firmware simply omits these; a future/unknown model or a
+    // malformed resolution must not fail pairing itself over a field this
+    // endpoint doesn't strictly need — normalizeDeclaredDevice reduces any
+    // of that to null rather than rejecting the request.
+    const declaredDevice = normalizeDeclaredDevice({ deviceModel, width, height });
+    const result = await startPairing(env, requestedName ?? null, declaredDevice);
     return Response.json(result, { status: 201 });
   });
 

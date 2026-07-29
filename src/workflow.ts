@@ -32,7 +32,7 @@ import { writeAozoraFallbackProgress } from "./aozora-fallback/progress";
 import { splitContentIntoChunks } from "./aozora-fallback/split";
 import { convertInContainer, convertUploadedPdfInContainer } from "./container";
 import { resolveDeviceId, resolveDeviceProfile } from "./devices";
-import type { DeviceProfile } from "./devices";
+import type { DeviceId, DeviceProfile } from "./devices";
 import { DEFAULT_EPUB_OPTIONS } from "./epub-options";
 import type { EpubConvertOptions } from "./epub-options";
 import {
@@ -746,8 +746,10 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
       );
 
       // Exposed through instance.status().output once the run completes;
-      // GET /jobs/:id surfaces the title from here.
-      return { xtcKey, title };
+      // GET /jobs/:id surfaces the title from here. deviceId is the same
+      // fail-soft resolution computed once above (line ~348) and already
+      // used for both storeXtcOutput and convertInContainer's X-Device-Id.
+      return { xtcKey, title, device: deviceId };
     } finally {
       // Runs on success and on terminal failure (retries exhausted or
       // NonRetryableError) alike. Deliberately NOT inside the convert step:
@@ -1086,7 +1088,11 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
     source: Extract<ConvertSource, { kind: "pdf" }>,
     pdfOptions: PdfConvertOptions,
     step: WorkflowStep,
-  ): Promise<{ xtcKey: string; title?: string }> {
+  ): Promise<{ xtcKey: string; title?: string; device: DeviceId }> {
+    // Same fail-soft stance as the URL pipeline's deviceId (resolveDeviceId's
+    // doc comment): an absent/unrecognized pdfOptions.device resolves to
+    // "x3", full backward compatibility for jobs predating this field.
+    const deviceId = resolveDeviceId(pdfOptions.device);
     try {
       const { xtcKey, title } = await step.do(
         "convert-uploaded-pdf",
@@ -1151,12 +1157,12 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
             // internal error — left retryable like the url-source path.
             throw new Error("XTC conversion failed");
           }
-          const { title } = await storeXtcOutput(this.env, jobId, response, resolveDeviceId(pdfOptions.device));
+          const { title } = await storeXtcOutput(this.env, jobId, response, deviceId);
           return { xtcKey: outputXtcKey(jobId), title };
         },
       );
 
-      return { xtcKey, title };
+      return { xtcKey, title, device: deviceId };
     } finally {
       // Runs on success and on terminal failure alike (spec §9.5) — the
       // input PDF is deleted either way. Best-effort: a delete failure here
@@ -1192,7 +1198,14 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
     source: Extract<ConvertSource, { kind: "text" }>,
     textOptions: TextConvertOptions,
     step: WorkflowStep,
-  ): Promise<{ xtcKey: string; title?: string }> {
+  ): Promise<{ xtcKey: string; title?: string; device: DeviceId }> {
+    // Same fail-soft stance as the URL pipeline's deviceId: an absent/
+    // unrecognized textOptions.device resolves to "x3" (resolveDeviceId's
+    // doc comment) — guards a stored job whose textOptions predates this
+    // field. Computed once here and reused below (convertInContainer +
+    // storeXtcOutput), rather than calling resolveDeviceId twice with the
+    // same input.
+    const deviceId = resolveDeviceId(textOptions.device);
     let articleKey: string | null = null;
     let fontsKey: string | null = null;
     let pdfKey: string | null = null;
@@ -1507,11 +1520,11 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
               // packages/aozora-text/src/render-html.ts for the selection
               // rule; never level 1 unconditionally).
               chapters,
-              // textOptions.device (X-Text-Options): resolveDeviceId guards
-              // against a stored job whose textOptions predates this field
-              // (undefined at runtime despite the TS type) — same fail-soft
-              // stance as every other device resolution point.
-              resolveDeviceId(textOptions.device),
+              // textOptions.device (X-Text-Options): deviceId (resolved once
+              // above) guards against a stored job whose textOptions predates
+              // this field (undefined at runtime despite the TS type) — same
+              // fail-soft stance as every other device resolution point.
+              deviceId,
             );
           } catch (error) {
             if (error instanceof DOMException && error.name === "TimeoutError") {
@@ -1532,12 +1545,12 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
             }
             throw new Error("XTC conversion failed");
           }
-          const { title } = await storeXtcOutput(this.env, jobId, response, resolveDeviceId(textOptions.device));
+          const { title } = await storeXtcOutput(this.env, jobId, response, deviceId);
           return { xtcKey: outputXtcKey(jobId), title };
         },
       );
 
-      return { xtcKey, title };
+      return { xtcKey, title, device: deviceId };
     } finally {
       // Runs on success and on terminal failure alike (spec §12.6): every
       // input/intermediate object this pipeline produced is removed, not
@@ -1590,7 +1603,13 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
     source: Extract<ConvertSource, { kind: "epub" }>,
     epubOptions: EpubConvertOptions,
     step: WorkflowStep,
-  ): Promise<{ xtcKey: string; title?: string }> {
+  ): Promise<{ xtcKey: string; title?: string; device: DeviceId }> {
+    // Same fail-soft stance as the TXT pipeline's deviceId: an absent/
+    // unrecognized epubOptions.device resolves to "x3" (resolveDeviceId's
+    // doc comment) — guards a stored job whose epubOptions predates this
+    // field. Computed once here and reused below (convertInContainer +
+    // storeXtcOutput).
+    const deviceId = resolveDeviceId(epubOptions.device);
     let articleKey: string | null = null;
     let fontsKey: string | null = null;
     let pdfKey: string | null = null;
@@ -1854,11 +1873,11 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
               CONVERTER_FETCH_TIMEOUT_MS,
               resolvedAuthor,
               chapters,
-              // epubOptions.device (X-Epub-Options) — same resolveDeviceId
-              // fail-soft guard as the TXT pipeline's identical argument
-              // above (protects a stored job whose epubOptions predates this
-              // field).
-              resolveDeviceId(epubOptions.device),
+              // epubOptions.device (X-Epub-Options) — deviceId (resolved
+              // once above), same resolveDeviceId fail-soft guard as the TXT
+              // pipeline's identical argument above (protects a stored job
+              // whose epubOptions predates this field).
+              deviceId,
             );
           } catch (error) {
             if (error instanceof DOMException && error.name === "TimeoutError") {
@@ -1879,12 +1898,12 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
             }
             throw new Error("XTC conversion failed");
           }
-          const { title } = await storeXtcOutput(this.env, jobId, response, resolveDeviceId(epubOptions.device));
+          const { title } = await storeXtcOutput(this.env, jobId, response, deviceId);
           return { xtcKey: outputXtcKey(jobId), title };
         },
       );
 
-      return { xtcKey, title };
+      return { xtcKey, title, device: deviceId };
     } finally {
       // Runs on success and on terminal failure alike (spec §14.1.4): every
       // input/intermediate object this pipeline produced is removed, not

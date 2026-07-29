@@ -443,6 +443,8 @@ export interface Messages {
   device_library_empty: string;
   device_library_save_failed: string;
   device_library_resolution_mismatch: string;
+  /** タイトル前の機種タグ（"X3"/"X4"）の aria-label。device は表示文字列そのまま渡す（固有名詞のため翻訳不要）。 */
+  device_tag_label: (device: string) => string;
 
   pairing_dialog_title: string;
   pairing_login_required: string;
@@ -869,6 +871,7 @@ export const I18N: Record<Lang, Messages> = {
     device_library_empty: "ライブラリにXTCがありません。先に変換してライブラリへ保存してください。",
     device_library_save_failed: "配信リストの保存に失敗しました。",
     device_library_resolution_mismatch: "解像度が異なります",
+    device_tag_label: (device) => `対応端末: ${device}`,
 
     pairing_dialog_title: "端末のペアリング承認",
     pairing_login_required: "ペアリングを承認するにはログインしてください。",
@@ -1295,6 +1298,7 @@ export const I18N: Record<Lang, Messages> = {
     device_library_empty: "Your library has no XTC files yet. Convert something and save it to your library first.",
     device_library_save_failed: "Failed to save the reading list.",
     device_library_resolution_mismatch: "Different resolution",
+    device_tag_label: (device) => `Compatible device: ${device}`,
 
     pairing_dialog_title: "Approve device pairing",
     pairing_login_required: "Please log in to approve this pairing.",

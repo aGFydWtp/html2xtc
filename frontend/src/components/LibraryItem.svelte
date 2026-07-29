@@ -5,6 +5,7 @@
   import { t } from "../lib/i18n.svelte";
   import { formatSize, libraryStore, type LibraryItem } from "../lib/library.svelte";
   import { isResolutionMismatch } from "../lib/resolution-mismatch";
+  import DeviceTag from "./DeviceTag.svelte";
   import RowMenu, { type RowMenuItem } from "./RowMenu.svelte";
 
   interface Props {
@@ -123,7 +124,10 @@
       />
     </label>
     <div class="info">
-      <div class="title">{item.title}</div>
+      <div class="title">
+        <DeviceTag device={item.device} />
+        <span class="title-text">{item.title}</span>
+      </div>
       <div class="meta">
         {#if item.author}<span>{item.author}</span>{/if}
         <span>{formatSize(item.sizeBytes)}</span>
@@ -148,7 +152,8 @@
   .select input { width: 18px; height: 18px; margin: 0; accent-color: var(--ink); cursor: pointer; }
   .select input:disabled { cursor: default; }
   .info { flex: 1; min-width: 0; }
-  .info .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+  .info .title { display: flex; align-items: baseline; font-weight: 600; min-width: 0; }
+  .info .title .title-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .info .meta { display: flex; gap: 10px; flex-wrap: wrap; font-family: var(--mono); font-size: 14px; color: var(--faint); margin-top: 4px; }
   .info .meta .add-note { font-family: inherit; color: var(--muted2); }
   .info .meta .add-note.fail { color: var(--error); }

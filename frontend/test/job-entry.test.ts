@@ -20,6 +20,7 @@ describe("migrateJobEntry", () => {
       createdAt: "2026-07-01T00:00:00.000Z",
       title: "Example",
       error: undefined,
+      device: undefined,
     });
   });
 
@@ -40,6 +41,7 @@ describe("migrateJobEntry", () => {
       createdAt: undefined,
       title: undefined,
       error: undefined,
+      device: undefined,
     });
   });
 
@@ -59,7 +61,39 @@ describe("migrateJobEntry", () => {
       createdAt: undefined,
       title: undefined,
       error: undefined,
+      device: undefined,
     });
+  });
+
+  it("carries device through for a completed entry that has it", () => {
+    const completed = {
+      jobId: "job-device-1",
+      sourceType: "pdf",
+      sourceLabel: "document.pdf",
+      status: "completed",
+      device: "x4",
+    };
+    expect(migrateJobEntry(completed)).toEqual({
+      jobId: "job-device-1",
+      sourceType: "pdf",
+      sourceLabel: "document.pdf",
+      url: undefined,
+      status: "completed",
+      createdAt: undefined,
+      title: undefined,
+      error: undefined,
+      device: "x4",
+    });
+  });
+
+  it("leaves device undefined for a legacy URL entry (never had the field)", () => {
+    const legacy = { jobId: "job-device-2", url: "https://example.com", status: "completed" };
+    expect(migrateJobEntry(legacy)?.device).toBeUndefined();
+  });
+
+  it("ignores a non-string device value", () => {
+    const malformed = { jobId: "job-device-3", sourceType: "pdf", sourceLabel: "a.pdf", status: "completed", device: 123 };
+    expect(migrateJobEntry(malformed)?.device).toBeUndefined();
   });
 
   it("passes through a current-format TXT entry (no url field)", () => {
@@ -78,6 +112,7 @@ describe("migrateJobEntry", () => {
       createdAt: undefined,
       title: undefined,
       error: undefined,
+      device: undefined,
     });
   });
 
@@ -101,6 +136,7 @@ describe("migrateJobEntry", () => {
       createdAt: undefined,
       title: undefined,
       error: undefined,
+      device: undefined,
     });
   });
 

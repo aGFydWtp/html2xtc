@@ -16,6 +16,13 @@ export interface JobEntry {
   createdAt?: string;
   title?: string;
   error?: string;
+  /**
+   * 変換先の機種（"x3" | "x4"）。status === "completed" かつサーバーが実際に
+   * 機種を記録しているジョブにのみ存在する（GET /jobs/:jobId 由来）。未完了・
+   * 古いジョブでは欠落する。欠落時の表示フォールバック（→ X3）は
+   * device-tag.ts の resolveDeviceTag に委ねる。
+   */
+  device?: string;
 }
 
 // 旧形式（sourceType/sourceLabel を持たず url が必須だった頃）のエントリを
@@ -29,6 +36,7 @@ export function migrateJobEntry(raw: unknown): JobEntry | null {
   const createdAt = typeof j.createdAt === "string" ? j.createdAt : undefined;
   const title = typeof j.title === "string" ? j.title : undefined;
   const error = typeof j.error === "string" ? j.error : undefined;
+  const device = typeof j.device === "string" ? j.device : undefined;
 
   if (j.sourceType === "url" || j.sourceType === "pdf" || j.sourceType === "txt" || j.sourceType === "epub") {
     if (typeof j.sourceLabel !== "string") return null;
@@ -41,6 +49,7 @@ export function migrateJobEntry(raw: unknown): JobEntry | null {
       createdAt,
       title,
       error,
+      device,
     };
   }
 
@@ -55,6 +64,7 @@ export function migrateJobEntry(raw: unknown): JobEntry | null {
       createdAt,
       title,
       error,
+      device,
     };
   }
 

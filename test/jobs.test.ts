@@ -5,12 +5,15 @@ import {
   fontsCssKey,
   decideMissingDownload,
   decodeTitleHeader,
+  deviceFromOutput,
   epubFontsCssKey,
   epubHtmlKey,
   inputEpubKey,
   inputTextKey,
   intermediatePdfKey,
+  mapEpubInstanceStatus,
   mapInstanceStatus,
+  mapPdfInstanceStatus,
   mapTextInstanceStatus,
   needsPhaseProbe,
   outputXtcKey,
@@ -145,6 +148,32 @@ describe("mapTextInstanceStatus", () => {
       );
     }
   });
+
+  it("surfaces the device from the workflow output on completion", () => {
+    expect(
+      mapTextInstanceStatus(
+        JOB_ID,
+        { status: "complete", output: { xtcKey: "k", title: "小説のタイトル", device: "x4" } },
+        "preparing",
+      ),
+    ).toEqual({
+      jobId: JOB_ID,
+      status: "completed",
+      downloadUrl: `/jobs/${JOB_ID}/download`,
+      title: "小説のタイトル",
+      device: "x4",
+    });
+  });
+
+  it("omits device when the workflow output has none", () => {
+    expect(
+      mapTextInstanceStatus(
+        JOB_ID,
+        { status: "complete", output: { xtcKey: "k", title: "小説のタイトル" } },
+        "preparing",
+      ),
+    ).not.toHaveProperty("device");
+  });
 });
 
 describe("resolveExtractMinChars", () => {
@@ -254,6 +283,109 @@ describe("mapInstanceStatus", () => {
       mapInstanceStatus(JOB_ID, { status: "complete", output: { xtcKey: "k" } }, false),
     ).not.toHaveProperty("title");
   });
+
+  it("surfaces the device from the workflow output on completion", () => {
+    expect(
+      mapInstanceStatus(
+        JOB_ID,
+        { status: "complete", output: { xtcKey: "k", title: "T", device: "x4" } },
+        false,
+      ),
+    ).toEqual({
+      jobId: JOB_ID,
+      status: "completed",
+      downloadUrl: `/jobs/${JOB_ID}/download`,
+      title: "T",
+      device: "x4",
+    });
+  });
+
+  it("omits device when the workflow output has none or is unrecognized", () => {
+    expect(
+      mapInstanceStatus(JOB_ID, { status: "complete", output: { xtcKey: "k" } }, false),
+    ).not.toHaveProperty("device");
+    expect(
+      mapInstanceStatus(
+        JOB_ID,
+        { status: "complete", output: { xtcKey: "k", device: "x9" } },
+        false,
+      ),
+    ).not.toHaveProperty("device");
+  });
+});
+
+describe("mapPdfInstanceStatus (via mapInstanceStatus's shared complete/errored handling)", () => {
+  it("surfaces both title and device from the workflow output on completion", () => {
+    expect(
+      mapPdfInstanceStatus(JOB_ID, {
+        status: "complete",
+        output: { xtcKey: "k", title: "アップロードPDF", device: "x3" },
+      }),
+    ).toEqual({
+      jobId: JOB_ID,
+      status: "completed",
+      downloadUrl: `/jobs/${JOB_ID}/download`,
+      title: "アップロードPDF",
+      device: "x3",
+    });
+  });
+
+  it("has no rendering phase — the running family is always converting", () => {
+    expect(mapPdfInstanceStatus(JOB_ID, instance("running")).status).toBe("converting");
+  });
+});
+
+describe("mapEpubInstanceStatus", () => {
+  it("maps queued", () => {
+    expect(mapEpubInstanceStatus(JOB_ID, instance("queued"), "preparing")).toEqual({
+      jobId: JOB_ID,
+      status: "queued",
+    });
+  });
+
+  it("surfaces both title and device from the workflow output on completion", () => {
+    expect(
+      mapEpubInstanceStatus(
+        JOB_ID,
+        { status: "complete", output: { xtcKey: "k", title: "EPUB本", device: "x4" } },
+        "preparing",
+      ),
+    ).toEqual({
+      jobId: JOB_ID,
+      status: "completed",
+      downloadUrl: `/jobs/${JOB_ID}/download`,
+      title: "EPUB本",
+      device: "x4",
+    });
+  });
+
+  it("omits device when the workflow output has none", () => {
+    expect(
+      mapEpubInstanceStatus(
+        JOB_ID,
+        { status: "complete", output: { xtcKey: "k", title: "EPUB本" } },
+        "preparing",
+      ),
+    ).not.toHaveProperty("device");
+  });
+
+  it("maps errored/terminated to failed", () => {
+    expect(
+      mapEpubInstanceStatus(
+        JOB_ID,
+        instance("errored", { name: "Error", message: "EPUB is malformed" }),
+        "rendering",
+      ),
+    ).toEqual({ jobId: JOB_ID, status: "failed", error: "EPUB is malformed" });
+  });
+
+  it("passes the phase through for the running family", () => {
+    for (const status of ["running", "waiting", "paused", "unknown"] as const) {
+      expect(mapEpubInstanceStatus(JOB_ID, instance(status), "converting").status).toBe(
+        "converting",
+      );
+    }
+  });
 });
 
 describe("decideMissingDownload", () => {
@@ -329,6 +461,21 @@ describe("titleFromOutput", () => {
     expect(titleFromOutput("nope")).toBeUndefined();
     expect(titleFromOutput({ title: 42 })).toBeUndefined();
     expect(titleFromOutput({})).toBeUndefined();
+  });
+});
+
+describe("deviceFromOutput", () => {
+  it("extracts a recognized device id", () => {
+    expect(deviceFromOutput({ xtcKey: "k", device: "x3" })).toBe("x3");
+    expect(deviceFromOutput({ xtcKey: "k", device: "x4" })).toBe("x4");
+  });
+
+  it("ignores non-object outputs and unrecognized/missing device values", () => {
+    expect(deviceFromOutput(undefined)).toBeUndefined();
+    expect(deviceFromOutput("nope")).toBeUndefined();
+    expect(deviceFromOutput({ device: "x9" })).toBeUndefined();
+    expect(deviceFromOutput({ device: 42 })).toBeUndefined();
+    expect(deviceFromOutput({})).toBeUndefined();
   });
 });
 

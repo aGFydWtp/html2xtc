@@ -53,6 +53,12 @@ except ImportError:  # pragma: no cover - always present in the container image
     pymupdf = None
 
 CONFIG_PATH = os.environ.get("XTC_CONFIG_PATH", "/app/config-x3.toml")
+# X4 config path, analogous to XTC_CONFIG_PATH above but kept as a separate
+# env var: XTC_CONFIG_PATH's existing meaning ("override the X3 config") must
+# not change now that a second device exists, and an operator overriding one
+# device's config path has no reason to also want the other device's path
+# overridden the same way.
+CONFIG_PATH_X4 = os.environ.get("XTC_CONFIG_PATH_X4", "/app/config-x4.toml")
 CONVERT_TIMEOUT_SECONDS = int(os.environ.get("XTC_TIMEOUT_SECONDS", "120"))
 PORT = int(os.environ.get("PORT", "8080"))
 MAX_PDF_BYTES = int(os.environ.get("MAX_PDF_BYTES", str(50 * 1024 * 1024)))
@@ -198,6 +204,31 @@ def effective_max_pdf_bytes(headers) -> int:
         if value > 0:
             return min(value, HARD_MAX_PDF_BYTES)
     return MAX_PDF_BYTES
+
+
+DEVICES = ("x3", "x4")
+
+
+def resolve_device(headers) -> str:
+    """Target device from X-Xtc-Device (a raw ASCII "x3"/"x4" value -- unlike
+    every other X-Xtc-* header in this module, it is NOT base64url-encoded;
+    this is the contract agreed with the Worker side). A missing header or
+    any value other than "x3"/"x4" falls back to "x3": this is what keeps
+    every pre-X4 Worker request (which never sends this header at all)
+    byte-for-byte unaffected, and is also the safe choice for a value neither
+    side recognizes (e.g. a future device the Worker knows about but this
+    Container image predates)."""
+    raw = headers.get("X-Xtc-Device")
+    return raw if raw in DEVICES else "x3"
+
+
+def resolve_config_path(device: str) -> str:
+    """xtctool config TOML path for a device resolved by resolve_device.
+    Reads CONFIG_PATH/CONFIG_PATH_X4 as live module globals (not a
+    pre-built {device: path} mapping) specifically so that tests -- and any
+    other code -- patching either constant via mock.patch.object(app, ...)
+    are honoured at call time."""
+    return CONFIG_PATH_X4 if device == "x4" else CONFIG_PATH
 
 
 class ConversionError(Exception):
@@ -601,11 +632,16 @@ def _toml_chapters_block(chapters: list[dict]) -> str:
 
 
 def config_with_title_author_chapters(
-    title: str, author: str = "", chapters: list[dict] | None = None
+    title: str,
+    author: str = "",
+    chapters: list[dict] | None = None,
+    config_path: str | None = None,
 ) -> str:
-    """TOML text of CONFIG_PATH with [output].title (and, when given,
-    [output].author) overridden, plus -- when chapters is given -- a
-    [[chapters]] array-of-tables appended (see _toml_chapters_block).
+    """TOML text of config_path (default: CONFIG_PATH, the X3 config -- see
+    resolve_config_path for how /convert picks the device-appropriate path)
+    with [output].title (and, when given, [output].author) overridden, plus
+    -- when chapters is given -- a [[chapters]] array-of-tables appended
+    (see _toml_chapters_block).
     xtctool embeds all of these into the XTC container: title/author via
     XTCMetadata as before, chapters via the XTCChapter list cli/convert.py's
     write_xtc now builds from cfg['chapters'] (see xtctool-chapters.patch).
@@ -620,7 +656,8 @@ def config_with_title_author_chapters(
     X-Xtc-Chapters was present and resolve_chapters located at least one
     chapter -- every existing caller (no header, or a header that resolves
     to zero chapters) stays unaffected the same way."""
-    with open(CONFIG_PATH, "rb") as f:
+    resolved_config_path = CONFIG_PATH if config_path is None else config_path
+    with open(resolved_config_path, "rb") as f:
         config = tomllib.load(f)
     output = config.setdefault("output", {})
     output["title"] = title
@@ -637,19 +674,21 @@ def config_with_title_author_chapters(
     return "\n".join(lines)
 
 
-def config_with_title_author(title: str, author: str = "") -> str:
+def config_with_title_author(
+    title: str, author: str = "", config_path: str | None = None
+) -> str:
     """Backward-compatible alias for config_with_title_author_chapters(title,
-    author, None). Kept as its own name since it is part of this module's
-    tested surface (test/converter/test_app.py) and is still the only path
-    used whenever no chapter metadata is involved."""
-    return config_with_title_author_chapters(title, author)
+    author, None, config_path). Kept as its own name since it is part of
+    this module's tested surface (test/converter/test_app.py) and is still
+    the only path used whenever no chapter metadata is involved."""
+    return config_with_title_author_chapters(title, author, None, config_path)
 
 
-def config_with_title(title: str) -> str:
-    """Backward-compatible alias for config_with_title_author(title, "").
-    Kept as its own name since it is part of this module's tested surface
-    (test/converter/test_app.py)."""
-    return config_with_title_author(title)
+def config_with_title(title: str, config_path: str | None = None) -> str:
+    """Backward-compatible alias for config_with_title_author(title, "",
+    config_path). Kept as its own name since it is part of this module's
+    tested surface (test/converter/test_app.py)."""
+    return config_with_title_author(title, "", config_path)
 
 
 def _run_xtctool(
@@ -710,8 +749,17 @@ def convert_pdf(
     author: str = "",
     chapters: list[dict] | None = None,
     diagnostics: dict | None = None,
+    config_path: str | None = None,
 ) -> bytes:
     """Run xtctool over the given PDF bytes and return the XTC bytes.
+
+    config_path is the base (device-resolved, see resolve_device/
+    resolve_config_path) config TOML path; None (every caller predating the
+    X4 device) means CONFIG_PATH -- the X3 config -- exactly as before this
+    parameter existed. It is only ever the *base* config: when title/author/
+    chapters need to be merged in, the merge is read from this same path and
+    written to a temp file, so device-specific settings (e.g. X4's
+    480x800 [output].width/height) still flow through untouched.
 
     PDFs longer than CHUNK_THRESHOLD_PAGES are converted sequentially in
     CHUNK_SIZE_PAGES page-range chunks and the chunk XTCs repacked into one
@@ -751,24 +799,25 @@ def convert_pdf(
         xtc_path = Path(workdir) / "output.xtc"
         pdf_path.write_bytes(pdf_bytes)
 
-        config_path = CONFIG_PATH
+        base_config_path = CONFIG_PATH if config_path is None else config_path
+        effective_config_path = base_config_path
         if title or author:
             try:
-                merged = config_with_title_author(title, author)
+                merged = config_with_title_author(title, author, base_config_path)
             except Exception:  # noqa: BLE001 - metadata must never block conversion
                 logger.exception("config title merge failed; using base config")
             else:
                 merged_path = Path(workdir) / "config.toml"
                 merged_path.write_text(merged, encoding="utf-8")
-                config_path = str(merged_path)
+                effective_config_path = str(merged_path)
 
         # See the chapters parameter's docstring above for why this is a
         # separate config, used only for the final xtctool invocation.
-        final_config_path = config_path
+        final_config_path = effective_config_path
         if chapters:
             try:
                 merged_with_chapters = config_with_title_author_chapters(
-                    title, author, chapters
+                    title, author, chapters, base_config_path
                 )
             except Exception:  # noqa: BLE001 - metadata must never block conversion
                 logger.exception(
@@ -833,7 +882,7 @@ def convert_pdf(
             _run_xtctool(
                 [f"{pdf_path}:{start}-{end}"],
                 chunk_path,
-                config_path,
+                effective_config_path,
                 deadline - time.monotonic(),
                 timeout_seconds,
                 f"chunk {index}/{len(ranges)} pages {start}-{end}",
@@ -846,7 +895,8 @@ def convert_pdf(
         # Repack the chunk XTCs into the final container; the config (with the
         # merged title/author/chapters, when present) supplies the output
         # metadata -- see the chapters parameter's docstring above for why
-        # this is final_config_path rather than the per-chunk config_path.
+        # this is final_config_path rather than the per-chunk
+        # effective_config_path.
         _run_xtctool(
             [str(path) for path in chunk_paths],
             xtc_path,
@@ -1039,6 +1089,13 @@ class Handler(BaseHTTPRequestHandler):
             # existing behavior (author stays config-x3.toml's own "").
             raw_author = self.headers.get("X-Xtc-Author")
             author = decode_base64url_utf8(raw_author) if raw_author else ""
+            # X-Xtc-Device (optional, raw ASCII "x3"/"x4" -- see
+            # resolve_device's docstring): selects the config -- and thereby
+            # the output resolution -- xtctool converts into. Missing/absent
+            # header, or any value other than "x3"/"x4", falls back to "x3",
+            # which is what keeps every pre-X4 Worker request unaffected.
+            device = resolve_device(self.headers)
+            config_path = resolve_config_path(device)
             # X-Xtc-Chapters (optional): base64url JSON array of
             # {"name","marker"}, in chapter order -- see this module's
             # docstring and decode_chapters_header/resolve_chapters for the
@@ -1098,6 +1155,7 @@ class Handler(BaseHTTPRequestHandler):
                     author,
                     chapters,
                     diagnostics=convert_diagnostics,
+                    config_path=config_path,
                 )
         except ConversionError as exc:
             logger.error("conversion failed: %s; stderr: %s", exc, exc.stderr)

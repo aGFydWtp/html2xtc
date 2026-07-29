@@ -86,8 +86,6 @@ UPLOADED_PDF_CONVERSION_SLOTS = threading.Semaphore(
     MAX_CONCURRENT_UPLOADED_PDF_CONVERSIONS
 )
 
-OUTPUT_CANVAS_DEFAULT = (528, 792)
-
 _ALLOWED_CONTENT_TYPES = {"application/pdf", "application/x-pdf"}
 _PDF_MAGIC = b"%PDF-"
 _MAGIC_SEARCH_WINDOW = 1024
@@ -538,12 +536,17 @@ def render_page_image(
 # --- xtctool config -----------------------------------------------------
 
 
-def config_with_pdf_options(title: str, options: PdfConvertOptions) -> str:
-    """TOML text of app.CONFIG_PATH with [output].title and the
+def config_with_pdf_options(
+    title: str, options: PdfConvertOptions, config_path: str | None = None
+) -> str:
+    """TOML text of config_path (default: app.CONFIG_PATH, the X3 config --
+    see app.resolve_config_path for how handle_uploaded_pdf_request picks
+    the device-appropriate path) with [output].title and the
     threshold/invert/dither/dither_strength overrides from options applied,
     per spec section 11.10. Reuses app._toml_value for identical formatting
     to config_with_title."""
-    with open(app.CONFIG_PATH, "rb") as f:
+    resolved_config_path = app.CONFIG_PATH if config_path is None else config_path
+    with open(resolved_config_path, "rb") as f:
         config = tomllib.load(f)
     config.setdefault("output", {})["title"] = title
     xtg = config.setdefault("xtg", {})
@@ -560,17 +563,32 @@ def config_with_pdf_options(title: str, options: PdfConvertOptions) -> str:
     return "\n".join(lines)
 
 
-def _output_canvas_size() -> tuple[int, int]:
-    try:
-        with open(app.CONFIG_PATH, "rb") as f:
-            config = tomllib.load(f)
-        output = config.get("output", {})
-        width, height = output.get("width"), output.get("height")
-        if isinstance(width, int) and isinstance(height, int) and width > 0 and height > 0:
-            return width, height
-    except Exception:  # noqa: BLE001 - fall back to the known X3 resolution
-        logger.exception("failed to read output canvas size from config; using default")
-    return OUTPUT_CANVAS_DEFAULT
+def _output_canvas_size(config_path: str | None = None) -> tuple[int, int]:
+    """[output].width/height from config_path (default: app.CONFIG_PATH, the
+    X3 config -- see app.resolve_config_path for how
+    handle_uploaded_pdf_request picks the device-appropriate path).
+
+    Deliberately raises (RuntimeError, or whatever open()/tomllib.load()
+    raise) rather than falling back to a fixed size on failure: a previous
+    version of this function fell back to a hardcoded (528, 792) -- the X3
+    resolution -- on ANY read/parse failure. That was silently wrong for an
+    X4 request: config-x4.toml being unreadable would still produce a
+    528x792 XTC instead of 480x800, with nothing in the response indicating
+    the mismatch. config-x3.toml/config-x4.toml are shipped inside this
+    deployment's own container image, never user input, so a failure to read
+    one is an operational defect that should fail the request loudly (a 500
+    via handle_uploaded_pdf_request's generic exception handler), not a
+    runtime condition to degrade gracefully out of."""
+    resolved_config_path = app.CONFIG_PATH if config_path is None else config_path
+    with open(resolved_config_path, "rb") as f:
+        config = tomllib.load(f)
+    output = config.get("output", {})
+    width, height = output.get("width"), output.get("height")
+    if isinstance(width, int) and isinstance(height, int) and width > 0 and height > 0:
+        return width, height
+    raise RuntimeError(
+        f"config {resolved_config_path!r} has no valid [output].width/height"
+    )
 
 
 # --- request-level validation --------------------------------------------
@@ -658,12 +676,21 @@ def convert_uploaded_pdf(
     filename: str,
     timeout_seconds: int,
     workdir: Path,
+    device_config_path: str | None = None,
 ) -> tuple[bytes, str]:
     """Validates and converts the PDF at pdf_path into XTC bytes, returning
     (xtc_bytes, title). Raises PdfUploadError for any validation failure and
-    app.ConversionError for xtctool failures (mapped to 500 by the caller)."""
+    app.ConversionError for xtctool failures (mapped to 500 by the caller).
+
+    device_config_path is the device-resolved base config (see
+    app.resolve_device/app.resolve_config_path); None (every caller predating
+    the X4 device) means app.CONFIG_PATH -- the X3 config -- exactly as
+    before this parameter existed."""
     deadline = time.monotonic() + timeout_seconds
-    canvas_size = _output_canvas_size()
+    resolved_device_config_path = (
+        app.CONFIG_PATH if device_config_path is None else device_config_path
+    )
+    canvas_size = _output_canvas_size(resolved_device_config_path)
 
     try:
         doc = app.pymupdf.open(pdf_path)
@@ -703,7 +730,8 @@ def convert_uploaded_pdf(
 
         config_path = workdir / "config.toml"
         config_path.write_text(
-            config_with_pdf_options(title, options), encoding="utf-8"
+            config_with_pdf_options(title, options, resolved_device_config_path),
+            encoding="utf-8",
         )
 
         xtc_bytes = _convert_in_chunks(
@@ -832,6 +860,10 @@ def _handle_uploaded_pdf(handler) -> None:
     options = decode_pdf_options(handler.headers.get("X-Pdf-Options"))
     filename = decode_source_filename(handler.headers.get("X-Source-Filename"))
     timeout_seconds = _resolve_timeout_seconds(handler.headers)
+    # X-Xtc-Device (optional, raw ASCII "x3"/"x4" -- see app.resolve_device's
+    # docstring): same contract as /convert's handling of this header.
+    device = app.resolve_device(handler.headers)
+    device_config_path = app.resolve_config_path(device)
 
     # Acquired before the body is read: a full instance should say "busy" up
     # front rather than accept multi-megabyte bodies it cannot act on yet.
@@ -847,7 +879,7 @@ def _handle_uploaded_pdf(handler) -> None:
             _validate_pdf_magic(pdf_path)
 
             xtc_bytes, title = convert_uploaded_pdf(
-                pdf_path, options, filename, timeout_seconds, workdir
+                pdf_path, options, filename, timeout_seconds, workdir, device_config_path
             )
     finally:
         UPLOADED_PDF_CONVERSION_SLOTS.release()

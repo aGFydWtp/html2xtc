@@ -22,8 +22,9 @@ vi.mock("@cloudflare/containers", async (importOriginal) => {
   return { ...actual, getContainer: vi.fn(() => ({ fetch: fetchMock })) };
 });
 
-const { convertInContainer } = await import("../src/container");
+const { convertInContainer, convertUploadedPdfInContainer } = await import("../src/container");
 const { decodeBase64Url } = await import("../src/base64url");
+const { DEFAULT_PDF_OPTIONS } = await import("../src/pdf-upload");
 type Env = import("../src/types").Env;
 type XtcChapter = import("../packages/aozora-text/src/index").XtcChapter;
 
@@ -285,7 +286,100 @@ describe("convertInContainer — chapter-detection diagnostic headers (log-only)
   });
 });
 
-// convertUploadedPdfInContainer is deliberately not covered here: it has no
+// convertUploadedPdfInContainer is deliberately not covered above: it has no
 // `chapters` parameter at all (uploaded PDFs have no Worker-derived chapter
 // list to send — see its own doc comment in src/container.ts), so there is
-// nothing this feature adds to it worth asserting.
+// nothing that feature adds to it worth asserting. It IS covered below for
+// X-Xtc-Device, which it does carry (via pdfOptions.device).
+
+describe("convertInContainer — X-Xtc-Device", () => {
+  it("sends X-Xtc-Device: x3 by default (no device argument given)", async () => {
+    await convertInContainer(minimalEnv(), "job-1", new ArrayBuffer(0), 30_000);
+    expect(capturedRequest().headers.get("X-Xtc-Device")).toBe("x3");
+  });
+
+  it("sends X-Xtc-Device: x4 when explicitly given", async () => {
+    await convertInContainer(
+      minimalEnv(),
+      "job-1",
+      new ArrayBuffer(0),
+      30_000,
+      undefined,
+      undefined,
+      "x4",
+    );
+    expect(capturedRequest().headers.get("X-Xtc-Device")).toBe("x4");
+  });
+
+  it("sends the raw ASCII value, never base64url-encoded (unlike X-Xtc-Author/-Chapters)", async () => {
+    await convertInContainer(
+      minimalEnv(),
+      "job-1",
+      new ArrayBuffer(0),
+      30_000,
+      undefined,
+      undefined,
+      "x4",
+    );
+    const header = capturedRequest().headers.get("X-Xtc-Device");
+    expect(header).toBe("x4");
+    expect(decodeBase64Url(header as string)).not.toBe("x4");
+  });
+});
+
+describe("convertUploadedPdfInContainer — X-Xtc-Device", () => {
+  // Node's (unlike workerd's) Request constructor rejects a ReadableStream
+  // body without an explicit `duplex` option — a Node-only fetch-spec
+  // strictness unrelated to this feature (@cloudflare/workers-types'
+  // RequestInit doesn't even declare `duplex`, so production code can't add
+  // it without an unsafe cast). This locally shims the global Request for
+  // just these two tests so a real stream body can round-trip under vitest's
+  // Node environment; restored immediately after each test.
+  const withDuplexSafeRequest = async (run: () => Promise<void>): Promise<void> => {
+    const NativeRequest = globalThis.Request;
+    class DuplexSafeRequest extends NativeRequest {
+      constructor(input: string, init?: RequestInit) {
+        super(
+          input,
+          (init?.body instanceof ReadableStream
+            ? { ...init, duplex: "half" }
+            : init) as RequestInit,
+        );
+      }
+    }
+    vi.stubGlobal("Request", DuplexSafeRequest);
+    try {
+      await run();
+    } finally {
+      vi.stubGlobal("Request", NativeRequest);
+    }
+  };
+
+  it("sends X-Xtc-Device from pdfOptions.device (x3)", async () => {
+    await withDuplexSafeRequest(async () => {
+      await convertUploadedPdfInContainer(
+        minimalEnv(),
+        "job-1",
+        new ReadableStream(),
+        { ...DEFAULT_PDF_OPTIONS, device: "x3" },
+        "document.pdf",
+        30_000,
+      );
+      expect(capturedRequest().headers.get("X-Xtc-Device")).toBe("x3");
+    });
+  });
+
+  it("sends X-Xtc-Device from pdfOptions.device (x4)", async () => {
+    await withDuplexSafeRequest(async () => {
+      await convertUploadedPdfInContainer(
+        minimalEnv(),
+        "job-1",
+        new ReadableStream(),
+        { ...DEFAULT_PDF_OPTIONS, device: "x4" },
+        "document.pdf",
+        30_000,
+      );
+      expect(capturedRequest().headers.get("X-Xtc-Device")).toBe("x4");
+    });
+  });
+});

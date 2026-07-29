@@ -2,6 +2,7 @@
 // Copyright (C) 2026 aGFydWtp
 
 import type { Account } from "../auth/sessions";
+import type { DeviceId } from "../devices";
 import { bumpLibraryVersionForDevices } from "../devices/repository";
 import { resolveLibraryWriteMode } from "../feature-flags";
 import { outputXtcKey } from "../jobs";
@@ -71,6 +72,17 @@ export interface LibraryItemDto {
   sha256: string | null;
   createdAt: string;
   updatedAt: string;
+  /** Target device this XTC was converted for ("x3" | "x4"). */
+  device: DeviceId;
+  /**
+   * Output px width/height recorded from src/devices.ts's static profile
+   * table at conversion time, NOT measured from the converter's actual
+   * output — see src/library/repository.ts's LibraryItem.width/height for
+   * the full caveat (src/devices.ts vs converter/config-*.toml being two
+   * manually-synced sources of truth).
+   */
+  width: number;
+  height: number;
 }
 
 function toDto(item: LibraryItem): LibraryItemDto {
@@ -82,6 +94,9 @@ function toDto(item: LibraryItem): LibraryItemDto {
     sha256: item.sha256,
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
+    device: item.device,
+    width: item.width,
+    height: item.height,
   };
 }
 
@@ -183,6 +198,9 @@ export async function saveJobToLibrary(
       sizeBytes: copied.sizeBytes,
       sha256: copied.sha256,
       createdAt: nowIso,
+      device: copied.device,
+      width: copied.width,
+      height: copied.height,
     });
   } catch (error) {
     console.error(`library item insert failed for job ${request.jobId}`, error);

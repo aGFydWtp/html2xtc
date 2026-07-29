@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 import type { AozoraDocument } from "../packages/aozora-text/src/types";
+import { DEVICE_PROFILES } from "../src/devices";
 import { DEFAULT_TEXT_OPTIONS } from "../src/text-options";
 import {
   buildAozoraContentHtml,
@@ -94,6 +95,19 @@ describe("buildTextPrintCss", () => {
     expect(css).toContain("--margin-right: 32px;");
     expect(css).toContain("--margin-bottom: 40px;");
     expect(css).toContain("--margin-left: 32px;");
+  });
+
+  it("defaults to the X3 device profile when no device is given", () => {
+    const css = buildTextPrintCss(DEFAULT_TEXT_OPTIONS);
+    expect(css).toContain("--page-width: 528px;");
+    expect(css).toContain("--page-height: 792px;");
+  });
+
+  it("emits the fixed 480x800 CSS-px page geometry for the X4 device profile", () => {
+    const css = buildTextPrintCss(DEFAULT_TEXT_OPTIONS, DEVICE_PROFILES.x4);
+    expect(css).toContain("size: 480px 800px;");
+    expect(css).toContain("--page-width: 480px;");
+    expect(css).toContain("--page-height: 800px;");
   });
 
   it("binds font/size/line-height/paragraph-spacing custom properties to the options", () => {
@@ -345,6 +359,28 @@ describe("buildTextDocumentShell", () => {
     });
     expect(plainHtml).not.toContain(".aozora-page-break");
     expect(plainHtml).not.toContain(".gaiji-fallback");
+  });
+
+  it("defaults to the X3 page geometry, and switches to X4 when given the X4 device profile", () => {
+    const contentHtml = buildPlainTextContentHtml("本文");
+    const x3Html = buildTextDocumentShell({
+      contentHtml,
+      options: DEFAULT_TEXT_OPTIONS,
+      documentTitle: "T",
+      displayTitle: "",
+      author: "",
+    });
+    expect(x3Html).toContain("size: 528px 792px;");
+
+    const x4Html = buildTextDocumentShell({
+      contentHtml,
+      options: DEFAULT_TEXT_OPTIONS,
+      documentTitle: "T",
+      displayTitle: "",
+      author: "",
+      device: DEVICE_PROFILES.x4,
+    });
+    expect(x4Html).toContain("size: 480px 800px;");
   });
 
   it("embeds the content HTML verbatim inside the article", () => {

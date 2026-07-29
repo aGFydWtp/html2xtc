@@ -4,6 +4,8 @@
 import { Readability } from "@mozilla/readability";
 import { parseHTML } from "linkedom";
 import { prepareAozoraRenderInput } from "./aozora";
+import { DEFAULT_DEVICE_PROFILE } from "./devices";
+import type { DeviceProfile } from "./devices";
 import { buildInlineFontCss } from "./fonts";
 import type { FontFetcher } from "./fonts";
 import { resolveExtractMinChars } from "./jobs";
@@ -389,6 +391,7 @@ export async function prepareRenderInput(
   fontFetch: FontFetcher = fetch,
   mode: ConvertMode = "extract",
   options: RenderOptions = DEFAULT_RENDER_OPTIONS,
+  device: DeviceProfile = DEFAULT_DEVICE_PROFILE,
 ): Promise<RenderInput> {
   // Site preprocessing: Aozora Bunko XHTML gets the dedicated extraction
   // regardless of mode (both callers route Aozora URLs here even for mode
@@ -403,6 +406,7 @@ export async function prepareRenderInput(
       fetchSource,
       fontFetch,
       options,
+      device,
     );
     if (aozora !== null) {
       console.log(`[${jobId}] extract path: aozora`);
@@ -431,6 +435,7 @@ export async function prepareRenderInput(
         jobId,
         fontFetch,
         options,
+        device,
       );
     }
     // Fetch worked but Readability found too little; record why the browser
@@ -447,7 +452,7 @@ export async function prepareRenderInput(
     const article = extractArticle(rendered, target.toString());
     if (isExtractSufficient(article, env)) {
       console.log(`[${jobId}] extract path: browser`);
-      return buildPrintInput(article, target.toString(), jobId, fontFetch, options);
+      return buildPrintInput(article, target.toString(), jobId, fontFetch, options, device);
     }
   }
 
@@ -468,6 +473,7 @@ async function buildPrintInput(
   jobId: string,
   fontFetch: FontFetcher,
   options: RenderOptions,
+  device: DeviceProfile = DEFAULT_DEVICE_PROFILE,
 ): Promise<RenderInput> {
   const convertedAt = formatJstTimestamp(new Date());
   const fontCss = await buildInlineFontCss(
@@ -478,7 +484,7 @@ async function buildPrintInput(
   );
   return {
     kind: "html",
-    html: buildPrintHtml(article, sourceUrl, convertedAt),
+    html: buildPrintHtml(article, sourceUrl, convertedAt, undefined, undefined, device),
     fontCss,
     origin: "extract",
   };

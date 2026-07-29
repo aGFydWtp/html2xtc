@@ -26,6 +26,44 @@ describe("prepareTextDocument — inputFormat omission (backward compatibility)"
   });
 });
 
+describe("prepareTextDocument — device (X3/X4) threading", () => {
+  it("defaults to the X3 page geometry (528x792) in the rendered html", () => {
+    const prepared = prepareTextDocument({
+      decodedText: "本文です。",
+      filename: "novel.txt",
+      options: DEFAULT_TEXT_OPTIONS,
+    });
+    expect(prepared.html).toContain("size: 528px 792px;");
+  });
+
+  it("emits the X4 page geometry (480x800) when options.device is x4 (plain)", () => {
+    const prepared = prepareTextDocument({
+      decodedText: "本文です。",
+      filename: "novel.txt",
+      options: { ...DEFAULT_TEXT_OPTIONS, device: "x4" },
+    });
+    expect(prepared.html).toContain("size: 480px 800px;");
+  });
+
+  it("emits the X4 page geometry (480x800) when options.device is x4 (aozora)", () => {
+    const prepared = prepareTextDocument({
+      decodedText: "表題\n作者名\n\n本文です。",
+      filename: "novel.txt",
+      options: { ...DEFAULT_TEXT_OPTIONS, inputFormat: "aozora", device: "x4" },
+    });
+    expect(prepared.html).toContain("size: 480px 800px;");
+  });
+
+  it("emits the X4 page geometry (480x800) when options.device is x4 (markdown)", () => {
+    const prepared = prepareTextDocument({
+      decodedText: "# 見出し\n\n本文です。",
+      filename: "novel.md",
+      options: { ...DEFAULT_TEXT_OPTIONS, inputFormat: "markdown", device: "x4" },
+    });
+    expect(prepared.html).toContain("size: 480px 800px;");
+  });
+});
+
 describe("prepareTextDocument — plain output parity with buildTextArticleHtml", () => {
   it("produces byte-identical html to the existing normalizeText→resolveDocumentTitle→buildTextArticleHtml pipeline", () => {
     const decodedText = "表題を含まない本文です。\n\n二つ目の段落。\r\nCRLFも混ざる。";

@@ -22,6 +22,7 @@
  */
 
 import { convertInContainer } from "../container";
+import type { DeviceId } from "../devices";
 import { buildInlineFontCss } from "../fonts";
 import { resolveMaxPdfBytes } from "../jobs";
 import { renderSelfStyledHtmlPdf } from "../pdf";
@@ -282,6 +283,10 @@ export interface ConvertHtmlToXtcSyncInput {
   fontCss: string | null;
   /** Forwarded to convertInContainer as its timeoutMs. */
   timeoutMs: number;
+  /** Target Xteink device this `html` was actually laid out for (src/text-html.ts's
+   * page geometry) — forwarded to convertInContainer's X-Xtc-Device so the
+   * Container converts at the SAME resolution the PDF was rendered at. */
+  device: DeviceId;
 }
 
 export interface SyncXtcResult {
@@ -361,7 +366,19 @@ export async function convertHtmlToXtcSync(
 
   let converterResponse: Response;
   try {
-    converterResponse = await convertInContainer(env, input.jobId, pdfBytes, input.timeoutMs);
+    converterResponse = await convertInContainer(
+      env,
+      input.jobId,
+      pdfBytes,
+      input.timeoutMs,
+      // No author/chapters for a preview (mirrors the URL sync path's own
+      // "no author on this path" stance in src/index.ts) — device is the
+      // one field this endpoint must forward, so the Container converts at
+      // the same resolution renderSelfStyledHtmlPdf actually rendered.
+      undefined,
+      undefined,
+      input.device,
+    );
   } catch (error) {
     if (error instanceof DOMException && error.name === "TimeoutError") {
       throw new SyncConversionError(504, "TIMEOUT", "XTC conversion timed out");
@@ -547,6 +564,7 @@ export async function handleTextPreview(request: Request, env: Env): Promise<Res
         html: prepared.html,
         fontCss,
         timeoutMs: TEXT_PREVIEW_CONTAINER_TIMEOUT_MS,
+        device: parsed.options.device,
       }),
       TEXT_PREVIEW_TIMEOUT_MS,
     );

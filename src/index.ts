@@ -9,6 +9,7 @@ import {
 } from "./catalog-db";
 import { convertInContainer } from "./container";
 import { cleanupAppDb } from "./db/cleanup";
+import { resolveDeviceId, resolveDeviceProfile } from "./devices";
 import { registerDeviceRoutes } from "./devices/routes";
 import { decodeEpubOptionsHeader } from "./epub-options";
 import {
@@ -349,14 +350,20 @@ interface ConvertRequest {
    */
   layout?: string;
   font?: string;
+  /**
+   * Raw optional target device: validated fail-soft by resolveDeviceId
+   * (src/devices.ts) — an absent or unrecognized value falls back to "x3",
+   * never a 4xx, mirroring layout/font's stance above.
+   */
+  device?: string;
 }
 
 /**
- * Parses the {url, mode, layout, font} request body and runs SSRF
+ * Parses the {url, mode, layout, font, device} request body and runs SSRF
  * validation. mode is optional and defaults to "full" (the pre-extract
- * behavior); layout/font are optional render options resolved per URL by
- * resolveRenderOptions. Returns the validated request, or the error
- * Response to send as-is.
+ * behavior); layout/font/device are optional render options resolved per
+ * request by resolveRenderOptions / resolveDeviceId. Returns the validated
+ * request, or the error Response to send as-is.
  */
 async function readConvertRequest(
   request: Request,
@@ -365,12 +372,14 @@ async function readConvertRequest(
   let mode: unknown;
   let layout: unknown;
   let font: unknown;
+  let device: unknown;
   try {
-    ({ url, mode, layout, font } = await request.json<{
+    ({ url, mode, layout, font, device } = await request.json<{
       url?: unknown;
       mode?: unknown;
       layout?: unknown;
       font?: unknown;
+      device?: unknown;
     }>());
   } catch {
     return Response.json({ error: "request body must be JSON" }, { status: 400 });
@@ -391,6 +400,7 @@ async function readConvertRequest(
       mode: mode ?? "full",
       ...(typeof layout === "string" ? { layout } : {}),
       ...(typeof font === "string" ? { font } : {}),
+      ...(typeof device === "string" ? { device } : {}),
     };
   } catch (error) {
     if (error instanceof UrlValidationError) {
@@ -405,7 +415,7 @@ async function handleCreateJob(request: Request, env: Env): Promise<Response> {
   if (parsed instanceof Response) {
     return parsed;
   }
-  const { target, mode, layout, font } = parsed;
+  const { target, mode, layout, font, device } = parsed;
 
   const jobId = crypto.randomUUID();
   try {
@@ -415,9 +425,11 @@ async function handleCreateJob(request: Request, env: Env): Promise<Response> {
         url: target.toString(),
         mode,
         // Stored raw; the Workflow re-resolves them via resolveRenderOptions
-        // (params persist across deploys, so it never trusts the shape).
+        // / resolveDeviceId (params persist across deploys, so it never
+        // trusts the shape).
         ...(layout !== undefined ? { layout } : {}),
         ...(font !== undefined ? { font } : {}),
+        ...(device !== undefined ? { device } : {}),
       },
       // The submitted URL lives in params, so instance state must not outlive
       // the ~24h promised to users (default retention is 30 days on Paid).
@@ -847,10 +859,14 @@ async function handleConvert(request: Request, env: Env): Promise<Response> {
   if (parsed instanceof Response) {
     return parsed;
   }
-  const { target, mode, layout, font } = parsed;
+  const { target, mode, layout, font, device } = parsed;
   // Explicit layout/font win; blanks (and invalid values, fail-soft) resolve
   // to per-site defaults — Aozora Bunko: vertical + BIZ UDMincho.
   const options = resolveRenderOptions(target, layout, font);
+  // Fail-soft like layout/font above: an absent or unrecognized device
+  // value resolves to "x3", never a 4xx.
+  const deviceId = resolveDeviceId(device);
+  const deviceProfile = resolveDeviceProfile(deviceId);
 
   const jobId = crypto.randomUUID();
 
@@ -877,16 +893,17 @@ async function handleConvert(request: Request, env: Env): Promise<Response> {
         undefined,
         mode,
         options,
+        deviceProfile,
       );
       if (input.kind === "html") {
         chapters = input.chapters ?? [];
       }
       pdfResponse =
         input.kind === "html"
-          ? await renderPdfFromHtml(env, input.html, input.fontCss, options)
-          : await renderPdf(env, input.url, options);
+          ? await renderPdfFromHtml(env, input.html, input.fontCss, options, deviceProfile)
+          : await renderPdf(env, input.url, options, deviceProfile);
     } else {
-      pdfResponse = await renderPdf(env, target.toString(), options);
+      pdfResponse = await renderPdf(env, target.toString(), options, deviceProfile);
     }
   } catch (error) {
     console.error(`[${jobId}] Browser Run request failed`, error);
@@ -923,7 +940,15 @@ async function handleConvert(request: Request, env: Env): Promise<Response> {
     // No author on this sync URL path (container.ts's own doc comment);
     // `chapters` is set above only when the dedicated Aozora extractor ran
     // and found headings.
-    convertInContainer(env, jobId, pdfBytes, SYNC_CONVERTER_FETCH_TIMEOUT_MS, undefined, chapters),
+    convertInContainer(
+      env,
+      jobId,
+      pdfBytes,
+      SYNC_CONVERTER_FETCH_TIMEOUT_MS,
+      undefined,
+      chapters,
+      deviceId,
+    ),
   ]);
 
   if (putResult.status === "rejected") {
@@ -964,7 +989,7 @@ async function handleConvert(request: Request, env: Env): Promise<Response> {
 
     let title: string | undefined;
     try {
-      ({ title } = await storeXtcOutput(env, jobId, converterResponse));
+      ({ title } = await storeXtcOutput(env, jobId, converterResponse, deviceId));
     } catch (error) {
       console.error(`[${jobId}] R2 put output.xtc failed`, error);
       return Response.json({ error: "storage error", jobId }, { status: 500 });

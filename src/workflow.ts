@@ -31,6 +31,8 @@ import { computeDocumentMetrics } from "./aozora-fallback/metrics";
 import { writeAozoraFallbackProgress } from "./aozora-fallback/progress";
 import { splitContentIntoChunks } from "./aozora-fallback/split";
 import { convertInContainer, convertUploadedPdfInContainer } from "./container";
+import { resolveDeviceId, resolveDeviceProfile } from "./devices";
+import type { DeviceProfile } from "./devices";
 import { DEFAULT_EPUB_OPTIONS } from "./epub-options";
 import type { EpubConvertOptions } from "./epub-options";
 import {
@@ -340,6 +342,11 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
     // and every step attempt computes the same value.
     const target = new URL(url);
     const options = resolveRenderOptions(target, event.payload.layout, event.payload.font);
+    // Same fail-soft stance as options above: an absent/unrecognized
+    // event.payload.device resolves to "x3" — full backward compatibility
+    // for every job created before this field existed.
+    const deviceId = resolveDeviceId(event.payload.device);
+    const device = resolveDeviceProfile(deviceId);
     // Aozora Bunko URLs run the extract-content step regardless of mode:
     // their dedicated extraction lives behind prepareRenderInput, which for
     // mode "full" degrades back to the plain URL render on any problem.
@@ -363,6 +370,7 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
             undefined,
             mode,
             options,
+            device,
           );
           if (input.kind === "url") {
             return {
@@ -507,11 +515,12 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
             articleHtml,
             fontCss,
             options,
+            device,
           );
         } else {
           mode = "full";
           renderStart = Date.now();
-          response = await renderPdf(this.env, url, options);
+          response = await renderPdf(this.env, url, options, device);
         }
         const elapsedMs = Date.now() - renderStart;
         // Browser Rendering's Quick Actions always report the browser time a
@@ -653,7 +662,15 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
         // convert-xtc below needs no branch of its own (spec §16.5/§20
         // "source.pdf は通常経路とfallbackで同じ後段契約").
         aozoraFallbackKeys = allAozoraFallbackKeys(jobId);
-        pdfKey = await this.runAozoraTimeoutFallback(jobId, url, articleKey, fontsKey, options, step);
+        pdfKey = await this.runAozoraTimeoutFallback(
+          jobId,
+          url,
+          articleKey,
+          fontsKey,
+          options,
+          device,
+          step,
+        );
       }
 
       const { xtcKey, title } = await step.do(
@@ -696,6 +713,7 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
               // itself, not a separate per-branch value.
               undefined,
               chapters,
+              deviceId,
             );
           } catch (error) {
             if (error instanceof DOMException && error.name === "TimeoutError") {
@@ -722,7 +740,7 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
             }
             throw new Error("XTC conversion failed");
           }
-          const { title } = await storeXtcOutput(this.env, jobId, response);
+          const { title } = await storeXtcOutput(this.env, jobId, response, deviceId);
           return { xtcKey: outputXtcKey(jobId), title };
         },
       );
@@ -779,6 +797,7 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
     articleKey: string | null,
     fontsKey: string | null,
     options: RenderOptions,
+    device: DeviceProfile,
     step: WorkflowStep,
   ): Promise<string> {
     const SPLIT_FAILED_MESSAGE = "the document could not be split safely";
@@ -825,12 +844,17 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
         for (let index = 0; index < 4; index++) {
           const chunkIndex = index as AozoraFallbackChunkIndex;
           const dom = domChunks[index];
-          const chunkHtml = buildAozoraFallbackChunkHtml(dom.html, chunkIndex, {
-            title: parsed.title,
-            byline: parsed.byline,
-            sourceUrl,
-            convertedAt,
-          });
+          const chunkHtml = buildAozoraFallbackChunkHtml(
+            dom.html,
+            chunkIndex,
+            {
+              title: parsed.title,
+              byline: parsed.byline,
+              sourceUrl,
+              convertedAt,
+            },
+            device,
+          );
           const htmlKey = aozoraFallbackChunkHtmlKey(jobId, chunkIndex);
           await this.env.XTC_BUCKET.put(htmlKey, chunkHtml, {
             httpMetadata: { contentType: "text/html; charset=utf-8" },
@@ -912,7 +936,7 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
             }
           }
           const renderStart = Date.now();
-          const response = await renderPdfFromHtml(this.env, chunkHtml, fontCss, options);
+          const response = await renderPdfFromHtml(this.env, chunkHtml, fontCss, options, device);
           const elapsedMs = Date.now() - renderStart;
           const browserMsHeader = response.headers.get("X-Browser-Ms-Used");
           const browserMsParsed = browserMsHeader !== null ? Number(browserMsHeader) : NaN;
@@ -1127,7 +1151,7 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
             // internal error — left retryable like the url-source path.
             throw new Error("XTC conversion failed");
           }
-          const { title } = await storeXtcOutput(this.env, jobId, response);
+          const { title } = await storeXtcOutput(this.env, jobId, response, resolveDeviceId(pdfOptions.device));
           return { xtcKey: outputXtcKey(jobId), title };
         },
       );
@@ -1483,6 +1507,11 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
               // packages/aozora-text/src/render-html.ts for the selection
               // rule; never level 1 unconditionally).
               chapters,
+              // textOptions.device (X-Text-Options): resolveDeviceId guards
+              // against a stored job whose textOptions predates this field
+              // (undefined at runtime despite the TS type) — same fail-soft
+              // stance as every other device resolution point.
+              resolveDeviceId(textOptions.device),
             );
           } catch (error) {
             if (error instanceof DOMException && error.name === "TimeoutError") {
@@ -1503,7 +1532,7 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
             }
             throw new Error("XTC conversion failed");
           }
-          const { title } = await storeXtcOutput(this.env, jobId, response);
+          const { title } = await storeXtcOutput(this.env, jobId, response, resolveDeviceId(textOptions.device));
           return { xtcKey: outputXtcKey(jobId), title };
         },
       );
@@ -1825,6 +1854,11 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
               CONVERTER_FETCH_TIMEOUT_MS,
               resolvedAuthor,
               chapters,
+              // epubOptions.device (X-Epub-Options) — same resolveDeviceId
+              // fail-soft guard as the TXT pipeline's identical argument
+              // above (protects a stored job whose epubOptions predates this
+              // field).
+              resolveDeviceId(epubOptions.device),
             );
           } catch (error) {
             if (error instanceof DOMException && error.name === "TimeoutError") {
@@ -1845,7 +1879,7 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
             }
             throw new Error("XTC conversion failed");
           }
-          const { title } = await storeXtcOutput(this.env, jobId, response);
+          const { title } = await storeXtcOutput(this.env, jobId, response, resolveDeviceId(epubOptions.device));
           return { xtcKey: outputXtcKey(jobId), title };
         },
       );

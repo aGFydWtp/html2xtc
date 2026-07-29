@@ -7,6 +7,8 @@ import type {
   RenderInput,
   SourceHtmlFetcher,
 } from "./extract";
+import { DEFAULT_DEVICE_PROFILE } from "./devices";
+import type { DeviceProfile } from "./devices";
 import { buildInlineFontCss } from "./fonts";
 import type { FontFetcher } from "./fonts";
 import { formatJstTimestamp } from "./pdf";
@@ -253,6 +255,7 @@ export async function prepareAozoraRenderInput(
   fetchSource: SourceHtmlFetcher,
   fontFetch: FontFetcher,
   options: RenderOptions,
+  device: DeviceProfile = DEFAULT_DEVICE_PROFILE,
 ): Promise<RenderInput | null> {
   try {
     const fetched = await fetchSource(target, jobId);
@@ -282,6 +285,8 @@ export async function prepareAozoraRenderInput(
         fetched.finalUrl.toString(),
         convertedAt,
         AOZORA_DOCUMENT_CSS,
+        undefined,
+        device,
       ),
       fontCss,
       origin: "aozora",

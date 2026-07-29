@@ -76,6 +76,29 @@ describe("validateEpubConvertOptions (spec §4.1.5)", () => {
       validateEpubConvertOptions({ ...DEFAULT_EPUB_OPTIONS, extra: "ignored" }).ok,
     ).toBe(true);
   });
+
+  it("accepts an explicit device (x3 or x4)", () => {
+    expect(validateEpubConvertOptions({ ...DEFAULT_EPUB_OPTIONS, device: "x4" })).toEqual({
+      ok: true,
+      options: { ...DEFAULT_EPUB_OPTIONS, device: "x4" },
+    });
+    expect(validateEpubConvertOptions({ ...DEFAULT_EPUB_OPTIONS, device: "x3" }).ok).toBe(true);
+  });
+
+  it("rejects an unlisted device value", () => {
+    expect(validateEpubConvertOptions({ ...DEFAULT_EPUB_OPTIONS, device: "x5" })).toEqual({
+      ok: false,
+      error: "invalid device",
+    });
+  });
+
+  it("defaults a missing device to \"x3\" (backward compatibility)", () => {
+    const { device: _omitted, ...withoutField } = DEFAULT_EPUB_OPTIONS;
+    expect(validateEpubConvertOptions(withoutField)).toEqual({
+      ok: true,
+      options: DEFAULT_EPUB_OPTIONS,
+    });
+  });
 });
 
 describe("decodeEpubOptionsHeader (spec §4.1.2)", () => {

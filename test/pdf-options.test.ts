@@ -53,6 +53,25 @@ describe("validatePdfConvertOptions — accepts", () => {
     expect(validatePdfConvertOptions({ ...DEFAULT_PDF_OPTIONS, fit: "contain" }).ok).toBe(true);
     expect(validatePdfConvertOptions({ ...DEFAULT_PDF_OPTIONS, fit: "cover" }).ok).toBe(true);
   });
+
+  it("accepts both device values", () => {
+    expect(validatePdfConvertOptions({ ...DEFAULT_PDF_OPTIONS, device: "x3" })).toEqual({
+      ok: true,
+      options: { ...DEFAULT_PDF_OPTIONS, device: "x3" },
+    });
+    expect(validatePdfConvertOptions({ ...DEFAULT_PDF_OPTIONS, device: "x4" })).toEqual({
+      ok: true,
+      options: { ...DEFAULT_PDF_OPTIONS, device: "x4" },
+    });
+  });
+
+  it("defaults device to \"x3\" when the field is entirely absent (back-compat)", () => {
+    const { device: _device, ...rest } = DEFAULT_PDF_OPTIONS;
+    expect(validatePdfConvertOptions(rest)).toEqual({
+      ok: true,
+      options: DEFAULT_PDF_OPTIONS,
+    });
+  });
 });
 
 describe("validatePdfConvertOptions — rejects (no implicit correction)", () => {
@@ -144,6 +163,12 @@ describe("validatePdfConvertOptions — rejects (no implicit correction)", () =>
   it("rejects a missing crop object", () => {
     const { crop: _crop, ...rest } = DEFAULT_PDF_OPTIONS;
     expect(validatePdfConvertOptions(rest).ok).toBe(false);
+  });
+
+  it("rejects an unlisted device value rather than falling back to x3", () => {
+    expect(validatePdfConvertOptions({ ...DEFAULT_PDF_OPTIONS, device: "x5" }).ok).toBe(false);
+    expect(validatePdfConvertOptions({ ...DEFAULT_PDF_OPTIONS, device: "" }).ok).toBe(false);
+    expect(validatePdfConvertOptions({ ...DEFAULT_PDF_OPTIONS, device: 3 }).ok).toBe(false);
   });
 });
 

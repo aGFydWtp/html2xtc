@@ -3,6 +3,8 @@
 
 import { Container, getContainer } from "@cloudflare/containers";
 import { encodeBase64Url } from "./base64url";
+import { DEFAULT_DEVICE_ID } from "./devices";
+import type { DeviceId } from "./devices";
 import { resolveMaxPdfBytes } from "./jobs";
 import { resolveMaxUploadPdfBytes } from "./pdf-upload";
 import type { Env, PdfConvertOptions } from "./types";
@@ -212,6 +214,12 @@ function logChapterDiagnostics(
  * empty array" itself. Capped at MAX_XTC_CHAPTERS (capChapters above) right
  * here, the one chokepoint every caller funnels through, rather than in each
  * caller separately.
+ *
+ * `device` (default "x3", src/devices.ts) is always sent as X-Xtc-Device —
+ * unlike author/chapters above, never omitted even for the default value —
+ * so the Container's device-specific output geometry (528x792 for x3,
+ * 480x800 for x4) always matches what this Worker actually rendered the PDF
+ * for.
  */
 export async function convertInContainer(
   env: Env,
@@ -220,6 +228,7 @@ export async function convertInContainer(
   timeoutMs: number,
   author?: string,
   chapters?: XtcChapter[],
+  device: DeviceId = DEFAULT_DEVICE_ID,
 ): Promise<Response> {
   const container = getContainer(env.XTC_CONVERTER, converterInstanceName(jobId));
   // Per-request subprocess timeout for app.py, kept below this fetch's budget
@@ -239,6 +248,11 @@ export async function convertInContainer(
         // Worker owns the authoritative size limit; tell the container so its
         // 413 threshold tracks resolveMaxPdfBytes instead of its own default.
         "X-Max-Pdf-Bytes": String(resolveMaxPdfBytes(env)),
+        // Raw ASCII value ("x3"/"x4"), never base64url-encoded — unlike
+        // X-Xtc-Author/X-Xtc-Chapters below, this never carries arbitrary
+        // UTF-8, so the extra encoding step would be pointless. Always sent,
+        // even for the default "x3", per this function's own doc comment.
+        "X-Xtc-Device": device,
         ...(author !== undefined && author.length > 0
           ? { "X-Xtc-Author": encodeBase64Url(author) }
           : {}),
@@ -294,6 +308,10 @@ export function convertUploadedPdfInContainer(
         "X-Max-Pdf-Bytes": String(resolveMaxUploadPdfBytes(env)),
         "X-Pdf-Options": encodeBase64Url(JSON.stringify(pdfOptions)),
         "X-Source-Filename": encodeBase64Url(filename),
+        // Same contract as convertInContainer's X-Xtc-Device: raw ASCII, and
+        // always sent (pdfOptions.device is always concretely "x3"/"x4" —
+        // validatePdfConvertOptions never leaves it undefined).
+        "X-Xtc-Device": pdfOptions.device,
       },
       body: pdfBody,
       signal: AbortSignal.timeout(timeoutMs),

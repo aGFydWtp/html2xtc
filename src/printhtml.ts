@@ -2,6 +2,8 @@
 // Copyright (C) 2026 aGFydWtp
 
 import { parseHTML } from "linkedom";
+import { DEFAULT_DEVICE_PROFILE } from "./devices";
+import type { DeviceProfile } from "./devices";
 import type { ExtractedArticle } from "./extract";
 
 /**
@@ -83,8 +85,6 @@ const LAZY_CLEANUP_ATTRIBUTES = [
   "data-sizes",
 ] as const;
 
-/** X3 output width in px — the srcset candidate target. */
-const TARGET_IMAGE_WIDTH = 528;
 
 /**
  * Sanitizes a Readability content fragment for printing:
@@ -105,6 +105,7 @@ export function sanitizeContent(
   contentHtml: string,
   baseUrl: string,
   title?: string,
+  device: DeviceProfile = DEFAULT_DEVICE_PROFILE,
 ): string {
   const { document } = parseHTML(
     `<!doctype html><html><head></head><body>${contentHtml}</body></html>`,
@@ -121,7 +122,7 @@ export function sanitizeContent(
   // <source> elements cannot be rescued — the surviving <img> is normalized
   // from whatever src/srcset/data-* it carries itself, nothing more.
   for (const img of [...body.querySelectorAll("img")]) {
-    normalizeLazyImage(img);
+    normalizeLazyImage(img, device.imageTargetWidthPx);
   }
 
   for (const el of [...body.querySelectorAll("*")]) {
@@ -205,7 +206,7 @@ function resolveUrlAttribute(
  * attribute loop applies resolveUrlAttribute to src afterwards, which also
  * discards a promoted javascript:/data: value.
  */
-function normalizeLazyImage(el: AttrElement): void {
+function normalizeLazyImage(el: AttrElement, targetImageWidthPx: number): void {
   if (isPlaceholderSrc(el.getAttribute("src"))) {
     let candidate: string | null = null;
     for (const name of LAZY_SRC_ATTRIBUTES) {
@@ -217,7 +218,7 @@ function normalizeLazyImage(el: AttrElement): void {
     }
     if (candidate === null) {
       for (const name of LAZY_SRCSET_ATTRIBUTES) {
-        candidate = pickFromSrcset(el.getAttribute(name));
+        candidate = pickFromSrcset(el.getAttribute(name), targetImageWidthPx);
         if (candidate !== null) {
           break;
         }
@@ -307,7 +308,8 @@ function isPlaceholderFileName(value: string): boolean {
 }
 
 /**
- * Picks one URL out of a srcset-shaped value, aimed at TARGET_IMAGE_WIDTH:
+ * Picks one URL out of a srcset-shaped value, aimed at targetImageWidthPx
+ * (the caller's DeviceProfile.imageTargetWidthPx, src/devices.ts):
  * the smallest width descriptor that still covers it, else the largest
  * available; for density descriptors the lowest density (1x). Candidates are
  * split on bare commas, which mis-splits URLs that themselves contain a
@@ -316,7 +318,7 @@ function isPlaceholderFileName(value: string): boolean {
  * and for data: URLs — where commas are structural — whatever fragment gets
  * promoted is dropped by the scheme check.
  */
-function pickFromSrcset(srcset: string | null): string | null {
+function pickFromSrcset(srcset: string | null, targetImageWidthPx: number): string | null {
   if (srcset === null) {
     return null;
   }
@@ -353,7 +355,7 @@ function pickFromSrcset(srcset: string | null): string | null {
   }
   const withWidth = candidates.filter((c): c is Candidate & { width: number } => c.width !== null);
   if (withWidth.length > 0) {
-    const covering = withWidth.filter((c) => c.width >= TARGET_IMAGE_WIDTH);
+    const covering = withWidth.filter((c) => c.width >= targetImageWidthPx);
     const pool = covering.length > 0 ? covering : withWidth;
     const best =
       covering.length > 0
@@ -431,6 +433,7 @@ export function buildPrintHtml(
   convertedAt: string,
   documentCss?: string,
   options?: PrintDocumentOptions,
+  device: DeviceProfile = DEFAULT_DEVICE_PROFILE,
 ): string {
   const opts = { ...DEFAULT_PRINT_DOCUMENT_OPTIONS, ...options };
   const { document } = parseHTML(
@@ -494,7 +497,7 @@ export function buildPrintHtml(
 
   const content = document.createElement("div");
   // Already sanitized; this is the one deliberate innerHTML assignment.
-  content.innerHTML = sanitizeContent(article.contentHtml, sourceUrl, article.title);
+  content.innerHTML = sanitizeContent(article.contentHtml, sourceUrl, article.title, device);
   document.body.appendChild(content);
 
   if (opts.includeColophon) {

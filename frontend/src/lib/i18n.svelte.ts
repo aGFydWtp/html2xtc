@@ -441,6 +441,7 @@ export interface Messages {
   device_library_reload: string;
   device_library_empty: string;
   device_library_save_failed: string;
+  device_library_resolution_mismatch: string;
 
   pairing_dialog_title: string;
   pairing_login_required: string;
@@ -865,6 +866,7 @@ export const I18N: Record<Lang, Messages> = {
     device_library_reload: "再読み込み",
     device_library_empty: "ライブラリにXTCがありません。先に変換してライブラリへ保存してください。",
     device_library_save_failed: "配信リストの保存に失敗しました。",
+    device_library_resolution_mismatch: "解像度が異なります",
 
     pairing_dialog_title: "端末のペアリング承認",
     pairing_login_required: "ペアリングを承認するにはログインしてください。",
@@ -1289,6 +1291,7 @@ export const I18N: Record<Lang, Messages> = {
     device_library_reload: "Reload",
     device_library_empty: "Your library has no XTC files yet. Convert something and save it to your library first.",
     device_library_save_failed: "Failed to save the reading list.",
+    device_library_resolution_mismatch: "Different resolution",
 
     pairing_dialog_title: "Approve device pairing",
     pairing_login_required: "Please log in to approve this pairing.",

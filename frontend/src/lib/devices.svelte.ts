@@ -9,6 +9,16 @@ export interface Device {
   status: string;
   createdAt: string;
   lastSeenAt: string | null;
+  /**
+   * Machine-declared model/resolution from pairing
+   * (migrations/app/0006_pairing_declared_device.sql). null means unknown —
+   * a device paired before this field existed, or by firmware that never
+   * declared one — and must NOT be treated as any particular model; the
+   * resolution-mismatch warning (resolution-mismatch.ts) skips null.
+   */
+  device: string | null;
+  width: number | null;
+  height: number | null;
 }
 
 export interface DeviceLibraryItem {
@@ -53,6 +63,9 @@ function parseDevice(raw: unknown): Device | null {
     status: r.status,
     createdAt: r.createdAt,
     lastSeenAt: typeof r.lastSeenAt === "string" ? r.lastSeenAt : null,
+    device: typeof r.device === "string" ? r.device : null,
+    width: typeof r.width === "number" ? r.width : null,
+    height: typeof r.height === "number" ? r.height : null,
   };
 }
 

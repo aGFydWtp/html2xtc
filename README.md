@@ -1,6 +1,6 @@
 # html-to-xtc
 
-URL を 1 つ POST すると、印刷用 CSS を適用して PDF 化し、Xteink X3 向けの XTC ファイルに変換して返す API + スマホ向け WebUI。Cloudflare Workers + Browser Run + Containers + R2 + Workflows で動く。
+URL を 1 つ POST すると、印刷用 CSS を適用して PDF 化し、Xteink X3/X4 向けの XTC ファイルに変換して返す API + スマホ向け WebUI。Cloudflare Workers + Browser Run + Containers + R2 + Workflows で動く。
 
 ## アーキテクチャ
 
@@ -54,12 +54,13 @@ Worker
 非同期変換ジョブを作成する。長いドキュメントはこちらを使う（xtctool 最大 600 秒）。
 
 ```json
-{ "url": "https://example.com/article", "mode": "extract", "layout": "vertical", "font": "BIZ UDMincho" }
+{ "url": "https://example.com/article", "mode": "extract", "layout": "vertical", "font": "BIZ UDMincho", "device": "x4" }
 ```
 
 - `mode`（任意）: `"full"`（既定。ページを丸ごとレンダリング）または `"extract"`（本文抽出モード。`src/extract.ts` が通常 fetch + Readability で本文だけのクリーン HTML を作って変換する。抽出できないページは Browser Rendering の `content` アクションで再試行し、それでも駄目なら full と同じ丸ごとレンダリングに自動劣化する — 必ず何かしらの出力は得られる）。`"full"`/`"extract"` 以外は 400。full を選べるのは API 直叩きのときだけで、WebUI は常に `"extract"` を送る。
 - `layout`（任意）: `"horizontal"`（横書き）または `"vertical"`（縦書き `writing-mode: vertical-rl`）。未指定・不正値は既定値へフェイルソフト（400 にはならない）。既定は horizontal、ただし**青空文庫の XHTML**（`https://www.aozora.gr.jp/cards/{6桁}/files/{n}_{m}.html`、`src/sitepresets.ts`）は vertical。
 - `font`（任意）: Google Fonts のファミリー名をそのまま指定する文字列（例 `"BIZ UDMincho"`, `"Noto Serif JP"`, `"Zen Old Mincho"`）。英数字・スペース・ハイフンのみ・64 文字以内（それ以外は既定値へフェイルソフト）。既定は `BIZ UDPGothic`、青空文庫 URL では `BIZ UDMincho`。既定 2 書体は 400/700 の 2 ウェイトを取得し、それ以外のファミリーは regular のみ取得（css2 API は存在しないウェイトを含むリクエストを丸ごと拒否するため）。存在しないファミリー名や取得失敗時は変換を失敗させず、汎用フォールバック書体（horizontal は sans-serif、vertical は serif）で続行する。
+- `device`（任意）: `"x3"`（既定。528×792px 出力、`@page 66mm 99mm`）または `"x4"`（480×800px 出力、`@page 60mm 100mm`）。px/mm 比はどちらも 8 で揃えており、フォントサイズ等の見た目のスケールは device を変えても一致する（`src/devices.ts` の `DEVICE_PROFILES`）。未指定・不正値は `"x3"` へフェイルソフト（400 にはならない）。
 
 青空文庫 URL は layout/font の既定値に加えて専用の前処理が入る（`src/aozora.ts`: Shift_JIS デコード・Readability バイパスで `div.main_text` を直接抽出・ルビ構造の保持・傍点の text-emphasis 置換・字下げ/地付きの論理プロパティ化・外字/挿絵 URL の絶対化・底本情報の付加）。明示的に `layout: "horizontal"` を指定すれば青空文庫でも横書きになる。逆に一般サイトへ `layout: "vertical"` を指定した縦書き変換も可能。
 
@@ -113,7 +114,7 @@ X-Pdf-Options: <PdfConvertOptions の JSON を base64url エンコード>
 - `Content-Type`: `application/pdf` または `application/x-pdf`（メディアタイプパラメータは無視）のみ許可。それ以外は 415。
 - `Content-Length`: 必須（未指定は 411）。0 以下・非数値は 400。上限（既定 48 MiB = 50331648 バイト、`MAX_UPLOAD_PDF_BYTES` で変更可。`MAX_PDF_BYTES` とは別軸の変数 — 前者は Browser Run が生成する PDF、後者はユーザーがアップロードする PDF の上限）超過は 413。
 - `X-File-Name`（任意）: base64url エンコードした UTF-8 ファイル名。制御文字・パス区切り（`/` `\`）を除去し Unicode 正規化、255 文字まで切り詰め、空なら `document.pdf`、拡張子が無ければ `.pdf` を付与する。表示・XTC タイトル候補にのみ使い、R2 キーや一時ファイルパスには使わない。デコードに失敗しても（表示用途のみのため）400 にはせず既定ファイル名へフォールバックする。
-- `X-Pdf-Options`（任意）: `PdfConvertOptions`（ページ範囲・回転・クロップ・収め方・余白・二値化しきい値・ディザリング・白黒反転。既定値・各項目の制約は `src/types.ts` の `PdfConvertOptions`/`src/pdf-upload.ts` の `DEFAULT_PDF_OPTIONS` を参照）を JSON 化して base64url エンコードした値。省略時は既定値を使う。デコード失敗・JSON 不正・スキーマ違反（値の暗黙補正はしない）はいずれも 400。
+- `X-Pdf-Options`（任意）: `PdfConvertOptions`（ページ範囲・回転・クロップ・収め方・余白・二値化しきい値・ディザリング・白黒反転・対象デバイス `device`: `"x3"`（既定）/ `"x4"`。既定値・各項目の制約は `src/types.ts` の `PdfConvertOptions`/`src/pdf-upload.ts` の `DEFAULT_PDF_OPTIONS` を参照）を JSON 化して base64url エンコードした値。省略時は既定値を使う。デコード失敗・JSON 不正・スキーマ違反（値の暗黙補正はしない。`device` を含め不正値は 400）はいずれも 400。`POST /jobs` の `device` と異なりフェイルハード（未指定は `"x3"` へ既定化されるが、指定した値が `"x3"`/`"x4"` 以外なら 400）。
 - リクエストボディは Worker 側で `ArrayBuffer` へ全量展開せず、ストリームのまま R2（`input/{jobId}/source.pdf`）へ保存する。保存後に R2 オブジェクトサイズと申告 `Content-Length` を比較し、不一致なら入力を削除して 400（Workflow は開始しない）。
 
 成功時 202:
@@ -152,7 +153,7 @@ X-Text-Options: <TextConvertOptions の JSON を base64url エンコード>
 - `Content-Type`: `text/plain`・`text/markdown`・`application/octet-stream`（メディアタイプパラメータは無視）のみ許可。それ以外は 415。WebUI は Markdown ファイルでも既存実装との互換性のため引き続き `text/plain` で送信してよい（実際にどの構文として解釈するかを決めるのは `Content-Type` ではなく後述の `inputFormat`）。バイナリ判定・文字コード検証自体は Workflow 側（下記 `prepare-text` ステップ）で行う — Worker 受付時は本文を一切バッファしない（後述）ため、ここでは実施できない。
 - `Content-Length`: 必須（未指定は 411）。0 以下・非数値は 400。上限（5 MiB = 5,242,880 バイト固定）超過は 413。
 - `X-File-Name`（任意）: `POST /jobs/pdf` と同じ規則（制御文字・パス区切り除去、NFC 正規化、255 文字まで切り詰め、空なら `document.txt`、拡張子が無ければ `.txt` を付与）。デコード失敗時も 400 にはせず既定ファイル名へフォールバックする。表示・XTC タイトル候補にのみ使う（`inputFormat: "markdown"` では `.md`/`.markdown` 拡張子もタイトル候補算出時に除去する）。
-- `X-Text-Options`（任意）: `TextConvertOptions`（**入力形式**（`inputFormat`: `"plain"`（既定）・`"aozora"`・`"markdown"`。未指定は `"plain"` へフェイルソフト、それ以外の値（例 `"md"`・`"commonmark"`）は 400）・文字コード指定・横書き/縦書き・フォント・文字サイズ・行間・段落間隔・余白・文字揃え・空行上限・空白保持・`joinHardWrappedLines`（`inputFormat: "aozora"`/`"markdown"` では常に無視される — Markdown では空行・行送り・インデント自体が構文であり、青空文庫では注記や組版上の改行を保護するため。値自体は 400 にはならない）・ページ番号・表題・著者。既定値・各項目の制約は `src/text-options.ts` の `DEFAULT_TEXT_OPTIONS`/`validateTextConvertOptions` を参照）を JSON 化して base64url エンコードした値。省略時は既定値を使う。デコード失敗・JSON 不正・スキーマ違反（値の暗黙補正はしない）はいずれも 400。
+- `X-Text-Options`（任意）: `TextConvertOptions`（**入力形式**（`inputFormat`: `"plain"`（既定）・`"aozora"`・`"markdown"`。未指定は `"plain"` へフェイルソフト、それ以外の値（例 `"md"`・`"commonmark"`）は 400）・文字コード指定・横書き/縦書き・フォント・文字サイズ・行間・段落間隔・余白・文字揃え・空行上限・空白保持・`joinHardWrappedLines`（`inputFormat: "aozora"`/`"markdown"` では常に無視される — Markdown では空行・行送り・インデント自体が構文であり、青空文庫では注記や組版上の改行を保護するため。値自体は 400 にはならない）・ページ番号・表題・著者・**対象デバイス**（`device`: `"x3"`（既定）/ `"x4"`。未指定は `"x3"` へフェイルソフトだが、指定した値が `"x3"`/`"x4"` 以外なら他フィールドと同じく 400）。既定値・各項目の制約は `src/text-options.ts` の `DEFAULT_TEXT_OPTIONS`/`validateTextConvertOptions` を参照）を JSON 化して base64url エンコードした値。省略時は既定値を使う。デコード失敗・JSON 不正・スキーマ違反（値の暗黙補正はしない）はいずれも 400。
 - リクエストボディは Worker 側で `ArrayBuffer` へ全量展開せず、ストリームのまま R2（`input/{jobId}/source.txt`）へ保存する。保存後に R2 オブジェクトサイズと申告 `Content-Length` を比較し、不一致なら入力を削除して 400（Workflow は開始しない）。
 
 成功時 202:
@@ -207,7 +208,7 @@ X-Epub-Options: <EpubConvertOptions の JSON を base64url エンコード>
 - `Content-Type`: `application/epub+zip` は常に許可。`application/octet-stream` は `X-File-Name` のデコード後ファイル名が `.epub`（大小文字を区別しない）で終わる場合のみ許可（PDF/TXT にはないこの追加条件は仕様書 §7.1 の指定）。それ以外は 415。
 - `Content-Length`: 必須（未指定は 411）。0 以下・非数値は 400。上限（既定 48 MiB = 50331648 バイト、`MAX_UPLOAD_EPUB_BYTES` で変更可）超過は 413。
 - `X-File-Name`（任意）: `POST /jobs/pdf` と同じ規則（制御文字・パス区切り除去、NFC 正規化、255 文字まで切り詰め、空なら `document.epub`、拡張子が無ければ `.epub` を付与）。デコード失敗時も 400 にはせず既定ファイル名へフォールバックする。表示・XTC タイトル候補にのみ使う。
-- `X-Epub-Options`（任意）: `EpubConvertOptions`（レイアウト `layout`: `"auto"`（既定）/ `"horizontal"` / `"vertical"`・フォント `font`（Google Fonts ファミリー名、既定 `BIZ UDMincho`）・文字サイズ `fontSizePx`（12〜40px の整数、既定 24）・余白 `marginPx`（0〜120px の整数、既定 40）・章ごとの改ページ `chapterPageBreak`（既定 true）・表紙を含めるか `includeCover`（既定 true）・目次を含めるか `includeTableOfContents`（既定 false）。既定値・各項目の制約は `src/epub-options.ts` の `DEFAULT_EPUB_OPTIONS`/`validateEpubConvertOptions` を参照）を JSON 化して base64url エンコードした値。省略時は既定値を使う。PDF アップロード系オプションと同じく値の暗黙補正はせず、デコード失敗・JSON 不正・スキーマ違反はいずれも 400。
+- `X-Epub-Options`（任意）: `EpubConvertOptions`（レイアウト `layout`: `"auto"`（既定）/ `"horizontal"` / `"vertical"`・フォント `font`（Google Fonts ファミリー名、既定 `BIZ UDMincho`）・文字サイズ `fontSizePx`（12〜40px の整数、既定 24）・余白 `marginPx`（0〜120px の整数、既定 40）・章ごとの改ページ `chapterPageBreak`（既定 true）・表紙を含めるか `includeCover`（既定 true）・目次を含めるか `includeTableOfContents`（既定 false）・対象デバイス `device`（`"x3"`（既定）/ `"x4"`）。既定値・各項目の制約は `src/epub-options.ts` の `DEFAULT_EPUB_OPTIONS`/`validateEpubConvertOptions` を参照）を JSON 化して base64url エンコードした値。省略時は既定値を使う。PDF アップロード系オプションと同じく値の暗黙補正はせず、デコード失敗・JSON 不正・スキーマ違反（`device` が `"x3"`/`"x4"` 以外の場合を含む）はいずれも 400。
 - リクエストボディの先頭 4 バイトを読み取り ZIP ローカルファイルヘッダー / 空アーカイブ / 分割アーカイブのマジックナンバーを確認する（一致しなければ 400 「invalid EPUB file」）。これは「何らかの ZIP であること」の確認に過ぎず、有効な EPUB であることの検証は Workflow の `prepare-epub` ステップ（`src/epub/archive.ts` の中央ディレクトリ解析以降）が行う。リクエストボディは Worker 側で `ArrayBuffer` へ全量展開せず、確認用に読んだ先頭チャンクを含めてストリームのまま R2（`input/{jobId}/source.epub`）へ保存する。保存後に R2 オブジェクトサイズと申告 `Content-Length` を比較し、不一致なら入力を削除して 400（Workflow は開始しない）。
 
 成功時 202:
@@ -289,7 +290,7 @@ X-Preview-Character-Count: <正規化後の文字数>
 { "url": "https://example.com/article", "mode": "extract" }
 ```
 
-`mode` / `layout` / `font` は POST /jobs と同じ（いずれも任意。`mode` の既定は `"full"`、`layout`/`font` は URL に応じた既定値へ解決）。
+`mode` / `layout` / `font` / `device` は POST /jobs と同じ（いずれも任意。`mode` の既定は `"full"`、`layout`/`font` は URL に応じた既定値へ解決、`device` の既定は `"x3"` で未指定・不正値はフェイルソフト）。
 
 成功時 200:
 

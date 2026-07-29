@@ -1,8 +1,10 @@
 # html2xtc
 
 > Public HTTP API that converts a URL, an uploaded PDF, a plain-text file, or
-> an EPUB into an XTC file for the Xteink X3 e-reader. The conversion
-> endpoints require no authentication and no API key. They are rate-limited
+> an EPUB into an XTC file for the Xteink X3 or X4 e-reader (a `device`
+> field on the conversion endpoints selects which; default `"x3"`). The
+> conversion endpoints require no authentication and no API key. They are
+> rate-limited
 > per client IP (see api.md). Everything else on this domain (library sync,
 > device pairing, OPDS) requires a logged-in session and is out of scope for
 > unauthenticated agents — do not call `/api/library/*`, `/api/devices/*`,

@@ -15,7 +15,7 @@
   type DeviceModel = "x3" | "x4";
 
   let dlg = $state<HTMLDialogElement | null>(null);
-  let name = $state("");
+  let name = $state("Xteink");
   let model = $state<DeviceModel>("x3");
   let busy = $state(false);
   let errorCode = $state<string | null>(null);
@@ -24,7 +24,7 @@
     if (!dlg) return;
     if (manualOpdsDeviceDialog.open) {
       if (!dlg.open) {
-        name = "";
+        name = "Xteink";
         model = "x3";
         busy = false;
         errorCode = null;

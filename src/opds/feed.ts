@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 aGFydWtp
 
+import { XTC_MEDIA_TYPE } from "./media-type";
 import { escapeXmlText } from "./xml";
 
 /**
@@ -38,7 +39,7 @@ export interface BuildOpdsFeedParams {
   links: OpdsFeedLinks;
   /** Already the current page's slice, in the order they should render. */
   items: OpdsFeedItem[];
-  /** e.g. "https://xtc.hr20k.com/api/device/library-items" — item id + "/download" is appended per entry. */
+  /** e.g. "https://xtc.hr20k.com/api/device/library-items" — item id + "/download.xtc" is appended per entry. */
   downloadBaseUrl: string;
 }
 
@@ -91,13 +92,19 @@ function buildEntryXml(item: OpdsFeedItem, downloadBaseUrl: string): string {
     item.author !== null && item.author.length > 0
       ? `\n    <author><name>${escapeXmlText(item.author)}</name></author>`
       : "";
-  const href = `${downloadBaseUrl}/${encodeURIComponent(item.id)}/download`;
+  // .xtc extension (not the bare /download route) so the reference
+  // CrossPoint OPDS client's URL-suffix fallback also identifies this as an
+  // XTC acquisition link, on top of the vendor `type` below (see
+  // docs/opds-xtc-media-type-adr.md). /download itself still works — kept
+  // as a backward-compatible route in src/opds/routes.ts, just not linked
+  // from freshly generated feeds.
+  const href = `${downloadBaseUrl}/${encodeURIComponent(item.id)}/download.xtc`;
   return [
     "  <entry>",
     `    <id>urn:html2xtc:item:${escapeXmlText(item.id)}</id>`,
     `    <title>${escapeXmlText(item.title)}</title>${authorLine}`,
     `    <updated>${escapeXmlText(item.updatedAt)}</updated>`,
-    `    <link rel="http://opds-spec.org/acquisition" href="${escapeXmlText(href)}" type="application/octet-stream"/>`,
+    `    <link rel="http://opds-spec.org/acquisition" href="${escapeXmlText(href)}" type="${XTC_MEDIA_TYPE}"/>`,
     "  </entry>",
   ].join("\n");
 }

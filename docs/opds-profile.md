@@ -40,7 +40,8 @@ OPDS 1.x（Atom ベース）。OPDS 2.0 (JSON) は提供しない。
 |---|---|---|
 | GET | `/opds/v1/catalog.xml` | その端末に割り当てられた XTC 一覧（フィード） |
 | GET | `/opds/v1/search.xml?q=<query>` | タイトル・著者・元 URL の部分一致検索 |
-| GET | `/api/device/library-items/{itemId}/download` | XTC 本体のダウンロード |
+| GET | `/api/device/library-items/{itemId}/download.xtc` | XTC 本体のダウンロード（正式。フィードの acquisition link はこちらを指す） |
+| GET | `/api/device/library-items/{itemId}/download` | XTC 本体のダウンロード（後方互換。既存端末・クライアント向けに維持し続ける。新規に生成するフィードはこの URL を発行しない） |
 
 ## 4. フィード要素
 
@@ -62,8 +63,8 @@ OPDS 1.x（Atom ベース）。OPDS 2.0 (JSON) は提供しない。
     <author><name>著者名</name></author>
     <updated>2026-07-21T00:00:00.000Z</updated>
     <link rel="http://opds-spec.org/acquisition"
-          href="https://xtc.hr20k.com/api/device/library-items/{itemId}/download"
-          type="application/octet-stream"/>
+          href="https://xtc.hr20k.com/api/device/library-items/{itemId}/download.xtc"
+          type="application/vnd.xteink.xtc"/>
   </entry>
 </feed>
 ```
@@ -86,13 +87,18 @@ XML 特殊文字（`& < > " '`）は必ずエスケープされる。制御文�
 ## 5. Acquisition media type
 
 ```
-type="application/octet-stream"
+type="application/vnd.xteink.xtc"
 ```
 
-XTC 固有の media type は割り当てていない。CrossPoint 側は `Content-Disposition` の
-ファイル名拡張子（`.xtc`）または実際のダウンロードレスポンスの `Content-Type`
-（同じく `application/octet-stream`）で XTC と判定すること。EPUB 用の固定 `.epub`
-判定処理を流用しないこと（実装計画 §15.1）。
+acquisition link の `href` は `.xtc` 拡張子付きの URL
+（`/api/device/library-items/{itemId}/download.xtc`）を指す。ダウンロード
+レスポンスの `Content-Type` も同じ vendor media type を返す（§8）。
+理由・背景は `docs/opds-xtc-media-type-adr.md` を参照。
+
+後方互換のため、旧 `/download`（拡張子なし）URL と
+`Content-Type: application/octet-stream` を返す旧実装からの移行元クライアントも
+`Content-Disposition` のファイル名拡張子（`.xtc`）で XTC と判定できる状態を維持する。
+EPUB 用の固定 `.epub` 判定処理を流用しないこと（実装計画 §15.1）。
 
 ## 6. ページング
 
@@ -118,13 +124,17 @@ GET /opds/v1/search.xml?q={searchTerms}&page=N
 ## 8. Content-Disposition（ダウンロード）
 
 ```
-Content-Type: application/octet-stream
+Content-Type: application/vnd.xteink.xtc
 Content-Disposition: attachment; filename="<ASCII fallback>.xtc"; filename*=UTF-8''<RFC 5987 encoded title>.xtc
 Content-Length: <bytes>
 ETag: "<r2 object etag>"
 Cache-Control: private, no-store
 X-Content-Type-Options: nosniff
 ```
+
+`/download.xtc` と後方互換の `/download` はどちらも同じヘッダー（`Content-Type` も
+含めて同一）を返す。両ルートは同じ内部ハンドラに委譲されており、認証・認可・監査・
+R2 取得のいずれも共有されている（`src/opds/routes.ts`）。
 
 - `filename`（quoted-string）: 印字可能 ASCII のみのフォールバック。Windows/FAT で禁止された文字
   (`\ / : * ? " < > |`) は空白に置換済み。

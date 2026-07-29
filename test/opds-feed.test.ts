@@ -53,7 +53,7 @@ describe("buildOpdsFeedXml", () => {
     expect(xml).toContain("<author><name>著者名</name></author>");
   });
 
-  it("builds the acquisition link from downloadBaseUrl + itemId", () => {
+  it("builds the acquisition link from downloadBaseUrl + itemId with the vendor XTC media type and a .xtc URL", () => {
     const items: OpdsFeedItem[] = [{ id: "item-1", title: "t", author: null, updatedAt: NOW }];
     const xml = buildOpdsFeedXml({
       feedId: "urn:html2xtc:device:d1",
@@ -64,8 +64,32 @@ describe("buildOpdsFeedXml", () => {
       downloadBaseUrl: "https://xtc.hr20k.com/api/device/library-items",
     });
     expect(xml).toContain(
-      '<link rel="http://opds-spec.org/acquisition" href="https://xtc.hr20k.com/api/device/library-items/item-1/download" type="application/octet-stream"/>',
+      '<link rel="http://opds-spec.org/acquisition" href="https://xtc.hr20k.com/api/device/library-items/item-1/download.xtc" type="application/vnd.xteink.xtc"/>',
     );
+  });
+
+  it("uses the same acquisition link shape (type + href) regardless of feed id/title — i.e. root and search feeds render entries identically", () => {
+    const items: OpdsFeedItem[] = [{ id: "item-1", title: "t", author: null, updatedAt: NOW }];
+    const rootXml = buildOpdsFeedXml({
+      feedId: "urn:html2xtc:device:d1",
+      title: "html2xtc マイライブラリ",
+      updated: NOW,
+      links: { self: "https://xtc.hr20k.com/opds/v1/catalog.xml", search: "https://xtc.hr20k.com/opds/v1/search.xml?q={searchTerms}" },
+      items,
+      downloadBaseUrl: "https://xtc.hr20k.com/api/device/library-items",
+    });
+    const searchXml = buildOpdsFeedXml({
+      feedId: "urn:html2xtc:device:d1:search",
+      title: "html2xtc 検索結果",
+      updated: NOW,
+      links: { self: "https://xtc.hr20k.com/opds/v1/search.xml?q=x" },
+      items,
+      downloadBaseUrl: "https://xtc.hr20k.com/api/device/library-items",
+    });
+    const acquisitionLink =
+      '<link rel="http://opds-spec.org/acquisition" href="https://xtc.hr20k.com/api/device/library-items/item-1/download.xtc" type="application/vnd.xteink.xtc"/>';
+    expect(rootXml).toContain(acquisitionLink);
+    expect(searchXml).toContain(acquisitionLink);
   });
 
   it("escapes a Japanese title containing XML-special characters", () => {

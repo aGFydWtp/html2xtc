@@ -293,10 +293,19 @@ describe("convertHtmlToXtcSync", () => {
       html: "<html></html>",
       fontCss: null,
       timeoutMs: 90_000,
+      device: "x3",
     });
     expect(result.pageCount).toBe(3);
     expect(new Uint8Array(result.xtcBytes).byteLength).toBe(48);
-    expect(mockedConvertInContainer).toHaveBeenCalledWith(env, "job-1", expect.anything(), 90_000);
+    expect(mockedConvertInContainer).toHaveBeenCalledWith(
+      env,
+      "job-1",
+      expect.anything(),
+      90_000,
+      undefined,
+      undefined,
+      "x3",
+    );
   });
 
   it("returns pageCount null for a response too short/malformed to be an XTC header", async () => {
@@ -306,8 +315,51 @@ describe("convertHtmlToXtcSync", () => {
       html: "<html></html>",
       fontCss: null,
       timeoutMs: 90_000,
+      device: "x3",
     });
     expect(result.pageCount).toBeNull();
+  });
+
+  it("forwards device x4 as convertInContainer's deviceId argument (X4 preview)", async () => {
+    mockedConvertInContainer.mockImplementation(async () => new Response(fakeXtcBytes(1), { status: 200 }));
+    const env = fakeEnv();
+    await convertHtmlToXtcSync(env, {
+      jobId: "job-x4",
+      html: "<html></html>",
+      fontCss: null,
+      timeoutMs: 90_000,
+      device: "x4",
+    });
+    expect(mockedConvertInContainer).toHaveBeenCalledWith(
+      env,
+      "job-x4",
+      expect.anything(),
+      90_000,
+      undefined,
+      undefined,
+      "x4",
+    );
+  });
+
+  it("forwards device x3 as convertInContainer's deviceId argument (default/X3 preview)", async () => {
+    mockedConvertInContainer.mockImplementation(async () => new Response(fakeXtcBytes(1), { status: 200 }));
+    const env = fakeEnv();
+    await convertHtmlToXtcSync(env, {
+      jobId: "job-x3",
+      html: "<html></html>",
+      fontCss: null,
+      timeoutMs: 90_000,
+      device: "x3",
+    });
+    expect(mockedConvertInContainer).toHaveBeenCalledWith(
+      env,
+      "job-x3",
+      expect.anything(),
+      90_000,
+      undefined,
+      undefined,
+      "x3",
+    );
   });
 
   it("maps a Browser Run exception to 502 PDF_GENERATION_FAILED", async () => {
@@ -317,21 +369,21 @@ describe("convertHtmlToXtcSync", () => {
       },
     });
     await expect(
-      convertHtmlToXtcSync(env, { jobId: "j", html: "<html></html>", fontCss: null, timeoutMs: 90_000 }),
+      convertHtmlToXtcSync(env, { jobId: "j", html: "<html></html>", fontCss: null, timeoutMs: 90_000, device: "x3" }),
     ).rejects.toMatchObject({ status: 502, code: "PDF_GENERATION_FAILED" });
   });
 
   it("maps a non-ok Browser Run response to 502 PDF_GENERATION_FAILED", async () => {
     const env = fakeEnv({ quickAction: async () => new Response("nope", { status: 500 }) });
     await expect(
-      convertHtmlToXtcSync(env, { jobId: "j", html: "<html></html>", fontCss: null, timeoutMs: 90_000 }),
+      convertHtmlToXtcSync(env, { jobId: "j", html: "<html></html>", fontCss: null, timeoutMs: 90_000, device: "x3" }),
     ).rejects.toMatchObject({ status: 502, code: "PDF_GENERATION_FAILED" });
   });
 
   it("maps an oversized rendered PDF to 422 PDF_TOO_LARGE", async () => {
     const env = fakeEnv({ maxPdfBytes: "2" }); // "%PDF" is 4 bytes, over this cap
     await expect(
-      convertHtmlToXtcSync(env, { jobId: "j", html: "<html></html>", fontCss: null, timeoutMs: 90_000 }),
+      convertHtmlToXtcSync(env, { jobId: "j", html: "<html></html>", fontCss: null, timeoutMs: 90_000, device: "x3" }),
     ).rejects.toMatchObject({ status: 422, code: "PDF_TOO_LARGE" });
     // The oversized-PDF check must run before ever calling the container.
     expect(mockedConvertInContainer).not.toHaveBeenCalled();
@@ -342,7 +394,7 @@ describe("convertHtmlToXtcSync", () => {
       throw new DOMException("timed out", "TimeoutError");
     });
     await expect(
-      convertHtmlToXtcSync(fakeEnv(), { jobId: "j", html: "<html></html>", fontCss: null, timeoutMs: 90_000 }),
+      convertHtmlToXtcSync(fakeEnv(), { jobId: "j", html: "<html></html>", fontCss: null, timeoutMs: 90_000, device: "x3" }),
     ).rejects.toMatchObject({ status: 504, code: "TIMEOUT" });
   });
 
@@ -351,14 +403,14 @@ describe("convertHtmlToXtcSync", () => {
       throw new Error("network down");
     });
     await expect(
-      convertHtmlToXtcSync(fakeEnv(), { jobId: "j", html: "<html></html>", fontCss: null, timeoutMs: 90_000 }),
+      convertHtmlToXtcSync(fakeEnv(), { jobId: "j", html: "<html></html>", fontCss: null, timeoutMs: 90_000, device: "x3" }),
     ).rejects.toMatchObject({ status: 502, code: "CONTAINER_UNAVAILABLE" });
   });
 
   it("maps a container 413 to 422 PDF_TOO_LARGE", async () => {
     mockedConvertInContainer.mockImplementation(async () => new Response("too big", { status: 413 }));
     await expect(
-      convertHtmlToXtcSync(fakeEnv(), { jobId: "j", html: "<html></html>", fontCss: null, timeoutMs: 90_000 }),
+      convertHtmlToXtcSync(fakeEnv(), { jobId: "j", html: "<html></html>", fontCss: null, timeoutMs: 90_000, device: "x3" }),
     ).rejects.toMatchObject({ status: 422, code: "PDF_TOO_LARGE" });
   });
 
@@ -366,10 +418,10 @@ describe("convertHtmlToXtcSync", () => {
     mockedConvertInContainer.mockImplementation(async () => new Response("bad", { status: 500 }));
     const env = fakeEnv();
     await expect(
-      convertHtmlToXtcSync(env, { jobId: "j", html: "<html></html>", fontCss: null, timeoutMs: 90_000 }),
+      convertHtmlToXtcSync(env, { jobId: "j", html: "<html></html>", fontCss: null, timeoutMs: 90_000, device: "x3" }),
     ).rejects.toBeInstanceOf(SyncConversionError);
     await expect(
-      convertHtmlToXtcSync(env, { jobId: "j", html: "<html></html>", fontCss: null, timeoutMs: 90_000 }),
+      convertHtmlToXtcSync(env, { jobId: "j", html: "<html></html>", fontCss: null, timeoutMs: 90_000, device: "x3" }),
     ).rejects.toMatchObject({ status: 502, code: "XTC_CONVERSION_FAILED" });
   });
 });
@@ -521,6 +573,31 @@ describe("handleTextPreview", () => {
     expect(response.headers.get("X-Preview-Font-Fallback")).toBeNull();
     const bytes = await response.arrayBuffer();
     expect(bytes.byteLength).toBe(48);
+  });
+
+  it("forwards options.device=x4 end-to-end to convertInContainer's deviceId argument", async () => {
+    stubFontFetchSuccess();
+    const request = previewRequest({
+      text: "本文のプレビューです。",
+      options: validOptions({ device: "x4" }),
+    });
+    const response = await handleTextPreview(request, fakeEnv());
+    expect(response.status).toBe(200);
+    const call = mockedConvertInContainer.mock.calls.at(-1);
+    // (env, jobId, pdfBody, timeoutMs, author, chapters, device)
+    expect(call?.[6]).toBe("x4");
+  });
+
+  it("forwards options.device=x3 (default) end-to-end to convertInContainer's deviceId argument", async () => {
+    stubFontFetchSuccess();
+    const request = previewRequest({
+      text: "本文のプレビューです。",
+      options: validOptions(),
+    });
+    const response = await handleTextPreview(request, fakeEnv());
+    expect(response.status).toBe(200);
+    const call = mockedConvertInContainer.mock.calls.at(-1);
+    expect(call?.[6]).toBe("x3");
   });
 
   it("sets X-Preview-Font-Fallback and still returns 200 when the font fetch fails", async () => {

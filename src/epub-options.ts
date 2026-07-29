@@ -2,6 +2,8 @@
 // Copyright (C) 2026 aGFydWtp
 
 import { decodeBase64Url } from "./base64url";
+import { DEFAULT_DEVICE_ID } from "./devices";
+import type { DeviceId } from "./devices";
 import { sanitizeFontFamily } from "./fonts";
 
 /**
@@ -25,6 +27,12 @@ export interface EpubConvertOptions {
   chapterPageBreak: boolean;
   includeCover: boolean;
   includeTableOfContents: boolean;
+  /**
+   * Target Xteink device (src/devices.ts). Added after the initial EPUB
+   * release: an absent field defaults to "x3" (full backward compatibility),
+   * but a present, invalid value is a hard 400 like every other field here.
+   */
+  device: DeviceId;
 }
 
 /** Spec §4.1.4. */
@@ -36,6 +44,7 @@ export const DEFAULT_EPUB_OPTIONS: EpubConvertOptions = {
   chapterPageBreak: true,
   includeCover: true,
   includeTableOfContents: false,
+  device: DEFAULT_DEVICE_ID,
 };
 
 function isIntegerInRange(value: unknown, min: number, max: number): value is number {
@@ -92,6 +101,15 @@ export function validateEpubConvertOptions(value: unknown): EpubOptionsResult {
   }
   const includeTableOfContents = v.includeTableOfContents;
 
+  // Backward compatibility (device selection was added after the initial
+  // EPUB release): an absent field defaults to "x3". A present-but-invalid
+  // value is still a hard rejection, per this schema's fail-hard stance.
+  const deviceRaw = v.device === undefined ? DEFAULT_DEVICE_ID : v.device;
+  if (deviceRaw !== "x3" && deviceRaw !== "x4") {
+    return { ok: false, error: "invalid device" };
+  }
+  const device = deviceRaw;
+
   return {
     ok: true,
     options: {
@@ -102,6 +120,7 @@ export function validateEpubConvertOptions(value: unknown): EpubOptionsResult {
       chapterPageBreak,
       includeCover,
       includeTableOfContents,
+      device,
     },
   };
 }

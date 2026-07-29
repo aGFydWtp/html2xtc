@@ -53,6 +53,9 @@ function itemDto(): {
   sha256: string | null;
   createdAt: string;
   updatedAt: string;
+  device: "x3" | "x4";
+  width: number;
+  height: number;
 } {
   return {
     id: ITEM_ID,
@@ -62,6 +65,9 @@ function itemDto(): {
     sha256: null,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
+    device: "x3",
+    width: 528,
+    height: 792,
   };
 }
 

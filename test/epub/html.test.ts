@@ -163,6 +163,23 @@ describe("prepareEpubDocument: page margin (spec §13.1 @page, not .epub-book pa
     expect(result.html).not.toMatch(/html,\s*body\s*{[^}]*width:\s*528px/);
     expect(result.html).not.toMatch(/html,\s*body\s*{[^}]*min-height:\s*792px/);
   });
+
+  it("uses the X4 device profile's page geometry (480x800) when device is x4", () => {
+    const zip = buildEpubZip(minimalEpub3Files());
+    const result = prepareEpubDocument(zip, options({ device: "x4", marginPx: 60 }), context());
+    expect(result.html).toMatch(/@page\s*{\s*size:\s*480px 800px;\s*margin:\s*60px;\s*}/);
+  });
+
+  it("defaults to the X3 device profile when device is omitted", () => {
+    const { device: _omitted, ...withoutDevice } = DEFAULT_EPUB_OPTIONS;
+    const zip = buildEpubZip(minimalEpub3Files());
+    const result = prepareEpubDocument(
+      zip,
+      { ...withoutDevice, marginPx: 60 } as EpubConvertOptions,
+      context(),
+    );
+    expect(result.html).toMatch(/@page\s*{\s*size:\s*528px 792px;\s*margin:\s*60px;\s*}/);
+  });
 });
 
 describe("prepareEpubDocument: image float reset (画像のfloatをEPUB側CSSから打ち消す)", () => {

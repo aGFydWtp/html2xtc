@@ -10,6 +10,7 @@ import {
 import type { XtcChapter } from "../packages/aozora-text/src/index";
 import { createMarkdownConverter, MARKDOWN_IT_OPTIONS } from "../packages/markdown-text/src/index";
 import MarkdownIt from "markdown-it";
+import { resolveDeviceProfile } from "./devices";
 import {
   buildAozoraContentHtml,
   buildMarkdownContentHtml,
@@ -137,6 +138,7 @@ function preparePlain(input: PrepareTextDocumentInput): PreparedTextDocument {
     documentTitle,
     displayTitle: options.title,
     author: options.author,
+    device: resolveDeviceProfile(options.device),
   });
 
   return {
@@ -169,6 +171,7 @@ function prepareAozora(input: PrepareTextDocumentInput): PreparedTextDocument {
     documentTitle,
     displayTitle,
     author,
+    device: resolveDeviceProfile(options.device),
   });
 
   let unsupportedAnnotations = 0;
@@ -245,6 +248,7 @@ function prepareMarkdown(input: PrepareTextDocumentInput): PreparedTextDocument 
     documentTitle,
     displayTitle: explicitTitle,
     author,
+    device: resolveDeviceProfile(options.device),
   });
 
   return {

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 aGFydWtp
 
+import { DEFAULT_DEVICE_PROFILE } from "./devices";
+import type { DeviceProfile } from "./devices";
 import { DEFAULT_FONT_FAMILY, fontCssEndpoint } from "./fonts";
 import type { Env, RenderOptions } from "./types";
 
@@ -212,7 +214,10 @@ const HIDE_CHROME_RULES = `body header,
 // re-importing the same family here would only add a pointless network
 // fetch at render time. buildPrintCssWithFontImport prepends the @import
 // for the paths that have no inlined font.
-function horizontalPrintRules(options: RenderOptions): string {
+function horizontalPrintRules(
+  options: RenderOptions,
+  device: DeviceProfile = DEFAULT_DEVICE_PROFILE,
+): string {
   return `
   /* The body font-family is declared at TOP LEVEL — outside @media print —
      deliberately, and it must stay there. Chromium loads web fonts lazily:
@@ -229,8 +234,8 @@ function horizontalPrintRules(options: RenderOptions): string {
   }
 
   @page {
-    size: 66mm 99mm;
-    margin: 4mm;
+    size: ${device.pageWidthMm}mm ${device.pageHeightMm}mm;
+    margin: ${device.marginMm}mm;
   }
 
   @media print {
@@ -341,7 +346,10 @@ function horizontalPrintRules(options: RenderOptions): string {
  *   AOZORA_DOCUMENT_CSS, not here: their class selectors (e.g. #contents)
  *   could collide with ordinary sites' markup.
  */
-function verticalPrintRules(options: RenderOptions): string {
+function verticalPrintRules(
+  options: RenderOptions,
+  device: DeviceProfile = DEFAULT_DEVICE_PROFILE,
+): string {
   return `
   /* Root: vertical flow. */
   html {
@@ -359,8 +367,8 @@ function verticalPrintRules(options: RenderOptions): string {
   }
 
   @page {
-    size: 66mm 99mm;
-    margin: 4mm;
+    size: ${device.pageWidthMm}mm ${device.pageHeightMm}mm;
+    margin: ${device.marginMm}mm;
   }
 
   @media print {
@@ -465,10 +473,13 @@ function verticalPrintRules(options: RenderOptions): string {
  * rule set, the font fills the body stack. Injected next to the inlined
  * @font-face CSS on the extract path.
  */
-export function buildPrintRules(options: RenderOptions): string {
+export function buildPrintRules(
+  options: RenderOptions,
+  device: DeviceProfile = DEFAULT_DEVICE_PROFILE,
+): string {
   return options.layout === "vertical"
-    ? verticalPrintRules(options)
-    : horizontalPrintRules(options);
+    ? verticalPrintRules(options, device)
+    : horizontalPrintRules(options, device);
 }
 
 /**
@@ -478,13 +489,16 @@ export function buildPrintRules(options: RenderOptions): string {
  * nonexistent family just 400s the import and the generic fallback is used;
  * the conversion itself never fails on a font.
  */
-export function buildPrintCssWithFontImport(options: RenderOptions): string {
+export function buildPrintCssWithFontImport(
+  options: RenderOptions,
+  device: DeviceProfile = DEFAULT_DEVICE_PROFILE,
+): string {
   return `
   /* Must stay the first rule in this stylesheet (CSS drops later @imports).
      Injected via addStyleTag after page load, so a target page's CSP may
      block it — an accepted degradation, like the colophon script below. */
   @import url("${fontCssEndpoint(options.font)}");
-${buildPrintRules(options)}`;
+${buildPrintRules(options, device)}`;
 }
 
 // Fixed default-options variants; test/pdf.test.ts pins their exact text
@@ -792,12 +806,13 @@ export function renderPdf(
   env: Env,
   url: string,
   options: RenderOptions = DEFAULT_RENDER_OPTIONS,
+  device: DeviceProfile = DEFAULT_DEVICE_PROFILE,
 ): Promise<Response> {
   const convertedAt = formatJstTimestamp(new Date());
   return env.BROWSER.quickAction("pdf", {
     url,
     userAgent: RENDER_USER_AGENT,
-    addStyleTag: [{ content: buildPrintCssWithFontImport(options) }],
+    addStyleTag: [{ content: buildPrintCssWithFontImport(options, device) }],
     // First coax lazy images into loading, then append the colophon page to
     // the DOM — both run after load, before the waitForTimeout grace and the
     // PDF capture. A page CSP can block either script (fail-soft by design).
@@ -829,6 +844,7 @@ export function renderPdfFromHtml(
   html: string,
   fontCss: string | null = null,
   options: RenderOptions = DEFAULT_RENDER_OPTIONS,
+  device: DeviceProfile = DEFAULT_DEVICE_PROFILE,
 ): Promise<Response> {
   // With inlined font CSS the rules ride without an @import (a remote fetch
   // of the same family would only race the data: faces); on font fail-soft
@@ -836,8 +852,8 @@ export function renderPdfFromHtml(
   // like the full path, worst case the generic/WenQuanYi fallback.
   const styles =
     fontCss !== null
-      ? [{ content: fontCss }, { content: buildPrintRules(options) }]
-      : [{ content: buildPrintCssWithFontImport(options) }];
+      ? [{ content: fontCss }, { content: buildPrintRules(options, device) }]
+      : [{ content: buildPrintCssWithFontImport(options, device) }];
   return env.BROWSER.quickAction("pdf", {
     html,
     // The browser still fetches the article's images from their origin;

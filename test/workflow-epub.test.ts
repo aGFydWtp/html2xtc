@@ -331,6 +331,34 @@ describe("runEpubSource: happy path (spec §19.1 正常フロー)", () => {
   });
 });
 
+describe("runEpubSource: device (X3/X4) threading", () => {
+  it("defaults to the X3 page geometry and sends X-Xtc-Device via convertInContainer's deviceId argument", async () => {
+    const bucket = new FakeR2Bucket();
+    const source = epubSource(bucket, minimalEpubBytes());
+    const step = new FakeWorkflowStep();
+
+    await runEpub(fakeEnv(bucket), step, source, DEFAULT_EPUB_OPTIONS);
+
+    const renderedHtml = mockedRenderSelfStyledHtmlPdf.mock.calls[0]?.[1] as string;
+    expect(renderedHtml).toContain("size: 528px 792px;");
+    const convertArgs = mockedConvertInContainer.mock.calls[0];
+    expect(convertArgs?.[6]).toBe("x3");
+  });
+
+  it("switches to the X4 page geometry and forwards deviceId x4 when epubOptions.device is x4", async () => {
+    const bucket = new FakeR2Bucket();
+    const source = epubSource(bucket, minimalEpubBytes());
+    const step = new FakeWorkflowStep();
+
+    await runEpub(fakeEnv(bucket), step, source, { ...DEFAULT_EPUB_OPTIONS, device: "x4" });
+
+    const renderedHtml = mockedRenderSelfStyledHtmlPdf.mock.calls[0]?.[1] as string;
+    expect(renderedHtml).toContain("size: 480px 800px;");
+    const convertArgs = mockedConvertInContainer.mock.calls[0];
+    expect(convertArgs?.[6]).toBe("x4");
+  });
+});
+
 describe("runEpubSource: prepare-epub retry (spec §19.1 prepare retry)", () => {
   it("retries once on a transient R2 failure and then succeeds", async () => {
     const bucket = new FakeR2Bucket();
@@ -593,6 +621,9 @@ describe("runEpubSource: title / author propagation (spec §19.1 title/author伝
       expect.any(Number),
       "Test Author",
       [{ name: "Chapter 1", marker: "XTCCH0001" }],
+      // The EPUB pipeline has no device selection of its own yet — always
+      // "x3" (src/workflow.ts's runEpubSource).
+      "x3",
     );
 
     // 3. The mocked container's X-Xtc-Title response header round-trips

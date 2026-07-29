@@ -36,15 +36,19 @@ import pdf_upload  # noqa: E402
 FAKE_XTC = b"XTC-FAKE-BYTES"
 
 REAL_CONFIG_PATH = str(Path(__file__).resolve().parents[2] / "converter" / "config-x3.toml")
+REAL_CONFIG_PATH_X4 = str(Path(__file__).resolve().parents[2] / "converter" / "config-x4.toml")
 
 
 @pytest.fixture(autouse=True)
 def _use_real_config_path(monkeypatch):
-    """app.CONFIG_PATH defaults to /app/config-x3.toml (the Docker image
-    layout); point it at the real repo file so config_with_pdf_options and
-    _output_canvas_size can read it outside the container. Individual tests
-    may still override app.CONFIG_PATH further via their own monkeypatch."""
+    """app.CONFIG_PATH/CONFIG_PATH_X4 default to /app/config-x{3,4}.toml (the
+    Docker image layout); point them at the real repo files so
+    config_with_pdf_options, _output_canvas_size, and the /convert/
+    uploaded-pdf X-Xtc-Device path can read them outside the container.
+    Individual tests may still override either further via their own
+    monkeypatch."""
     monkeypatch.setattr(app, "CONFIG_PATH", REAL_CONFIG_PATH)
+    monkeypatch.setattr(app, "CONFIG_PATH_X4", REAL_CONFIG_PATH_X4)
 
 
 # --- fixture PDF builders ----------------------------------------------------
@@ -484,6 +488,48 @@ class TestConfigWithPdfOptions:
         assert merged["xtg"]["dither_strength"] == 0.3
         assert merged["output"]["width"] == 528  # untouched keys survive
 
+    def test_explicit_config_path_overrides_app_config_path(self, tmp_path):
+        # An explicit config_path (spec: X4 device support) is read instead
+        # of app.CONFIG_PATH -- this is what lets the X4 config's own
+        # 480x800 [output].width/height survive the merge.
+        config_path = tmp_path / "config-x4.toml"
+        config_path.write_text(
+            "[output]\nwidth = 480\nheight = 800\ntitle = \"\"\n"
+            "[xtg]\nthreshold = 128\ninvert = false\ndither = true\ndither_strength = 0.8\n",
+            encoding="utf-8",
+        )
+        options = pdf_upload.options_from_dict(pdf_upload.DEFAULT_PDF_OPTIONS)
+        merged = tomllib.loads(
+            pdf_upload.config_with_pdf_options("X4 Title", options, str(config_path))
+        )
+        assert merged["output"]["title"] == "X4 Title"
+        assert merged["output"]["width"] == 480
+        assert merged["output"]["height"] == 800
+
+
+class TestOutputCanvasSize:
+    """_output_canvas_size (spec: X4 device support) reads [output].width/
+    height from a device-resolved config path, and must fail loudly rather
+    than silently substitute a (possibly wrong-for-the-device) fixed size --
+    see the function's docstring for why a previous version's silent
+    fallback to the X3 resolution was a bug for X4 requests."""
+
+    def test_reads_x3_config_by_default(self):
+        assert pdf_upload._output_canvas_size() == (528, 792)
+
+    def test_reads_explicit_x4_config_path(self):
+        assert pdf_upload._output_canvas_size(REAL_CONFIG_PATH_X4) == (480, 800)
+
+    def test_unreadable_config_raises_instead_of_falling_back(self, tmp_path):
+        with pytest.raises(Exception):
+            pdf_upload._output_canvas_size(str(tmp_path / "does-not-exist.toml"))
+
+    def test_config_missing_output_dimensions_raises(self, tmp_path):
+        config_path = tmp_path / "config.toml"
+        config_path.write_text("[output]\ntitle = \"\"\n", encoding="utf-8")
+        with pytest.raises(RuntimeError):
+            pdf_upload._output_canvas_size(str(config_path))
+
 
 # --- full conversion pipeline (mocked xtctool) -------------------------------
 
@@ -556,6 +602,54 @@ class TestConvertUploadedPdf:
                 pdf_path, options, "x.pdf", 30, tmp_path
             )
         assert xtc_bytes == FAKE_XTC
+
+
+class TestConvertUploadedPdfDeviceConfigPath:
+    """convert_uploaded_pdf's device_config_path parameter (spec: X4 device
+    support): defaulting to None means app.CONFIG_PATH (X3), exactly as
+    before this parameter existed; an explicit path (e.g.
+    app.CONFIG_PATH_X4) changes both the rendered page canvas size and the
+    config merged into the xtctool invocation."""
+
+    def test_default_renders_at_x3_canvas_size(self, tmp_path):
+        pdf_path = tmp_path / "source.pdf"
+        pdf_path.write_bytes(make_pdf(pages=1))
+        options = pdf_upload.options_from_dict(pdf_upload.DEFAULT_PDF_OPTIONS)
+        seen = {}
+
+        def inspecting_run(cmd, **kwargs):
+            sources = cmd[2 : cmd.index("-o")]
+            png_path = Path(sources[0])
+            if png_path.suffix == ".png":
+                seen["size"] = Image.open(png_path).size
+            return run_success(cmd, **kwargs)
+
+        with mock.patch.object(app.subprocess, "run", side_effect=inspecting_run):
+            pdf_upload.convert_uploaded_pdf(pdf_path, options, "x.pdf", 30, tmp_path)
+        assert seen["size"] == (528, 792)
+
+    def test_x4_config_path_renders_at_x4_canvas_size(self, tmp_path):
+        pdf_path = tmp_path / "source.pdf"
+        pdf_path.write_bytes(make_pdf(pages=1))
+        options = pdf_upload.options_from_dict(pdf_upload.DEFAULT_PDF_OPTIONS)
+        seen = {}
+
+        def inspecting_run(cmd, **kwargs):
+            sources = cmd[2 : cmd.index("-o")]
+            png_path = Path(sources[0])
+            if png_path.suffix == ".png":
+                seen["size"] = Image.open(png_path).size
+            merged_path = Path(cmd[cmd.index("-c") + 1])
+            seen["config"] = tomllib.loads(merged_path.read_text(encoding="utf-8"))
+            return run_success(cmd, **kwargs)
+
+        with mock.patch.object(app.subprocess, "run", side_effect=inspecting_run):
+            pdf_upload.convert_uploaded_pdf(
+                pdf_path, options, "x.pdf", 30, tmp_path, REAL_CONFIG_PATH_X4
+            )
+        assert seen["size"] == (480, 800)
+        assert seen["config"]["output"]["width"] == 480
+        assert seen["config"]["output"]["height"] == 800
 
 
 class TestChunkedConversion:
@@ -909,3 +1003,81 @@ class TestHttpServerUploadedPdf:
     def test_unknown_path_is_404(self, server):
         status, _, _ = request(server, "POST", "/convert/nonsense", body=b"x")
         assert status == 404
+
+
+class TestHttpServerUploadedPdfDeviceHeader:
+    """X-Xtc-Device on /convert/uploaded-pdf (spec: X4 device support): same
+    contract as /convert -- see TestHandleConvertWithDeviceHeader in
+    test_app.py -- but exercised end-to-end here, including the rendered
+    page canvas size."""
+
+    def test_x4_header_renders_at_x4_canvas_size(self, server):
+        pdf_bytes = make_pdf(pages=1)
+        seen = {}
+
+        def inspecting_run(cmd, **kwargs):
+            sources = cmd[2 : cmd.index("-o")]
+            png_path = Path(sources[0])
+            if png_path.suffix == ".png":
+                seen["size"] = Image.open(png_path).size
+            return run_success(cmd, **kwargs)
+
+        with mock.patch.object(app.subprocess, "run", side_effect=inspecting_run):
+            status, _, body = request(
+                server,
+                "POST",
+                "/convert/uploaded-pdf",
+                body=pdf_bytes,
+                headers=upload_headers(pdf_bytes, **{"X-Xtc-Device": "x4"}),
+            )
+        assert status == 200
+        assert body == FAKE_XTC
+        assert seen["size"] == (480, 800)
+
+    def test_missing_device_header_renders_at_x3_canvas_size(self, server):
+        # Every pre-X4 uploader (no X-Xtc-Device header at all) must stay
+        # unaffected.
+        pdf_bytes = make_pdf(pages=1)
+        seen = {}
+
+        def inspecting_run(cmd, **kwargs):
+            sources = cmd[2 : cmd.index("-o")]
+            png_path = Path(sources[0])
+            if png_path.suffix == ".png":
+                seen["size"] = Image.open(png_path).size
+            return run_success(cmd, **kwargs)
+
+        with mock.patch.object(app.subprocess, "run", side_effect=inspecting_run):
+            status, _, body = request(
+                server,
+                "POST",
+                "/convert/uploaded-pdf",
+                body=pdf_bytes,
+                headers=upload_headers(pdf_bytes),
+            )
+        assert status == 200
+        assert body == FAKE_XTC
+        assert seen["size"] == (528, 792)
+
+    def test_invalid_device_header_falls_back_to_x3_canvas_size(self, server):
+        pdf_bytes = make_pdf(pages=1)
+        seen = {}
+
+        def inspecting_run(cmd, **kwargs):
+            sources = cmd[2 : cmd.index("-o")]
+            png_path = Path(sources[0])
+            if png_path.suffix == ".png":
+                seen["size"] = Image.open(png_path).size
+            return run_success(cmd, **kwargs)
+
+        with mock.patch.object(app.subprocess, "run", side_effect=inspecting_run):
+            status, _, body = request(
+                server,
+                "POST",
+                "/convert/uploaded-pdf",
+                body=pdf_bytes,
+                headers=upload_headers(pdf_bytes, **{"X-Xtc-Device": "bogus"}),
+            )
+        assert status == 200
+        assert body == FAKE_XTC
+        assert seen["size"] == (528, 792)

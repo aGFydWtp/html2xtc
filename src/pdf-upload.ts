@@ -2,6 +2,7 @@
 // Copyright (C) 2026 aGFydWtp
 
 import { decodeBase64Url } from "./base64url";
+import { DEFAULT_DEVICE_ID } from "./devices";
 import { validatePageRangeSyntax } from "./pdf-page-range";
 import type { Env, PdfConvertOptions } from "./types";
 
@@ -31,6 +32,7 @@ export const DEFAULT_PDF_OPTIONS: PdfConvertOptions = {
   dither: true,
   ditherStrength: 0.8,
   invert: false,
+  device: DEFAULT_DEVICE_ID,
 };
 
 const DEFAULT_MAX_UPLOAD_PDF_BYTES = 50_331_648; // 48 MiB (spec §11.4)
@@ -231,9 +233,20 @@ export function validatePdfConvertOptions(value: unknown): PdfOptionsResult {
   }
   const invert = v.invert;
 
+  // Backward compatibility (device selection was added after the initial
+  // PDF-upload release): an absent field defaults to "x3", the pre-existing
+  // behavior, exactly like DEFAULT_PDF_OPTIONS above. A present-but-invalid
+  // value is still a hard rejection, per this schema's general fail-hard
+  // stance (spec: "不正値は暗黙補正せず...400を返す").
+  const deviceRaw = v.device === undefined ? DEFAULT_DEVICE_ID : v.device;
+  if (deviceRaw !== "x3" && deviceRaw !== "x4") {
+    return { ok: false, error: "invalid device" };
+  }
+  const device = deviceRaw;
+
   return {
     ok: true,
-    options: { pages, rotation, crop, fit, marginPx, threshold, dither, ditherStrength, invert },
+    options: { pages, rotation, crop, fit, marginPx, threshold, dither, ditherStrength, invert, device },
   };
 }
 

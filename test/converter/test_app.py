@@ -406,6 +406,80 @@ class TestTitleHandling:
         assert "config title merge failed" in caplog.text
 
 
+class TestConvertPdfConfigPath:
+    """convert_pdf's config_path parameter (spec: X4 device support) selects
+    the BASE config -- the one read back for title/author/chapters merges,
+    and used as-is when there is nothing to merge. Defaulting to None means
+    app.CONFIG_PATH (X3), exactly as before this parameter existed."""
+
+    def test_default_config_path_is_config_path(self):
+        calls = []
+
+        def recording_run(cmd, **kwargs):
+            calls.append(cmd)
+            return run_success(cmd, **kwargs)
+
+        with mock.patch.object(app.subprocess, "run", side_effect=recording_run):
+            assert app.convert_pdf(FAKE_PDF) == FAKE_XTC
+        assert calls[0][calls[0].index("-c") + 1] == app.CONFIG_PATH
+
+    def test_explicit_config_path_is_used_without_title_or_author(self):
+        calls = []
+
+        def recording_run(cmd, **kwargs):
+            calls.append(cmd)
+            return run_success(cmd, **kwargs)
+
+        with mock.patch.object(app.subprocess, "run", side_effect=recording_run):
+            assert (
+                app.convert_pdf(FAKE_PDF, config_path=app.CONFIG_PATH_X4) == FAKE_XTC
+            )
+        assert calls[0][calls[0].index("-c") + 1] == app.CONFIG_PATH_X4
+
+    def test_explicit_config_path_is_the_base_for_a_title_merge(self, tmp_path):
+        config_path = tmp_path / "config-x4.toml"
+        config_path.write_text(SAMPLE_CONFIG, encoding="utf-8")
+        seen = {}
+
+        def inspecting_run(cmd, **kwargs):
+            merged_path = Path(cmd[cmd.index("-c") + 1])
+            seen["config_path"] = str(merged_path)
+            seen["config"] = tomllib.loads(merged_path.read_text(encoding="utf-8"))
+            return run_success(cmd, **kwargs)
+
+        with mock.patch.object(app.subprocess, "run", side_effect=inspecting_run):
+            assert (
+                app.convert_pdf(
+                    FAKE_PDF, "タイトル", config_path=str(config_path)
+                )
+                == FAKE_XTC
+            )
+        assert seen["config_path"] != str(config_path)  # merged into a temp file
+        assert seen["config"]["output"]["title"] == "タイトル"
+        assert seen["config"]["output"]["width"] == 528  # from SAMPLE_CONFIG
+
+    def test_explicit_config_path_is_the_base_for_a_chapters_merge(self, tmp_path):
+        config_path = tmp_path / "config-x4.toml"
+        config_path.write_text(SAMPLE_CONFIG, encoding="utf-8")
+        chapters = [{"name": "第一章", "start_page": 0, "end_page": 3}]
+        seen = {}
+
+        def inspecting_run(cmd, **kwargs):
+            merged_path = Path(cmd[cmd.index("-c") + 1])
+            seen["config"] = tomllib.loads(merged_path.read_text(encoding="utf-8"))
+            return run_success(cmd, **kwargs)
+
+        with mock.patch.object(app.subprocess, "run", side_effect=inspecting_run):
+            assert (
+                app.convert_pdf(
+                    FAKE_PDF, chapters=chapters, config_path=str(config_path)
+                )
+                == FAKE_XTC
+            )
+        assert seen["config"]["chapters"] == chapters
+        assert seen["config"]["output"]["width"] == 528  # from SAMPLE_CONFIG
+
+
 class TestAuthorHandling:
     """text-upload spec §16/§10: [output].author, set the same way title
     is — via a merged TOML config — but sourced from the X-Xtc-Author
@@ -563,6 +637,86 @@ class TestEffectiveMaxPdfBytes:
             app.effective_max_pdf_bytes({"X-Max-Pdf-Bytes": str(10**18)})
             == app.HARD_MAX_PDF_BYTES
         )
+
+
+class TestResolveDevice:
+    """X-Xtc-Device (spec: X4 device support) is a raw ASCII "x3"/"x4" value
+    -- unlike every other X-Xtc-* header in this module, it is NOT
+    base64url-encoded, per the contract agreed with the Worker side. Missing/
+    unrecognized values must fall back to "x3" so every pre-X4 Worker
+    request (which never sends this header) stays byte-for-byte unaffected."""
+
+    def test_x3_header_resolves_to_x3(self):
+        assert app.resolve_device({"X-Xtc-Device": "x3"}) == "x3"
+
+    def test_x4_header_resolves_to_x4(self):
+        assert app.resolve_device({"X-Xtc-Device": "x4"}) == "x4"
+
+    def test_missing_header_falls_back_to_x3(self):
+        assert app.resolve_device({}) == "x3"
+
+    def test_invalid_value_falls_back_to_x3(self):
+        assert app.resolve_device({"X-Xtc-Device": "x9000"}) == "x3"
+        assert app.resolve_device({"X-Xtc-Device": ""}) == "x3"
+        assert app.resolve_device({"X-Xtc-Device": "X4"}) == "x3"  # case-sensitive
+
+
+class TestResolveConfigPath:
+    def test_x3_resolves_to_config_path(self):
+        assert app.resolve_config_path("x3") == app.CONFIG_PATH
+
+    def test_x4_resolves_to_config_path_x4(self):
+        assert app.resolve_config_path("x4") == app.CONFIG_PATH_X4
+
+    def test_unknown_device_falls_back_to_config_path(self):
+        assert app.resolve_config_path("bogus") == app.CONFIG_PATH
+
+    def test_reads_config_path_globals_at_call_time(self):
+        # resolve_config_path must respect mock.patch.object(app,
+        # "CONFIG_PATH"/"CONFIG_PATH_X4", ...) rather than a value captured
+        # once at import time (e.g. via a pre-built {device: path} dict).
+        with mock.patch.object(app, "CONFIG_PATH", "/patched/x3.toml"):
+            assert app.resolve_config_path("x3") == "/patched/x3.toml"
+        with mock.patch.object(app, "CONFIG_PATH_X4", "/patched/x4.toml"):
+            assert app.resolve_config_path("x4") == "/patched/x4.toml"
+
+
+class TestConfigFilesX3X4:
+    """Sanity-checks the shipped config-x3.toml/config-x4.toml files
+    themselves (not app.CONFIG_PATH/CONFIG_PATH_X4, which default to the
+    /app/... in-container paths and are not present in this checkout)."""
+
+    _CONVERTER_DIR = Path(__file__).resolve().parents[2] / "converter"
+
+    def test_x3_config_resolution(self):
+        config = tomllib.loads(
+            (self._CONVERTER_DIR / "config-x3.toml").read_text(encoding="utf-8")
+        )
+        assert (config["output"]["width"], config["output"]["height"]) == (528, 792)
+
+    def test_x4_config_resolution(self):
+        config = tomllib.loads(
+            (self._CONVERTER_DIR / "config-x4.toml").read_text(encoding="utf-8")
+        )
+        assert (config["output"]["width"], config["output"]["height"]) == (480, 800)
+
+    def test_x4_config_matches_x3_config_except_output_dimensions(self):
+        # Every other setting (fonts/margins implied by resample_method,
+        # [pdf].resolution, [xth]/[xtg] thresholds/dithering, etc.) must stay
+        # identical between the two devices -- X4 support is only supposed
+        # to change the output resolution.
+        x3 = tomllib.loads(
+            (self._CONVERTER_DIR / "config-x3.toml").read_text(encoding="utf-8")
+        )
+        x4 = tomllib.loads(
+            (self._CONVERTER_DIR / "config-x4.toml").read_text(encoding="utf-8")
+        )
+        x3_output = {k: v for k, v in x3["output"].items() if k not in ("width", "height")}
+        x4_output = {k: v for k, v in x4["output"].items() if k not in ("width", "height")}
+        assert x3_output == x4_output
+        assert x3["pdf"] == x4["pdf"]
+        assert x3["xth"] == x4["xth"]
+        assert x3["xtg"] == x4["xtg"]
 
 
 @pytest.fixture()
@@ -870,6 +1024,85 @@ class TestHttpServer:
         for body, (status, _, response) in zip(bodies, results):
             assert status == 200
             assert response == b"XTC:" + body
+
+
+class TestHandleConvertWithDeviceHeader:
+    """X-Xtc-Device (spec: X4 device support) selects the config passed to
+    xtctool -c. Absent or invalid values must fall back to X3 -- the whole
+    point being that every pre-X4 Worker request (which never sends this
+    header) stays byte-for-byte unaffected."""
+
+    def test_x4_header_selects_config_path_x4(self, server):
+        calls = []
+
+        def recording_run(cmd, **kwargs):
+            calls.append(cmd)
+            return run_success(cmd, **kwargs)
+
+        with mock.patch.object(app.subprocess, "run", side_effect=recording_run):
+            status, _, body = request(
+                server,
+                "POST",
+                "/convert",
+                body=FAKE_PDF,
+                headers={"X-Xtc-Device": "x4"},
+            )
+        assert status == 200
+        assert body == FAKE_XTC
+        assert calls[0][calls[0].index("-c") + 1] == app.CONFIG_PATH_X4
+
+    def test_x3_header_selects_config_path(self, server):
+        calls = []
+
+        def recording_run(cmd, **kwargs):
+            calls.append(cmd)
+            return run_success(cmd, **kwargs)
+
+        with mock.patch.object(app.subprocess, "run", side_effect=recording_run):
+            status, _, body = request(
+                server,
+                "POST",
+                "/convert",
+                body=FAKE_PDF,
+                headers={"X-Xtc-Device": "x3"},
+            )
+        assert status == 200
+        assert body == FAKE_XTC
+        assert calls[0][calls[0].index("-c") + 1] == app.CONFIG_PATH
+
+    def test_missing_device_header_falls_back_to_config_path(self, server):
+        # Every pre-X4 Worker request (URL-render pipeline, TXT-upload
+        # pipeline) never sends X-Xtc-Device at all; must stay unaffected.
+        calls = []
+
+        def recording_run(cmd, **kwargs):
+            calls.append(cmd)
+            return run_success(cmd, **kwargs)
+
+        with mock.patch.object(app.subprocess, "run", side_effect=recording_run):
+            status, _, body = request(server, "POST", "/convert", body=FAKE_PDF)
+        assert status == 200
+        assert body == FAKE_XTC
+        assert calls[0][calls[0].index("-c") + 1] == app.CONFIG_PATH
+
+    def test_invalid_device_header_falls_back_to_config_path(self, server):
+        calls = []
+
+        def recording_run(cmd, **kwargs):
+            calls.append(cmd)
+            return run_success(cmd, **kwargs)
+
+        with mock.patch.object(app.subprocess, "run", side_effect=recording_run):
+            status, _, body = request(
+                server,
+                "POST",
+                "/convert",
+                body=FAKE_PDF,
+                headers={"X-Xtc-Device": "not-a-real-device"},
+            )
+        assert status == 200
+        assert body == FAKE_XTC
+        assert calls[0][calls[0].index("-c") + 1] == app.CONFIG_PATH
 
 
 def _b64url_json(payload) -> str:
@@ -1630,7 +1863,7 @@ class TestChapterDetectionTimeoutBudget:
         clock = iter([0.0, 7.0])  # 7s "elapsed" during resolve_chapters
         captured = {}
 
-        def fake_convert_pdf(pdf_bytes, title, timeout_seconds, page_count, author, chapters, diagnostics=None):
+        def fake_convert_pdf(pdf_bytes, title, timeout_seconds, page_count, author, chapters, diagnostics=None, config_path=None):
             captured["timeout_seconds"] = timeout_seconds
             return FAKE_XTC
 
@@ -1657,7 +1890,7 @@ class TestChapterDetectionTimeoutBudget:
         clock = iter([0.0, 999.0])
         captured = {}
 
-        def fake_convert_pdf(pdf_bytes, title, timeout_seconds, page_count, author, chapters, diagnostics=None):
+        def fake_convert_pdf(pdf_bytes, title, timeout_seconds, page_count, author, chapters, diagnostics=None, config_path=None):
             captured["timeout_seconds"] = timeout_seconds
             return FAKE_XTC
 
@@ -1686,7 +1919,7 @@ class TestChapterDetectionTimeoutBudget:
         # X-Xtc-Chapters) /convert timeout test stays exact.
         captured = {}
 
-        def fake_convert_pdf(pdf_bytes, title, timeout_seconds, page_count, author, chapters, diagnostics=None):
+        def fake_convert_pdf(pdf_bytes, title, timeout_seconds, page_count, author, chapters, diagnostics=None, config_path=None):
             captured["timeout_seconds"] = timeout_seconds
             return FAKE_XTC
 

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { DEVICE_PROFILES } from "../src/devices";
 import { buildPrintHtml, printableText, sanitizeContent } from "../src/printhtml";
 import type { ExtractedArticle } from "../src/extract";
 
@@ -131,6 +132,26 @@ describe("sanitizeContent", () => {
       BASE,
     );
     expect(out).toContain('src="https://example.com/a-400.jpg"');
+  });
+
+  it("defaults to the X3 528px image target width", () => {
+    const out = sanitizeContent(
+      '<img data-srcset="/a-300.jpg 300w, /a-500.jpg 500w, /a-1200.jpg 1200w">',
+      BASE,
+    );
+    // 500w does not cover 528px, so this must skip straight to 1200w.
+    expect(out).toContain('src="https://example.com/a-1200.jpg"');
+  });
+
+  it("uses the X4 480px image target width when given the X4 device profile", () => {
+    const out = sanitizeContent(
+      '<img data-srcset="/a-300.jpg 300w, /a-500.jpg 500w, /a-1200.jpg 1200w">',
+      BASE,
+      undefined,
+      DEVICE_PROFILES.x4,
+    );
+    // 500w covers 480px, so this must pick it over the (unnecessarily large) 1200w.
+    expect(out).toContain('src="https://example.com/a-500.jpg"');
   });
 
   it("prefers the lowest density for density-descriptor srcsets", () => {

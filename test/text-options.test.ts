@@ -155,6 +155,29 @@ describe("validateTextConvertOptions", () => {
     expect(result).toEqual({ ok: true, options: DEFAULT_TEXT_OPTIONS });
   });
 
+  it("accepts an explicit device (x3 or x4)", () => {
+    expect(validateTextConvertOptions({ ...DEFAULT_TEXT_OPTIONS, device: "x4" })).toEqual({
+      ok: true,
+      options: { ...DEFAULT_TEXT_OPTIONS, device: "x4" },
+    });
+    expect(
+      validateTextConvertOptions({ ...DEFAULT_TEXT_OPTIONS, device: "x3" }).ok,
+    ).toBe(true);
+  });
+
+  it("rejects an unlisted device value", () => {
+    expect(validateTextConvertOptions({ ...DEFAULT_TEXT_OPTIONS, device: "x5" })).toEqual({
+      ok: false,
+      error: "invalid device",
+    });
+  });
+
+  it("defaults a missing device to \"x3\" (backward compatibility)", () => {
+    const { device: _omitted, ...withoutField } = DEFAULT_TEXT_OPTIONS;
+    const result = validateTextConvertOptions(withoutField);
+    expect(result).toEqual({ ok: true, options: DEFAULT_TEXT_OPTIONS });
+  });
+
   it("caps title/author at 100 code points without implicit truncation", () => {
     expect(
       validateTextConvertOptions({ ...DEFAULT_TEXT_OPTIONS, title: "a".repeat(100) }).ok,

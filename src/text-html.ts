@@ -5,6 +5,8 @@ import type { AozoraDocument } from "../packages/aozora-text/src/types";
 import { renderBibliographyToHtml, renderDocumentToHtml } from "../packages/aozora-text/src/render-html";
 import { AOZORA_DOCUMENT_CSS } from "../packages/aozora-text/src/styles";
 import { MARKDOWN_DOCUMENT_CSS } from "../packages/markdown-text/src/index";
+import { DEFAULT_DEVICE_PROFILE } from "./devices";
+import type { DeviceProfile } from "./devices";
 import type { TextConvertOptions } from "./text-options";
 
 /**
@@ -80,8 +82,16 @@ function fontStack(options: TextConvertOptions): string {
  * sites, are all !important, and hard-code the 66mm/99mm page): the renderer
  * for this path (renderSelfStyledHtmlPdf, src/pdf.ts) injects only this
  * stylesheet plus the inlined font CSS, nothing else.
+ *
+ * `device` (default the X3 profile, src/devices.ts) drives the fixed
+ * --page-width/--page-height CSS px, which is why a TXT-upload conversion
+ * can only ever be exactly right for one device at a time — the caller must
+ * pass the SAME device the eventual XTC conversion targets.
  */
-export function buildTextPrintCss(options: TextConvertOptions): string {
+export function buildTextPrintCss(
+  options: TextConvertOptions,
+  device: DeviceProfile = DEFAULT_DEVICE_PROFILE,
+): string {
   const { margins } = options;
   const justify =
     options.textAlign === "justify"
@@ -144,8 +154,8 @@ export function buildTextPrintCss(options: TextConvertOptions): string {
 `;
 
   return `:root {
-  --page-width: 528px;
-  --page-height: 792px;
+  --page-width: ${device.outputWidthPx}px;
+  --page-height: ${device.outputHeightPx}px;
   --font-family: ${fontStack(options)};
   --font-size: ${options.fontSizePx}px;
   --line-height: ${options.lineHeight};
@@ -157,7 +167,7 @@ export function buildTextPrintCss(options: TextConvertOptions): string {
 }
 
 @page {
-  size: 528px 792px;
+  size: ${device.outputWidthPx}px ${device.outputHeightPx}px;
   margin: var(--margin-top) var(--margin-right) var(--margin-bottom) var(--margin-left);
 }
 
@@ -255,6 +265,9 @@ export interface BuildTextDocumentShellInput {
    * fabricated in-body heading). */
   displayTitle: string;
   author: string;
+  /** Target device profile (src/devices.ts); defaults to X3 when omitted —
+   * every existing caller predates device selection for this pipeline. */
+  device?: DeviceProfile;
 }
 
 /**
@@ -271,6 +284,7 @@ export function buildTextDocumentShell({
   documentTitle,
   displayTitle,
   author,
+  device = DEFAULT_DEVICE_PROFILE,
 }: BuildTextDocumentShellInput): string {
   const title = displayTitle.trim();
   const authorTrimmed = author.trim();
@@ -290,7 +304,7 @@ ${title.length > 0 ? `      <h1>${escapeHtml(title)}</h1>\n` : ""}${authorTrimme
   // byte-identical to its pre-existing form (test/text-prepare.test.ts's
   // parity pin).
   const css =
-    buildTextPrintCss(options) +
+    buildTextPrintCss(options, device) +
     (options.inputFormat === "aozora" ? `\n${AOZORA_DOCUMENT_CSS}` : "") +
     (options.inputFormat === "markdown" ? `\n${MARKDOWN_DOCUMENT_CSS}` : "");
 

@@ -2,6 +2,8 @@
 // Copyright (C) 2026 aGFydWtp
 
 import { parseHTML } from "linkedom";
+import { DEFAULT_DEVICE_PROFILE } from "../devices";
+import type { DeviceProfile } from "../devices";
 import type { ExtractedArticle } from "../extract";
 import { buildPrintHtml } from "../printhtml";
 import { AOZORA_DOCUMENT_CSS } from "../aozora";
@@ -34,6 +36,7 @@ export function buildAozoraFallbackChunkHtml(
   chunkHtml: string,
   index: AozoraFallbackChunkIndex,
   meta: { title: string; byline?: string; sourceUrl: string; convertedAt: string },
+  device: DeviceProfile = DEFAULT_DEVICE_PROFILE,
 ): string {
   const article: ExtractedArticle = {
     title: meta.title,
@@ -46,11 +49,18 @@ export function buildAozoraFallbackChunkHtml(
     // "フォントCSSは文書全体で1回だけ生成"), never regenerated per chunk.
     textContent: "",
   };
-  return buildPrintHtml(article, meta.sourceUrl, meta.convertedAt, AOZORA_DOCUMENT_CSS, {
-    includeDocumentHeader: index === 0,
-    includeBibliographicalInformation: true,
-    includeColophon: index === 3,
-  });
+  return buildPrintHtml(
+    article,
+    meta.sourceUrl,
+    meta.convertedAt,
+    AOZORA_DOCUMENT_CSS,
+    {
+      includeDocumentHeader: index === 0,
+      includeBibliographicalInformation: true,
+      includeColophon: index === 3,
+    },
+    device,
+  );
 }
 
 /** title/byline + the sanitized content-div innerHTML pulled back out of a

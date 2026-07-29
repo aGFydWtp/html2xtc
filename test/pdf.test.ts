@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
+import { DEVICE_PROFILES } from "../src/devices";
 import {
   buildColophonScript,
+  buildPrintCssWithFontImport,
+  DEFAULT_RENDER_OPTIONS,
   formatJstTimestamp,
   renderPdf,
   renderPdfFromHtml,
@@ -53,6 +56,26 @@ describe("renderPdfFromHtml", () => {
     expect(styleContents(quickAction)).toEqual([X3_PRINT_CSS]);
   });
 
+  it("defaults to the X3 page geometry when no device is given", async () => {
+    const { env, quickAction } = captureEnv();
+    await renderPdfFromHtml(env, "<html></html>", null);
+    expect(styleContents(quickAction)[0]).toContain("size: 66mm 99mm;");
+    expect(styleContents(quickAction)[0]).toContain("margin: 4mm;");
+  });
+
+  it("uses the X4 page geometry (60mm x 100mm) when the X4 profile is given", async () => {
+    const { env, quickAction } = captureEnv();
+    await renderPdfFromHtml(
+      env,
+      "<html></html>",
+      null,
+      DEFAULT_RENDER_OPTIONS,
+      DEVICE_PROFILES.x4,
+    );
+    expect(styleContents(quickAction)[0]).toContain("size: 60mm 100mm;");
+    expect(styleContents(quickAction)[0]).toContain("margin: 4mm;");
+  });
+
   it("waits a fixed grace period for the font decode and image tail", async () => {
     const { env, quickAction } = captureEnv();
     await renderPdfFromHtml(env, "<html></html>", "@font-face{}");
@@ -80,6 +103,26 @@ describe("renderPdf (full-page path)", () => {
       quickAction,
     };
   };
+
+  it("defaults to the X3 page geometry, and switches to X4 when given the X4 profile", async () => {
+    const { env, quickAction } = captureEnv();
+    await renderPdf(env, "https://example.com/article");
+    const x3Options = quickAction.mock.calls[0]?.[1] as {
+      addStyleTag: Array<{ content: string }>;
+    };
+    expect(x3Options.addStyleTag[0]?.content).toContain("size: 66mm 99mm;");
+
+    await renderPdf(
+      env,
+      "https://example.com/article",
+      DEFAULT_RENDER_OPTIONS,
+      DEVICE_PROFILES.x4,
+    );
+    const x4Options = quickAction.mock.calls[1]?.[1] as {
+      addStyleTag: Array<{ content: string }>;
+    };
+    expect(x4Options.addStyleTag[0]?.content).toContain("size: 60mm 100mm;");
+  });
 
   it("injects the lazy-image script before the colophon script", async () => {
     const { env, quickAction } = captureEnv();
@@ -187,6 +230,29 @@ describe("X3_PRINT_CSS", () => {
       // ...and no font-family may sneak back inside the print block.
       expect(css.slice(printIndex)).not.toContain("font-family");
     }
+  });
+});
+
+describe("buildPrintCssWithFontImport — device profiles", () => {
+  it("defaults to the X3 @page geometry (66mm x 99mm, 4mm margin)", () => {
+    const css = buildPrintCssWithFontImport(DEFAULT_RENDER_OPTIONS);
+    expect(css).toContain("size: 66mm 99mm;");
+    expect(css).toContain("margin: 4mm;");
+  });
+
+  it("switches to the X4 @page geometry (60mm x 100mm, 4mm margin) when given the X4 profile", () => {
+    const css = buildPrintCssWithFontImport(DEFAULT_RENDER_OPTIONS, DEVICE_PROFILES.x4);
+    expect(css).toContain("size: 60mm 100mm;");
+    expect(css).toContain("margin: 4mm;");
+    expect(css).not.toContain("66mm 99mm");
+  });
+
+  it("applies the X4 page geometry to the vertical rule set too", () => {
+    const css = buildPrintCssWithFontImport(
+      { ...DEFAULT_RENDER_OPTIONS, layout: "vertical" },
+      DEVICE_PROFILES.x4,
+    );
+    expect(css).toContain("size: 60mm 100mm;");
   });
 });
 

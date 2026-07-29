@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 aGFydWtp
 
+import { DEFAULT_DEVICE_ID, DEVICE_PROFILES, isDeviceId } from "../devices";
+import type { DeviceId } from "../devices";
 import type { Env } from "../types";
 
 /**
@@ -11,6 +13,31 @@ import type { Env } from "../types";
  * library/ must NOT be covered by that lifecycle rule (see
  * claudedocs/deploy-guide.md and the implementation plan §8.1).
  */
+
+/**
+ * Recovers {device, width, height} from a source object's customMetadata
+ * (written by storeXtcOutput, src/pipeline.ts). Absent/garbled metadata
+ * means the XTC predates device tracking (X4 didn't exist yet) — every
+ * conversion before that point was physically X3 (528x792,
+ * converter/config-x3.toml alone), so defaulting to the X3 profile here is
+ * a factual backfill, not a guess (mirrors migrations/app/0005_library_item_device.sql's
+ * own column defaults). width/height are read from the stored metadata
+ * verbatim rather than re-derived from `device` at this read time — see
+ * that migration's doc comment for why device profiles must never be
+ * treated as a mutable reference for an already-recorded row.
+ */
+function parseDeviceMetadata(
+  customMetadata: Record<string, string> | undefined,
+): { device: DeviceId; width: number; height: number } {
+  const rawDevice = customMetadata?.device;
+  const device = isDeviceId(rawDevice) ? rawDevice : DEFAULT_DEVICE_ID;
+  const fallback = DEVICE_PROFILES[device];
+  const rawWidth = Number(customMetadata?.width);
+  const rawHeight = Number(customMetadata?.height);
+  const width = Number.isInteger(rawWidth) && rawWidth > 0 ? rawWidth : fallback.outputWidthPx;
+  const height = Number.isInteger(rawHeight) && rawHeight > 0 ? rawHeight : fallback.outputHeightPx;
+  return { device, width, height };
+}
 
 /** R2 key for a permanently stored library item's XTC. */
 export function libraryItemKey(accountId: string, itemId: string): string {
@@ -24,6 +51,17 @@ export interface CopiedLibraryObject {
   sha256: string | null;
   /** From the source object's customMetadata.title (set by storeXtcOutput, src/pipeline.ts), used as the default library title. */
   title: string | null;
+  /** Target device this XTC was actually converted for (see parseDeviceMetadata above). */
+  device: DeviceId;
+  /**
+   * Output px width/height as recorded by storeXtcOutput (src/pipeline.ts)
+   * from src/devices.ts's static profile table — NOT a measurement of the
+   * converter's actual output (see parseDeviceMetadata above, and
+   * src/library/repository.ts's LibraryItem.width/height for the full
+   * two-sources-of-truth caveat).
+   */
+  width: number;
+  height: number;
 }
 
 /**
@@ -48,11 +86,15 @@ export async function copyToLibraryStorage(
     httpMetadata: { contentType: "application/octet-stream" },
     customMetadata: source.customMetadata,
   });
+  const { device, width, height } = parseDeviceMetadata(source.customMetadata);
   return {
     key,
     sizeBytes: source.size,
     sha256: source.customMetadata?.sha256 ?? null,
     title: source.customMetadata?.title ?? null,
+    device,
+    width,
+    height,
   };
 }
 

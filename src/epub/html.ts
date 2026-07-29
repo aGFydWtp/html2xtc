@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 aGFydWtp
 
+import { resolveDeviceProfile } from "../devices";
 import type { EpubConvertOptions } from "../epub-options";
 import { resolveMaxEpubHtmlBytes } from "../jobs";
 import {
@@ -39,11 +40,14 @@ import { formatChapterMarker, normalizeChapterName, XTC_CHAPTER_MARKER_CLASS } f
 import type { XtcChapter } from "../../packages/aozora-text/src/index";
 
 /**
- * Self-contained X3 HTML generation (EPUB spec §11-§13): orchestrates
- * archive extraction, package/nav parsing (Phase 2), per-chapter XHTML
- * sanitization (sanitize.ts), CSS collection + sanitization (css.ts), image
- * Data-URL resolution (assets.ts), cover/TOC assembly, layout detection, and
- * the final X3 correction stylesheet — into the single entrypoint Phase 4's
+ * Self-contained device-targeted HTML generation (EPUB spec §11-§13,
+ * written against an X3-only baseline; device selection — src/devices.ts —
+ * was added later and only changes the final correction stylesheet's page
+ * geometry, buildFinalCss below): orchestrates archive extraction,
+ * package/nav parsing (Phase 2), per-chapter XHTML sanitization
+ * (sanitize.ts), CSS collection + sanitization (css.ts), image Data-URL
+ * resolution (assets.ts), cover/TOC assembly, layout detection, and the
+ * final correction stylesheet — into the single entrypoint Phase 4's
  * Workflow calls: prepareEpubDocument.
  *
  * No colophon (奥付): unlike the URL-render path (src/printhtml.ts, which
@@ -424,10 +428,13 @@ function isCoverDuplicateSpineItem(sanitized: SanitizedChapter, coverDataUrl: st
   return sanitized.imageDataUrls.length > 0 && sanitized.imageDataUrls.every((src) => src === coverDataUrl);
 }
 
-// --- final X3 correction CSS ------------------------------------------------
+// --- final device-geometry correction CSS ------------------------------------
 
 /**
- * Spec §13.1/§13.2/§12.1: fixed 528x792 page geometry, the chosen font
+ * Spec §13.1/§13.2/§12.1: the target device's page geometry (528x792 for
+ * X3, 480x800 for X4 — resolveDeviceProfile(options.device), src/devices.ts;
+ * dynamic, not a fixed literal, despite the spec being written against the
+ * X3-only baseline), the chosen font
  * forced over the EPUB's own (font references were already stripped —
  * D3/D12), the image-sizing rules (§11.2), and the optional
  * chapter-page-break rule (§9.2). Explicit (non-"auto") layout choices win
@@ -442,8 +449,8 @@ function isCoverDuplicateSpineItem(sanitized: SanitizedChapter, coverDataUrl: st
  * ~0 left/right margin (real-world repro: 熊野奈智山.epub). `@page`'s
  * margin is a per-page box property instead, so it applies uniformly no
  * matter how the content fragments — this is exactly what src/text-html.ts
- * already relies on (buildTextPrintCss) for the same 528x792 page. Matching
- * that file, `html`/`body` no longer hard-code `width`/`min-height`: the
+ * already relies on (buildTextPrintCss) for the same per-device page size.
+ * Matching that file, `html`/`body` no longer hard-code `width`/`min-height`: the
  * printable content box is already defined by `@page`'s size minus its
  * margin, so a second, redundant fixed-size box on the root would only
  * fight it (and, at non-default marginPx values, contradict it outright).
@@ -560,10 +567,11 @@ function buildFinalCss(
   // needed, @page's margin already insets it like every other page. Both
   // dimensions are needed, not just height — see .epub-cover's own doc
   // comment below for why.
-  const coverContentWidthPx = Math.max(0, 528 - options.marginPx * 2);
-  const coverContentHeightPx = Math.max(0, 792 - options.marginPx * 2);
+  const device = resolveDeviceProfile(options.device);
+  const coverContentWidthPx = Math.max(0, device.outputWidthPx - options.marginPx * 2);
+  const coverContentHeightPx = Math.max(0, device.outputHeightPx - options.marginPx * 2);
   return `@page {
-  size: 528px 792px;
+  size: ${device.outputWidthPx}px ${device.outputHeightPx}px;
   margin: ${options.marginPx}px;
 }
 

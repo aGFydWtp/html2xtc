@@ -2,6 +2,8 @@
 // Copyright (C) 2026 aGFydWtp
 
 import { decodeBase64Url } from "./base64url";
+import { DEFAULT_DEVICE_ID } from "./devices";
+import type { DeviceId } from "./devices";
 import { sanitizeFontFamily } from "./fonts";
 
 /**
@@ -68,6 +70,13 @@ export interface TextConvertOptions {
   title: string;
   /** 100 chars max (code points). */
   author: string;
+  /**
+   * Target Xteink device (src/devices.ts). Added after the initial TXT
+   * upload release: an absent field defaults to "x3" (full backward
+   * compatibility with stored/older-client payloads), but a present,
+   * invalid value is a hard 400 like every other field in this schema.
+   */
+  device: DeviceId;
 }
 
 /** Spec §6.2 (aozora-text-conversion spec §5.2 for inputFormat). */
@@ -92,6 +101,7 @@ export const DEFAULT_TEXT_OPTIONS: TextConvertOptions = {
   showPageNumbers: false,
   title: "",
   author: "",
+  device: DEFAULT_DEVICE_ID,
 };
 
 const MARGIN_SIDES = ["top", "right", "bottom", "left"] as const;
@@ -223,6 +233,16 @@ export function validateTextConvertOptions(value: unknown): TextOptionsResult {
   }
   const author = v.author;
 
+  // Backward compatibility (device selection was added after the initial
+  // TXT upload release): an absent field defaults to "x3", same stance as
+  // joinHardWrappedLines above. A present-but-invalid value is still a hard
+  // rejection, per this schema's general fail-hard stance.
+  const deviceRaw = v.device === undefined ? DEFAULT_DEVICE_ID : v.device;
+  if (deviceRaw !== "x3" && deviceRaw !== "x4") {
+    return { ok: false, error: "invalid device" };
+  }
+  const device = deviceRaw;
+
   return {
     ok: true,
     options: {
@@ -241,6 +261,7 @@ export function validateTextConvertOptions(value: unknown): TextOptionsResult {
       showPageNumbers,
       title,
       author,
+      device,
     },
   };
 }

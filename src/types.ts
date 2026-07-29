@@ -2,6 +2,7 @@
 // Copyright (C) 2026 aGFydWtp
 
 import type { XtcConverterContainer } from "./container";
+import type { DeviceId } from "./devices";
 import type { EpubConvertOptions } from "./epub-options";
 import type { RateLimiter } from "./ratelimiter";
 import type { TextConvertOptions } from "./text-options";
@@ -74,6 +75,13 @@ export interface PdfConvertOptions {
   ditherStrength: number;
   /** Invert black/white. */
   invert: boolean;
+  /**
+   * Target Xteink device (src/devices.ts). Always resolved to a concrete
+   * "x3" | "x4" by validatePdfConvertOptions — an omitted field defaults to
+   * "x3" (full backward compatibility), but a present, invalid value is a
+   * hard 400 like every other field in this schema.
+   */
+  device: DeviceId;
 }
 
 /**
@@ -117,6 +125,14 @@ export interface ConvertJobParams {
    */
   layout?: string;
   font?: string;
+  /**
+   * Raw optional target device, as submitted (loosely typed like layout/font
+   * above, for the same reason: re-validated via resolveDeviceId, src/
+   * devices.ts, rather than trusted as stored). Meaningful only for
+   * source.kind === "url" today — see src/workflow.ts's `run()`. Absent or
+   * invalid resolves to "x3" (full backward compatibility).
+   */
+  device?: string;
   /** PDF conversion settings; only meaningful when source.kind === "pdf". */
   pdfOptions?: PdfConvertOptions;
   /** Text conversion settings; only meaningful when source.kind === "text". */

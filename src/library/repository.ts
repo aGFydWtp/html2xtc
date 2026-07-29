@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 aGFydWtp
 
+import type { DeviceId } from "../devices";
+
 /**
  * D1 access for library_items (and its device_library_items fan-out on
  * delete). Every query is scoped by account_id so a caller can never reach
@@ -22,6 +24,17 @@ export interface LibraryItem {
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
+  /** Target device this XTC was converted for (migrations/app/0005_library_item_device.sql). */
+  device: DeviceId;
+  /**
+   * Output px width/height AS RECORDED at conversion time (storeXtcOutput,
+   * src/pipeline.ts) from src/devices.ts's static profile table — not a
+   * measurement of the Container's actual output. Correct only as long as
+   * src/devices.ts and converter/config-x3.toml/config-x4.toml agree; the
+   * two are separate sources of truth kept in sync by hand.
+   */
+  width: number;
+  height: number;
 }
 
 interface LibraryItemRow {
@@ -37,6 +50,9 @@ interface LibraryItemRow {
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
+  device: string;
+  width: number;
+  height: number;
 }
 
 function fromRow(row: LibraryItemRow): LibraryItem {
@@ -53,6 +69,12 @@ function fromRow(row: LibraryItemRow): LibraryItem {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     deletedAt: row.deleted_at,
+    // The column is NOT NULL / always one of "x3"/"x4" (writer-controlled,
+    // never client input), so a plain cast is safe here — unlike a value
+    // arriving from an HTTP request, which would need isDeviceId validation.
+    device: row.device as DeviceId,
+    width: row.width,
+    height: row.height,
   };
 }
 
@@ -67,6 +89,9 @@ export interface NewLibraryItem {
   sizeBytes: number;
   sha256: string | null;
   createdAt: string;
+  device: DeviceId;
+  width: number;
+  height: number;
 }
 
 /** Inserts a new library_items row. Caller has already copied the R2 object at r2Key. */
@@ -74,8 +99,8 @@ export async function insertLibraryItem(db: D1Database, item: NewLibraryItem): P
   await db
     .prepare(
       `INSERT INTO library_items
-         (id, account_id, source_job_id, source_url, title, author, r2_key, size_bytes, sha256, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, account_id, source_job_id, source_url, title, author, r2_key, size_bytes, sha256, created_at, updated_at, device, width, height)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       item.id,
@@ -89,6 +114,9 @@ export async function insertLibraryItem(db: D1Database, item: NewLibraryItem): P
       item.sha256,
       item.createdAt,
       item.createdAt,
+      item.device,
+      item.width,
+      item.height,
     )
     .run();
 }

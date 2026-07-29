@@ -71,6 +71,7 @@ WORKDIR /app
 COPY app.py /app/app.py
 COPY pdf_upload.py /app/pdf_upload.py
 COPY config-x3.toml /app/config-x3.toml
+COPY config-x4.toml /app/config-x4.toml
 
 USER appuser
 

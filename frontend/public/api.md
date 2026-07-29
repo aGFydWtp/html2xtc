@@ -169,7 +169,8 @@ a job after it starts, uploads over 48 MiB.
 
 ### `POST /jobs/text`
 
-Uploads a plain-text (`.txt`) file, reflows it for reading, then converts it.
+Uploads a plain-text or Markdown (`.txt`/`.md`/`.markdown`) file, reflows it
+for reading, then converts it.
 
 ```http
 POST /jobs/text
@@ -181,18 +182,19 @@ X-Text-Options: <base64url of a TextConvertOptions JSON object>
 <TXT bytes>
 ```
 
-- `Content-Type` must be `text/plain` or `application/octet-stream` (415
-  otherwise).
+- `Content-Type` must be `text/plain`, `text/markdown`, or
+  `application/octet-stream` (415 otherwise). It does not select the parser —
+  `inputFormat` does — so a Markdown body may be sent as `text/plain`.
 - `Content-Length` is required (411 if missing). Fixed upload limit: 5 MiB
   (413 if exceeded — this limit is not operator-configurable, unlike the PDF
   and EPUB upload limits).
 - `X-File-Name`: same rules as `POST /jobs/pdf`.
 - `X-Text-Options` is optional: base64url-encode the JSON form of
-  `TextConvertOptions` (see openapi.json — `inputFormat` `"plain"`|`"aozora"`,
-  character encoding, layout, font, font size, line height, margins, text
-  align, blank-line handling, page numbers, title, author, `device`
-  `"x3"`|`"x4"`). Omit to use defaults. Strict validation, same as PDF
-  options — an invalid `device` is a `400`.
+  `TextConvertOptions` (see openapi.json — `inputFormat`
+  `"plain"`|`"aozora"`|`"markdown"`, character encoding, layout, font, font
+  size, line height, margins, text align, blank-line handling, page numbers,
+  title, author, `device` `"x3"`|`"x4"`). Omit to use defaults. Strict
+  validation, same as PDF options — an invalid `device` is a `400`.
 - Supported character encodings: UTF-8 (with or without BOM) and Shift_JIS /
   Windows-31J. UTF-16, EUC-JP, and ISO-2022-JP are rejected.
 - Additional fixed limits: 2,000,000 characters, 200,000 lines, 100,000
@@ -205,7 +207,7 @@ Success — `202`: same `{"jobId", "statusUrl"}` shape.
 | 400 | bad `Content-Length`, bad `X-Text-Options`, or upload/declared size mismatch |
 | 411 | `Content-Length` missing |
 | 413 | declared size exceeds 5 MiB |
-| 415 | `Content-Type` is not `text/plain`/`application/octet-stream` |
+| 415 | `Content-Type` is not `text/plain`/`text/markdown`/`application/octet-stream` |
 | 429 | rate limit exceeded (shared with `/convert`, `/jobs`, `/jobs/pdf`) |
 | 503 | conversion is temporarily disabled by the operator |
 | 500 | storage or job creation failure |

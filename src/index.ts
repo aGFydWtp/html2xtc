@@ -550,7 +550,7 @@ async function handleCreatePdfJob(request: Request, env: Env): Promise<Response>
 async function handleCreateTextJob(request: Request, env: Env): Promise<Response> {
   if (!isAllowedTextContentType(request.headers.get("Content-Type"))) {
     return Response.json(
-      { error: "Content-Type must be text/plain or application/octet-stream" },
+      { error: "Content-Type must be text/plain, text/markdown, or application/octet-stream" },
       { status: 415 },
     );
   }

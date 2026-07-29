@@ -9,6 +9,7 @@
   import { opdsStore } from "../lib/opds.svelte";
   import { PdfFileValidationError, validatePdfFile } from "../lib/pdf-file-validate";
   import { publicConfigStore } from "../lib/publicConfig.svelte";
+  import { targetDeviceStore } from "../lib/targetDevice.svelte";
   import { TextFileValidationError, validateTextFile } from "../lib/text-file-validate";
   import EpubInputPanel from "./EpubInputPanel.svelte";
   import FileDropZone from "./FileDropZone.svelte";
@@ -107,6 +108,20 @@
   {:else if epubFile}
     <EpubInputPanel file={epubFile} onRemove={onRemoveFile} />
   {:else}
+    <div class="device-toggle" role="group" aria-label={t("device_toggle_label")}>
+      <div class="seg-pill">
+        <button
+          type="button"
+          aria-pressed={targetDeviceStore.device === "x3"}
+          onclick={() => targetDeviceStore.set("x3")}
+        >X3</button>
+        <button
+          type="button"
+          aria-pressed={targetDeviceStore.device === "x4"}
+          onclick={() => targetDeviceStore.set("x4")}
+        >X4</button>
+      </div>
+    </div>
     <div class="form-note"><span>{t("agree_before")}</span><a href="/about#terms">{t("agree_link")}</a><span>{t("agree_after")}</span></div>
     <FileDropZone onFileSelected={(f) => void onFileSelected(f)}>
       <form {onsubmit}>
@@ -142,6 +157,19 @@
 <style>
   section.convert { padding: 30px 0 30px; }
   .intro { margin: 0 0 16px; color: var(--muted2); line-height: 1.8; }
+  .device-toggle { display: flex; justify-content: center; margin-bottom: 16px; }
+  .seg-pill {
+    display: inline-flex; border: 1.5px solid var(--ink); border-radius: 999px;
+    overflow: hidden; background: var(--card);
+  }
+  .seg-pill button {
+    padding: 7px 22px; font-family: var(--mono); font-size: 14px; border: 0;
+    background: var(--card); color: var(--muted); cursor: pointer;
+  }
+  .seg-pill button[aria-pressed="true"] {
+    background: var(--ink); color: var(--ink-text); font-weight: 600; border-radius: 999px;
+  }
+  .seg-pill button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
   form .input-row {
     display: flex; border: 1.5px solid var(--ink); background: var(--card);
     border-radius: 4px; overflow: hidden;

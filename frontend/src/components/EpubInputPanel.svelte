@@ -3,13 +3,17 @@
   import { submitEpub, type EpubUploadHandle } from "../lib/convert.svelte";
   import { DEFAULT_EPUB_OPTIONS, isValidEpubOptions, type EpubConvertOptions } from "../lib/epub-options";
   import { t } from "../lib/i18n.svelte";
+  import { targetDeviceStore } from "../lib/targetDevice.svelte";
   import EpubOptions from "./EpubOptions.svelte";
 
   let { file, onRemove }: { file: File; onRemove: () => void } = $props();
 
   // EPUBはPDF/TXTと異なりクライアント側でZIPを解凍・解析しない（仕様書 §16.4に
   // プレビュー要求がない）ため、ファイルを受け取った時点で常に変換可能な状態になる。
-  let options = $state<EpubConvertOptions>({ ...DEFAULT_EPUB_OPTIONS });
+  // device の初期値はトグル（targetDeviceStore、ConvertForm.svelte 上部）の
+  // 現在値を反映する。以後はこのパネル内では変わらない — トグル変更はパネルが
+  // 再生成される次のファイル選択時から効く。
+  let options = $state<EpubConvertOptions>({ ...DEFAULT_EPUB_OPTIONS, device: targetDeviceStore.device });
 
   let uploading = $state(false);
   let uploadPercent = $state<number | null>(null);

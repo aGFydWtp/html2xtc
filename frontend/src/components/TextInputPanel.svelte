@@ -10,7 +10,9 @@
   } from "@html2xtc/aozora-text";
   import { MARKDOWN_DOCUMENT_CSS } from "@html2xtc/markdown-text";
   import { submitText, type TextUploadHandle } from "../lib/convert.svelte";
+  import { outputSizeForDevice } from "../lib/device-profiles";
   import { t } from "../lib/i18n.svelte";
+  import { targetDeviceStore } from "../lib/targetDevice.svelte";
   import {
     computeInitialTextState,
     resolveAutoFillAuthor,
@@ -51,10 +53,20 @@
   let detectionResult = $state<EncodingDetectionResult | null>(null);
   let normalizedText = $state("");
 
+  // device の初期値はトグル（targetDeviceStore、ConvertForm.svelte 上部）の
+  // 現在値を反映する。以後はこのパネル内では変わらない — トグル変更はパネルが
+  // 再生成される次のファイル選択時から効く。
   let options = $state<TextConvertOptions>({
     ...DEFAULT_TEXT_OPTIONS,
+    device: targetDeviceStore.device,
     margins: { ...DEFAULT_TEXT_OPTIONS.margins },
   });
+
+  // 選択中の変換先機種（options.device）の出力解像度。プレビュー枠の
+  // aspect-ratio はここから決める — X3/X4 でアスペクト比が異なるため
+  // （528:792 と 480:800）、固定値のままだと実機プレビューの表示が歪む
+  // （PdfPreview.svelte の outputSize と同じ理由）。
+  const outputSize = $derived(outputSizeForDevice(options.device));
 
   // 表題(options.title)の初期値をファイル名（拡張子除く）から自動導出する。
   // ユーザーが手入力した表題は上書きしない — 「表題が空、または直前ファイルから
@@ -153,7 +165,8 @@
 
   // XTCの現在ページを canvas へデコード描画する（PreviewDialog.svelte の
   // decodeFrame → putImageData パターンを流用）。.pv-page の CSS が
-  // width:100%/height:100% で528:792枠に収めるため、canvas自体の実寸は
+  // width:100%/height:100%、aspect-ratio は options.device に応じた outputSize
+  // （X3: 528:792、X4: 480:800）でその枠に収めるため、canvas自体の実寸は
   // デコードした画像の実寸のままでよい。
   $effect(() => {
     if (previewMode !== "x3" || !x3Parsed || !x3CanvasEl) return;
@@ -471,7 +484,7 @@
     <div class="pv-wrap">
       <div class="pv-frame">
         {#if previewMode === "source"}
-          <div class="pv-page pv-page-scroll">
+          <div class="pv-page pv-page-scroll" style="aspect-ratio: {outputSize.widthPx} / {outputSize.heightPx}">
             {#if options.inputFormat === "aozora"}
               <!-- eslint-disable-next-line svelte/no-at-html-tags -- 固定文字列（packages/aozora-text/src/styles.ts の AOZORA_DOCUMENT_CSS）で、本文由来の入力は一切含まない -->
               {@html aozoraPreviewStyleHtml}
@@ -488,7 +501,7 @@
             {/if}
           </div>
         {:else}
-          <div class="pv-page">
+          <div class="pv-page" style="aspect-ratio: {outputSize.widthPx} / {outputSize.heightPx}">
             {#if x3PreviewGenerating}
               <span class="spinner"></span>
             {:else if x3Parsed}
@@ -543,9 +556,9 @@
       {/if}
     </div>
   {:else if status === "loading"}
-    <div class="preview-placeholder"><span class="spinner"></span></div>
+    <div class="preview-placeholder" style="aspect-ratio: {outputSize.widthPx} / {outputSize.heightPx}"><span class="spinner"></span></div>
   {:else if status === "error" && errorKind}
-    <div class="preview-placeholder error-text">{loadErrorText(errorKind)}</div>
+    <div class="preview-placeholder error-text" style="aspect-ratio: {outputSize.widthPx} / {outputSize.heightPx}">{loadErrorText(errorKind)}</div>
   {/if}
 
   {#if status === "ready"}
@@ -578,8 +591,10 @@
 
 <style>
   .text-panel { padding: 20px 0; display: flex; flex-direction: column; gap: 16px; }
+  /* aspect-ratio は常に markup 側のインラインスタイル（outputSize、選択中の device
+     から算出）で指定するため、ここでは固定値を持たない。 */
   .preview-placeholder {
-    width: 100%; max-width: 220px; aspect-ratio: 528 / 792; display: flex; align-items: center;
+    width: 100%; max-width: 220px; display: flex; align-items: center;
     justify-content: center; background: #fff; border: 1.5px solid var(--ink); border-radius: 4px;
     box-shadow: 3px 3px 0 var(--line); margin: 0 auto; padding: 16px; text-align: center; font-size: 13px;
   }
@@ -606,8 +621,10 @@
 
   .pv-wrap { display: flex; flex-direction: column; align-items: center; gap: 10px; }
   .pv-frame { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; width: 100%; }
+  /* aspect-ratio は常に markup 側のインラインスタイル（outputSize、選択中の device
+     から算出）で指定するため、ここでは固定値を持たない。 */
   .pv-page {
-    position: relative; width: 100%; max-width: 220px; aspect-ratio: 528 / 792; background: #fff;
+    position: relative; width: 100%; max-width: 220px; background: #fff;
     border: 1.5px solid var(--ink); border-radius: 4px; box-shadow: 3px 3px 0 var(--line);
     overflow: hidden; margin: 0 auto; display: flex; align-items: center; justify-content: center;
   }

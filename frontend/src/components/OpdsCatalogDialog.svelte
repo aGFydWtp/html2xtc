@@ -10,17 +10,26 @@
   import { t } from "../lib/i18n.svelte";
   import { opdsStore } from "../lib/opds.svelte";
   import { OPDS_SELECTION_MAX, type OpdsPublicationEntry } from "../lib/opds-entry";
+  import { targetDeviceStore } from "../lib/targetDevice.svelte";
   import EpubOptions from "./EpubOptions.svelte";
   import OpdsEntryRow from "./OpdsEntryRow.svelte";
 
   let dlg = $state<HTMLDialogElement | null>(null);
   let searchText = $state("");
-  let epubOptions = $state<EpubConvertOptions>({ ...DEFAULT_EPUB_OPTIONS });
+  let epubOptions = $state<EpubConvertOptions>({ ...DEFAULT_EPUB_OPTIONS, device: targetDeviceStore.device });
 
+  // このダイアログは App.svelte で常時マウントされるシングルトンのため、
+  // モジュール初期化時（アプリ起動時）の $state 初期値だけでは device が
+  // トグル変更に追従しない（ManualOpdsDeviceDialog.svelte と違い、コンポーネント
+  // 自体は毎回作り直されない）。開くたびに ConvertForm.svelte 上部のトグルの
+  // 現在値を反映する。
   $effect(() => {
     if (!dlg) return;
     if (opdsStore.catalogDialogOpen) {
-      if (!dlg.open) dlg.showModal();
+      if (!dlg.open) {
+        epubOptions = { ...epubOptions, device: targetDeviceStore.device };
+        dlg.showModal();
+      }
     } else if (dlg.open) {
       dlg.close();
     }

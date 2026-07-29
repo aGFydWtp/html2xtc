@@ -8,9 +8,14 @@
 // ブラウザ依存のため単体テスト対象外（手動確認 + ビルド確認でカバーする）。
 
 import type { PDFPageProxy } from "pdfjs-dist";
+import type { Device } from "./device-tag";
+import { outputSizeForDevice } from "./device-profiles";
 import type { PdfCrop, PdfConvertOptions } from "./pdf-options";
 import type { DitherRequest, DitherResponse } from "./pdf-dither.worker";
 
+// X3 の出力解像度（既定機種）。他機種（X4）の解像度は device-profiles.ts の
+// outputSizeForDevice を使う — 呼び出し側は options.device / 明示的な device
+// 引数（省略時 "x3"）で切り替える。
 export const OUTPUT_WIDTH = 528;
 export const OUTPUT_HEIGHT = 792;
 export const PDF_PREVIEW_DPI = 200;
@@ -25,12 +30,14 @@ export interface Rect {
   height: number;
 }
 
-// X3 出力領域内の「内側表示領域」（仕様書 §6.3）。marginPx=64 でも正のサイズを保証する。
-export function computeInnerFrame(marginPx: number): Rect {
+// 出力領域内の「内側表示領域」（仕様書 §6.3）。marginPx=64 でも正のサイズを保証する。
+// device は省略時 "x3"（既存呼び出し・テストの互換のための既定値）。
+export function computeInnerFrame(marginPx: number, device: Device = "x3"): Rect {
+  const { widthPx, heightPx } = outputSizeForDevice(device);
   const left = marginPx;
   const top = marginPx;
-  const width = Math.max(1, OUTPUT_WIDTH - marginPx * 2);
-  const height = Math.max(1, OUTPUT_HEIGHT - marginPx * 2);
+  const width = Math.max(1, widthPx - marginPx * 2);
+  const height = Math.max(1, heightPx - marginPx * 2);
   return { x: left, y: top, width, height };
 }
 
@@ -126,14 +133,21 @@ export function applyRotationAndCrop(source: HTMLCanvasElement, rotation: 0 | 90
   return cropped;
 }
 
-// contain/cover 配置 + 余白を適用し、528×792 の白背景キャンバスへ配置する。
-export function placeInFrame(source: HTMLCanvasElement, fit: "contain" | "cover", marginPx: number): HTMLCanvasElement {
-  const out = newCanvas(OUTPUT_WIDTH, OUTPUT_HEIGHT);
+// contain/cover 配置 + 余白を適用し、機種の出力解像度（既定 528×792、X4 なら
+// 480×800）の白背景キャンバスへ配置する。
+export function placeInFrame(
+  source: HTMLCanvasElement,
+  fit: "contain" | "cover",
+  marginPx: number,
+  device: Device = "x3",
+): HTMLCanvasElement {
+  const { widthPx, heightPx } = outputSizeForDevice(device);
+  const out = newCanvas(widthPx, heightPx);
   const octx = ctx2d(out);
   octx.fillStyle = "#fff";
-  octx.fillRect(0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT);
+  octx.fillRect(0, 0, widthPx, heightPx);
 
-  const inner = computeInnerFrame(marginPx);
+  const inner = computeInnerFrame(marginPx, device);
   const placement = computeFitPlacement(source.width, source.height, inner, fit);
 
   octx.save();
@@ -186,7 +200,7 @@ export function bitsToCanvas(bits: Uint8ClampedArray, width: number, height: num
 // （しきい値・反転・ディザリングより手前の共有ステップ、§7.8 のキャッシュ階層参照）。
 export function buildGrayscaleFrame(pageCanvas: HTMLCanvasElement, options: PdfConvertOptions): GrayscaleImage {
   const rotatedCropped = applyRotationAndCrop(pageCanvas, options.rotation, options.crop);
-  const framed = placeInFrame(rotatedCropped, options.fit, options.marginPx);
+  const framed = placeInFrame(rotatedCropped, options.fit, options.marginPx, options.device);
   return toGrayscale(framed);
 }
 

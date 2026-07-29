@@ -9,6 +9,7 @@ import type { Note } from "./i18n.svelte";
 import { IN_FLIGHT, jobsStore, type JobEntry } from "./jobs.svelte";
 import { libraryStore } from "./library.svelte";
 import { encodeFileNameHeader, encodePdfOptionsHeader, type PdfConvertOptions } from "./pdf-options";
+import { targetDeviceStore } from "./targetDevice.svelte";
 import { encodeTextOptionsHeader, type TextConvertOptions } from "./text-options";
 
 const POLL_MS = 4000;
@@ -161,8 +162,9 @@ export async function submitUrl(rawUrl: string, displayTitle?: string): Promise<
       method: "POST",
       headers: { "Content-Type": "application/json" },
       // フロントは常に extract モード。full（レイアウト保持）は API 直叩き専用で、
-      // API 自体の mode 省略時既定は "full" のまま。
-      body: JSON.stringify({ url, mode: "extract" }),
+      // API 自体の mode 省略時既定は "full" のまま。device は選択中の変換先機種
+      // （targetDeviceStore、src/devices.ts の DeviceId と対応）。
+      body: JSON.stringify({ url, mode: "extract", device: targetDeviceStore.device }),
     });
     const body = await res.json().catch(() => null) as JobsPostResponse | null;
     if (!res.ok || !body || typeof body.jobId !== "string") {

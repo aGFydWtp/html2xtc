@@ -30,6 +30,10 @@ export interface DeviceRecord {
   updatedAt: string;
   lastSeenAt: string | null;
   revokedAt: string | null;
+  /** Machine-declared model/resolution carried over from the approved pairing (migrations/app/0006_pairing_declared_device.sql) — null for devices paired before this field existed, or by a firmware that never sent it. See src/devices/declared-device.ts for why this is never guessed/backfilled. */
+  device: string | null;
+  width: number | null;
+  height: number | null;
 }
 
 interface DeviceRow {
@@ -42,6 +46,9 @@ interface DeviceRow {
   updated_at: string;
   last_seen_at: string | null;
   revoked_at: string | null;
+  device: string | null;
+  width: number | null;
+  height: number | null;
 }
 
 function fromDeviceRow(row: DeviceRow): DeviceRecord {
@@ -55,12 +62,15 @@ function fromDeviceRow(row: DeviceRow): DeviceRecord {
     updatedAt: row.updated_at,
     lastSeenAt: row.last_seen_at,
     revokedAt: row.revoked_at,
+    device: row.device,
+    width: row.width,
+    height: row.height,
   };
 }
 
 /** Never includes token_hash (plan §9.3 "token_hashは返さない") — every device read in this module goes through this column list. */
 const DEVICE_COLUMNS =
-  "id, account_id, name, status, library_version, created_at, updated_at, last_seen_at, revoked_at";
+  "id, account_id, name, status, library_version, created_at, updated_at, last_seen_at, revoked_at, device, width, height";
 
 export interface NewDevice {
   id: string;
@@ -68,16 +78,30 @@ export interface NewDevice {
   name: string;
   tokenHash: string;
   createdAt: string;
+  /** Carried over verbatim from the pairing row's requested_device/width/height (migrations/app/0006_pairing_declared_device.sql); null when the pairing never declared one. */
+  device: string | null;
+  width: number | null;
+  height: number | null;
 }
 
 /** Inserts a new active device (status='active', library_version=1). Used by approvePairingForAccount (src/devices/pairings.ts). */
 export async function insertDevice(db: D1Database, device: NewDevice): Promise<void> {
   await db
     .prepare(
-      `INSERT INTO devices (id, account_id, name, token_hash, status, library_version, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'active', 1, ?, ?)`,
+      `INSERT INTO devices (id, account_id, name, token_hash, status, library_version, created_at, updated_at, device, width, height)
+       VALUES (?, ?, ?, ?, 'active', 1, ?, ?, ?, ?, ?)`,
     )
-    .bind(device.id, device.accountId, device.name, device.tokenHash, device.createdAt, device.createdAt)
+    .bind(
+      device.id,
+      device.accountId,
+      device.name,
+      device.tokenHash,
+      device.createdAt,
+      device.createdAt,
+      device.device,
+      device.width,
+      device.height,
+    )
     .run();
 }
 
@@ -277,6 +301,10 @@ export interface PairingRecord {
   expiresAt: string;
   approvedAt: string | null;
   completedAt: string | null;
+  /** Machine-declared model/resolution from the pairing-start body (migrations/app/0006_pairing_declared_device.sql), normalized by src/devices/declared-device.ts before being persisted. Null for a legacy firmware that never sent these fields, or a value that failed normalization. */
+  requestedDevice: string | null;
+  requestedWidth: number | null;
+  requestedHeight: number | null;
 }
 
 interface PairingRow {
@@ -294,10 +322,13 @@ interface PairingRow {
   expires_at: string;
   approved_at: string | null;
   completed_at: string | null;
+  requested_device: string | null;
+  requested_width: number | null;
+  requested_height: number | null;
 }
 
 const PAIRING_COLUMNS =
-  "id, user_code, pairing_secret_hash, requested_name, status, account_id, device_id, encrypted_device_token, token_iv, token_auth_tag, created_at, expires_at, approved_at, completed_at";
+  "id, user_code, pairing_secret_hash, requested_name, status, account_id, device_id, encrypted_device_token, token_iv, token_auth_tag, created_at, expires_at, approved_at, completed_at, requested_device, requested_width, requested_height";
 
 function fromPairingRow(row: PairingRow): PairingRecord {
   return {
@@ -315,6 +346,9 @@ function fromPairingRow(row: PairingRow): PairingRecord {
     expiresAt: row.expires_at,
     approvedAt: row.approved_at,
     completedAt: row.completed_at,
+    requestedDevice: row.requested_device,
+    requestedWidth: row.requested_width,
+    requestedHeight: row.requested_height,
   };
 }
 
@@ -325,14 +359,17 @@ export interface NewPairing {
   requestedName: string | null;
   createdAt: string;
   expiresAt: string;
+  requestedDevice: string | null;
+  requestedWidth: number | null;
+  requestedHeight: number | null;
 }
 
 /** Inserts a new pending pairing. Throws (D1 UNIQUE violation on user_code) on collision — the caller (startPairing, src/devices/pairings.ts) retries with a fresh code. */
 export async function insertPairing(db: D1Database, pairing: NewPairing): Promise<void> {
   await db
     .prepare(
-      `INSERT INTO device_pairings (id, user_code, pairing_secret_hash, requested_name, status, created_at, expires_at)
-       VALUES (?, ?, ?, ?, 'pending', ?, ?)`,
+      `INSERT INTO device_pairings (id, user_code, pairing_secret_hash, requested_name, status, created_at, expires_at, requested_device, requested_width, requested_height)
+       VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)`,
     )
     .bind(
       pairing.id,
@@ -341,6 +378,9 @@ export async function insertPairing(db: D1Database, pairing: NewPairing): Promis
       pairing.requestedName,
       pairing.createdAt,
       pairing.expiresAt,
+      pairing.requestedDevice,
+      pairing.requestedWidth,
+      pairing.requestedHeight,
     )
     .run();
 }

@@ -42,6 +42,10 @@ export interface DeviceDto {
   status: string;
   createdAt: string;
   lastSeenAt: string | null;
+  /** Machine-declared model/resolution from pairing (migrations/app/0006_pairing_declared_device.sql); null for a device paired before this field existed, or by a firmware that never declared one. Foundation for a future "you're about to send an X4 file to an X3" warning — the comparison must use width/height, not device, per that migration's rationale. */
+  device: string | null;
+  width: number | null;
+  height: number | null;
 }
 
 function toDeviceDto(device: DeviceRecord): DeviceDto {
@@ -51,6 +55,9 @@ function toDeviceDto(device: DeviceRecord): DeviceDto {
     status: device.status,
     createdAt: device.createdAt,
     lastSeenAt: device.lastSeenAt,
+    device: device.device,
+    width: device.width,
+    height: device.height,
   };
 }
 

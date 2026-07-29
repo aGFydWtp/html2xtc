@@ -61,3 +61,18 @@ export function resolveAozoraTimeoutFallbackEnabled(
 ): boolean {
   return env.AOZORA_TIMEOUT_FALLBACK_ENABLED === "true";
 }
+
+// --- OPDS_IMPORT_MODE: "enabled" | 既定 "disabled" (OPDS仕様書 §20) --------
+//
+// AOZORA_TIMEOUT_FALLBACK_ENABLEDと同じ極性: この機能はまだ存在しない新機能
+// なので「未設定 = 無効」が安全側(既存動作を一切変えない)。本番で有効化する
+// には wrangler.jsonc の vars にキー自体を明示的に書く必要がある。
+
+export type OpdsImportMode = "enabled" | "disabled";
+
+const DEFAULT_OPDS_IMPORT_MODE: OpdsImportMode = "disabled";
+
+/** "enabled" のときだけMemlane取り込みボタン(公開config経由)とOPDS統合APIが有効になる。未設定・不正値はdisabled。 */
+export function resolveOpdsImportMode(env: Pick<Env, "OPDS_IMPORT_MODE">): OpdsImportMode {
+  return env.OPDS_IMPORT_MODE === "enabled" ? "enabled" : DEFAULT_OPDS_IMPORT_MODE;
+}

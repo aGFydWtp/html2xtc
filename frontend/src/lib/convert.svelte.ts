@@ -119,6 +119,31 @@ function submissionError(job: JobEntry, note: Note | null): void {
   current.upsert(`err:${++errSeq}`, job, note);
 }
 
+// 投入に成功したジョブを履歴・現在表示へ登録し、ポーリングを開始する
+// （仕様書 §9.2）。submitUrl/submitPdf/submitText/submitEpub で重複していた
+// 3行（jobsStore.upsert / sessionJobIds.add / startPolling）をここへ集約した
+// もの。url は submitUrl 経由の投入時のみ設定される（JobEntry.url と同じ意味）。
+export function registerCreatedJob(input: {
+  jobId: string;
+  sourceType: JobEntry["sourceType"];
+  sourceLabel: string;
+  url?: string;
+  title?: string;
+}): void {
+  const job: JobEntry = {
+    jobId: input.jobId,
+    sourceType: input.sourceType,
+    sourceLabel: input.sourceLabel,
+    createdAt: new Date().toISOString(),
+    status: "queued",
+    ...(input.url ? { url: input.url } : {}),
+    ...(input.title ? { title: input.title } : {}),
+  };
+  jobsStore.upsert({ ...job });
+  sessionJobIds.add(job.jobId);
+  startPolling(job);
+}
+
 export function startPolling(job: JobEntry): void {
   const p = beginPoll({ ...job });
   current.upsert(job.jobId, { ...p.job }, null);
@@ -150,18 +175,7 @@ export async function submitUrl(rawUrl: string, displayTitle?: string): Promise<
       return;
     }
     // 投入直後に履歴へ queued を記録してから並行ポーリングを開始する。
-    const job: JobEntry = {
-      jobId: body.jobId,
-      sourceType: "url",
-      sourceLabel: url,
-      url,
-      createdAt: new Date().toISOString(),
-      status: "queued",
-      ...(displayTitle ? { title: displayTitle } : {}),
-    };
-    jobsStore.upsert({ ...job });
-    sessionJobIds.add(job.jobId);
-    startPolling(job);
+    registerCreatedJob({ jobId: body.jobId, sourceType: "url", sourceLabel: url, url, title: displayTitle });
   } catch {
     submissionError({ url, sourceType: "url", sourceLabel: url, jobId: "", status: "failed" }, "no_server");
   } finally {
@@ -224,17 +238,7 @@ export function submitPdf(
         return;
       }
 
-      const job: JobEntry = {
-        jobId: body.jobId,
-        sourceType: "pdf",
-        sourceLabel: file.name,
-        createdAt: new Date().toISOString(),
-        status: "queued",
-        ...(displayTitle ? { title: displayTitle } : {}),
-      };
-      jobsStore.upsert({ ...job });
-      sessionJobIds.add(job.jobId);
-      startPolling(job);
+      registerCreatedJob({ jobId: body.jobId, sourceType: "pdf", sourceLabel: file.name, title: displayTitle });
       resolve({ ok: true, aborted: false });
     };
 
@@ -301,17 +305,7 @@ export function submitText(
         return;
       }
 
-      const job: JobEntry = {
-        jobId: body.jobId,
-        sourceType: "txt",
-        sourceLabel: file.name,
-        createdAt: new Date().toISOString(),
-        status: "queued",
-        ...(displayTitle ? { title: displayTitle } : {}),
-      };
-      jobsStore.upsert({ ...job });
-      sessionJobIds.add(job.jobId);
-      startPolling(job);
+      registerCreatedJob({ jobId: body.jobId, sourceType: "txt", sourceLabel: file.name, title: displayTitle });
       resolve({ ok: true, aborted: false });
     };
 
@@ -378,17 +372,7 @@ export function submitEpub(
         return;
       }
 
-      const job: JobEntry = {
-        jobId: body.jobId,
-        sourceType: "epub",
-        sourceLabel: file.name,
-        createdAt: new Date().toISOString(),
-        status: "queued",
-        ...(displayTitle ? { title: displayTitle } : {}),
-      };
-      jobsStore.upsert({ ...job });
-      sessionJobIds.add(job.jobId);
-      startPolling(job);
+      registerCreatedJob({ jobId: body.jobId, sourceType: "epub", sourceLabel: file.name, title: displayTitle });
       resolve({ ok: true, aborted: false });
     };
 

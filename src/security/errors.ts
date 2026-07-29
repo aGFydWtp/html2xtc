@@ -79,8 +79,16 @@ export const Errors = {
   payloadTooLarge(code: string, message: string): ApiError {
     return new ApiError(413, code, message);
   },
+  /** For a syntactically valid request whose content this codebase refuses to process — e.g. a malformed OPDS feed (OPDS spec §16/§13.6's OPDS_FEED_INVALID). */
+  unprocessable(code: string, message: string): ApiError {
+    return new ApiError(422, code, message);
+  },
   serviceUnavailable(code: string, message: string): ApiError {
     return new ApiError(503, code, message);
+  },
+  /** For a failure that happened upstream of this service — e.g. an OPDS server returning an error or an unusable EPUB response (OPDS spec §13.7's OPDS_UPSTREAM_ERROR / OPDS_EPUB_UNAVAILABLE). */
+  badGateway(code: string, message: string): ApiError {
+    return new ApiError(502, code, message);
   },
   internal(message = "internal error"): ApiError {
     return new ApiError(500, "INTERNAL_ERROR", message);

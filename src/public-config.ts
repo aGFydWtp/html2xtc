@@ -8,6 +8,7 @@ import {
   resolveRegistrationMode,
 } from "./auth/registration-mode";
 import type { RegistrationClosedReason, RegistrationMode } from "./auth/registration-mode";
+import { resolveOpdsImportMode } from "./feature-flags";
 import { sumTotalLibraryBytes } from "./library/repository";
 import {
   resolveMaxActiveSessionsPerAccount,
@@ -53,6 +54,11 @@ export function registerPublicConfigRoute(router: Router): void {
           maxPasskeysPerAccount: resolveMaxPasskeysPerAccount(env),
         },
         turnstileSiteKey: env.TURNSTILE_SITE_KEY ?? null,
+        // OPDS仕様書 §20: Memlane取り込みボタンの表示条件の一つ
+        // (frontend/src/components/ConvertForm.svelte)。未設定/不正値は
+        // resolveOpdsImportMode which defaults to disabled (safe default —
+        // a brand-new feature must not turn itself on by omission).
+        opdsImportEnabled: resolveOpdsImportMode(env) === "enabled",
       },
       // Short cache: this changes rarely (a deploy, or crossing an
       // account/storage threshold) but a stampede of not-yet-registered

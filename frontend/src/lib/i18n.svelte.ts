@@ -239,6 +239,41 @@ export interface Messages {
   aozora_results: (n: number) => string;
   aozora_selected: (n: number, max: number) => string;
   aozora_convert: (n: number) => string;
+
+  // --- 汎用OPDS基盤 / Memlane EPUB取り込み（OPDS/Memlane実装仕様書 §8, §23） -----
+  // 内部の型・store・APIは汎用OPDSだが、初期リリースのUI文言はMemlane専用。
+  memlane_open: string;
+  memlane_connect_title: string;
+  memlane_connect_description: string;
+  memlane_url_label: string;
+  memlane_connect: string;
+  memlane_connecting: string;
+  memlane_disconnect: string;
+  memlane_disconnect_confirm: string;
+  memlane_replace_connection: string;
+  memlane_catalog_title: string;
+  memlane_catalog_loading: string;
+  memlane_catalog_empty: string;
+  memlane_catalog_failed: string;
+  memlane_selected_count: (n: number, max: number) => string;
+  memlane_import: (n: number) => string;
+  memlane_importing: string;
+  memlane_import_started: (n: number) => string;
+  memlane_import_partial_failed: (n: number) => string;
+  memlane_invalid_url: string;
+  memlane_https_required: string;
+  memlane_feed_invalid: string;
+  memlane_upstream_error: string;
+  memlane_timeout: string;
+  memlane_cursor_invalid: string;
+  memlane_epub_unavailable: string;
+  memlane_session_expired: string;
+  memlane_import_disabled: string;
+  memlane_search_placeholder: string;
+  memlane_back: string;
+  memlane_next: string;
+  memlane_previous: string;
+
   status: Record<JobStatus, string>;
 
   // --- 端末別ライブラリ・パスキー認証・ペアリング（実装計画 §14） ---
@@ -717,6 +752,39 @@ export const I18N: Record<Lang, Messages> = {
     aozora_results: (n) => `検索結果 · ${n}件`,
     aozora_selected: (n, max) => `${n} / ${max} 件選択中`,
     aozora_convert: (n) => n > 0 ? `${n} 件を変換する` : "変換する",
+
+    memlane_open: "Memlaneから取り込み",
+    memlane_connect_title: "Memlaneを接続",
+    memlane_connect_description: "Memlaneで発行されたOPDSカタログURLを登録します。このURLは認証情報として暗号化保存され、登録後は再表示されません。",
+    memlane_url_label: "Memlane OPDS URL",
+    memlane_connect: "接続して開く",
+    memlane_connecting: "接続中…",
+    memlane_disconnect: "接続を解除",
+    memlane_disconnect_confirm: "Memlane接続を解除しますか？\nhtml2xtcへ取り込み済みのファイルは削除されません。",
+    memlane_replace_connection: "接続を更新",
+    memlane_catalog_title: "MemlaneからEPUBを取り込み",
+    memlane_catalog_loading: "読み込み中…",
+    memlane_catalog_empty: "取り込めるEPUBが見つかりませんでした。",
+    memlane_catalog_failed: "カタログの取得に失敗しました。",
+    memlane_selected_count: (n, max) => `${n} / ${max} 件選択中`,
+    memlane_import: (n) => n > 0 ? `${n} 件を取り込む` : "取り込む",
+    memlane_importing: "取り込み中…",
+    memlane_import_started: (n) => `${n}件の変換を開始しました`,
+    memlane_import_partial_failed: (n) => `${n}件は取り込みを開始できませんでした`,
+    memlane_invalid_url: "URLが正しくありません。",
+    memlane_https_required: "https:// で始まるURLを入力してください。",
+    memlane_feed_invalid: "OPDSカタログとして読み込めませんでした。URLをご確認ください。",
+    memlane_upstream_error: "Memlaneへの接続に失敗しました。時間をおいてお試しください。",
+    memlane_timeout: "Memlaneからの応答がありませんでした。時間をおいてお試しください。",
+    memlane_cursor_invalid: "画面の情報が古くなっています。もう一度開き直してください。",
+    memlane_epub_unavailable: "このEPUBは取得できませんでした。",
+    memlane_session_expired: "ログイン状態が確認できませんでした。もう一度ログインしてください。",
+    memlane_import_disabled: "Memlaneからの取り込みは現在停止されています。しばらくしてからお試しください。",
+    memlane_search_placeholder: "カタログ内を検索",
+    memlane_back: "戻る",
+    memlane_next: "次へ",
+    memlane_previous: "前へ",
+
     status: { queued: "待機中", preparing: "本文を組版中", rendering: "PDF 生成中", converting: "XTC 変換中", completed: "✓ 完了", failed: "失敗", expired: "期限切れ" },
 
     save: "保存する",
@@ -1186,6 +1254,39 @@ export const I18N: Record<Lang, Messages> = {
     aozora_results: (n) => `Results · ${n}`,
     aozora_selected: (n, max) => `${n} / ${max} selected`,
     aozora_convert: (n) => n > 0 ? `Convert ${n} selected` : "Convert",
+
+    memlane_open: "Import from Memlane",
+    memlane_connect_title: "Connect Memlane",
+    memlane_connect_description: "Register the OPDS catalog URL issued by Memlane. This URL is stored encrypted as a credential and is never shown again after registration.",
+    memlane_url_label: "Memlane OPDS URL",
+    memlane_connect: "Connect and open",
+    memlane_connecting: "Connecting…",
+    memlane_disconnect: "Disconnect",
+    memlane_disconnect_confirm: "Disconnect Memlane?\nFiles already imported into html2xtc will not be deleted.",
+    memlane_replace_connection: "Replace connection",
+    memlane_catalog_title: "Import EPUB from Memlane",
+    memlane_catalog_loading: "Loading…",
+    memlane_catalog_empty: "No importable EPUBs were found.",
+    memlane_catalog_failed: "Failed to load the catalog.",
+    memlane_selected_count: (n, max) => `${n} / ${max} selected`,
+    memlane_import: (n) => n > 0 ? `Import ${n} selected` : "Import",
+    memlane_importing: "Importing…",
+    memlane_import_started: (n) => `Started converting ${n} item(s)`,
+    memlane_import_partial_failed: (n) => `${n} item(s) could not be imported`,
+    memlane_invalid_url: "The URL is not valid.",
+    memlane_https_required: "Please enter a URL starting with https://.",
+    memlane_feed_invalid: "Could not read this as an OPDS catalog. Please check the URL.",
+    memlane_upstream_error: "Failed to reach Memlane. Please try again later.",
+    memlane_timeout: "Memlane did not respond in time. Please try again later.",
+    memlane_cursor_invalid: "This screen's data is out of date. Please reopen it.",
+    memlane_epub_unavailable: "This EPUB could not be retrieved.",
+    memlane_session_expired: "Your session could not be verified. Please log in again.",
+    memlane_import_disabled: "Importing from Memlane is currently disabled. Please try again later.",
+    memlane_search_placeholder: "Search this catalog",
+    memlane_back: "Back",
+    memlane_next: "Next",
+    memlane_previous: "Previous",
+
     status: { queued: "Queued", preparing: "Preparing text", rendering: "Rendering PDF", converting: "Converting to XTC", completed: "✓ Done", failed: "Failed", expired: "Expired" },
 
     save: "Save",

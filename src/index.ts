@@ -11,6 +11,7 @@ import { convertInContainer } from "./container";
 import { cleanupAppDb } from "./db/cleanup";
 import { resolveDeviceId, resolveDeviceProfile } from "./devices";
 import { registerDeviceRoutes } from "./devices/routes";
+import { createStoredEpubJob } from "./epub-job";
 import { decodeEpubOptionsHeader } from "./epub-options";
 import {
   decodeEpubFilenameHeader,
@@ -18,7 +19,6 @@ import {
   isAllowedEpubContentType,
   peekLeadingBytes,
   resolveMaxUploadEpubBytes,
-  saveUploadedEpub,
 } from "./epub-upload";
 import { prepareRenderInput } from "./extract";
 import { resolveConversionMode } from "./feature-flags";
@@ -41,6 +41,7 @@ import {
   xtcContentDisposition,
 } from "./jobs";
 import { registerLibraryRoutes } from "./library/routes";
+import { registerOpdsIntegrationRoutes } from "./integrations/opds/routes";
 import { registerOpdsRoutes } from "./opds/routes";
 import { renderPdf, renderPdfFromHtml } from "./pdf";
 import { handleTextPreview } from "./preview/text-preview";
@@ -91,6 +92,7 @@ registerAuthRoutes(router);
 registerLibraryRoutes(router);
 registerDeviceRoutes(router);
 registerOpdsRoutes(router);
+registerOpdsIntegrationRoutes(router);
 registerPublicConfigRoute(router);
 registerInternalRoutes(router);
 
@@ -687,48 +689,24 @@ async function handleCreateEpubJob(request: Request, env: Env): Promise<Response
     return Response.json({ error: "invalid EPUB file" }, { status: 400 });
   }
 
-  const jobId = crypto.randomUUID();
-  const key = inputEpubKey(jobId);
   const declaredSize = lengthCheck.length;
 
-  // Unlike request.body (PDF/TXT uploads), peekLeadingBytes's reconstructed
-  // `body` has no known length, and R2 put() only accepts streams with a
-  // known length (Request/Response bodies or the readable half of a
-  // FixedLengthStream) — mirrors the same requirement documented on
-  // convertInContainer (src/container.ts) and used from R2 reads throughout
-  // src/workflow.ts.
-  const saveResult = await saveUploadedEpub(
-    env,
-    key,
-    body.pipeThrough(new FixedLengthStream(declaredSize)),
+  // R2 save + Workflow create is shared with the OPDS import endpoint
+  // (src/integrations/opds/service.ts) via src/epub-job.ts's
+  // createStoredEpubJob — see that module's doc comment for exactly what it
+  // does and does not cover.
+  const result = await createStoredEpubJob(env, {
+    body,
     declaredSize,
     filename,
-  );
-  if (!saveResult.ok) {
-    return Response.json({ error: saveResult.error }, { status: saveResult.status });
-  }
-
-  const params: ConvertJobParams = {
-    source: { kind: "epub", key, filename, size: declaredSize },
     epubOptions,
-  };
-
-  try {
-    await env.CONVERT_WORKFLOW.create({
-      id: jobId,
-      params,
-      retention: {
-        successRetention: "1 day",
-        errorRetention: "1 day",
-      },
-    });
-  } catch (error) {
-    console.error(`[${jobId}] workflow create failed`, error);
-    await deleteBestEffort(env, key);
-    return Response.json({ error: "failed to create job" }, { status: 500 });
+    sourceMetadata: { sourceType: "epub-upload" },
+  });
+  if (!result.ok) {
+    return Response.json({ error: result.error }, { status: result.status });
   }
 
-  return Response.json({ jobId, statusUrl: `/jobs/${jobId}` }, { status: 202 });
+  return Response.json({ jobId: result.jobId, statusUrl: result.statusUrl }, { status: 202 });
 }
 
 async function handleJobStatus(jobId: string, env: Env): Promise<Response> {

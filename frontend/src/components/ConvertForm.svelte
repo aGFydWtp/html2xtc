@@ -1,11 +1,14 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import { aozora } from "../lib/aozora.svelte";
+  import { authStore } from "../lib/auth.svelte";
   import { submitUrl, submitting } from "../lib/convert.svelte";
   import { EpubFileValidationError, validateEpubFile } from "../lib/epub-file-validate";
   import { t } from "../lib/i18n.svelte";
   import { detectInputFileKind } from "../lib/input-file-kind";
+  import { opdsStore } from "../lib/opds.svelte";
   import { PdfFileValidationError, validatePdfFile } from "../lib/pdf-file-validate";
+  import { publicConfigStore } from "../lib/publicConfig.svelte";
   import { TextFileValidationError, validateTextFile } from "../lib/text-file-validate";
   import EpubInputPanel from "./EpubInputPanel.svelte";
   import FileDropZone from "./FileDropZone.svelte";
@@ -121,8 +124,11 @@
         </div>
       </form>
       {#snippet below()}
-        <div class="aozora-open-row">
+        <div class="source-buttons">
           <button type="button" class="secondary" onclick={() => aozora.show()}>{t("aozora_open")}</button>
+          {#if authStore.ready && authStore.account && publicConfigStore.opdsImportEnabled}
+            <button type="button" class="secondary" onclick={() => void opdsStore.openMemlane()}>{t("memlane_open")}</button>
+          {/if}
         </div>
       {/snippet}
     </FileDropZone>
@@ -150,7 +156,7 @@
   }
   button.primary:disabled { opacity: .55; cursor: default; }
   .form-note { font-size: 14px; color: var(--muted); margin: 0 0 10px; }
-  .aozora-open-row { margin-top: 16px; }
+  .source-buttons { margin-top: 16px; display: flex; gap: 10px; flex-wrap: wrap; }
   button.secondary {
     padding: 8px 18px; font: inherit; font-size: 14px; font-weight: 500; border-radius: 4px;
     border: 1px solid var(--ink); background: var(--card); color: var(--ink); cursor: pointer;

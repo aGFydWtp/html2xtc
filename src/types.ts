@@ -351,4 +351,28 @@ export interface Env {
    * 1回だけXTC化する(src/workflow.ts)。
    */
   AOZORA_TIMEOUT_FALLBACK_ENABLED?: string;
+
+  // --- 汎用OPDS基盤＋Memlane EPUB取り込み機能 実装仕様書 §11/§20 ---
+  /**
+   * 機能フラグ: "enabled" | "disabled"(既定) — resolveOpdsImportMode
+   * (src/feature-flags.ts)。他の機能フラグ(LIBRARY_WRITE_MODE等)と極性が逆:
+   * あちらは「未設定 = 現行動作を許可」だが、この機能はまだ存在しない新機能
+   * なので「未設定 = 無効」が安全側(既存動作を一切変えない)になる。本番で
+   * 有効化するには wrangler.jsonc の vars にキー自体を明示的に書く必要が
+   * ある(AOZORA_TIMEOUT_FALLBACK_ENABLEDと同じ極性)。
+   */
+  OPDS_IMPORT_MODE?: string;
+  /**
+   * OPDS接続の暗号化鍵(仕様書§11): standard base64、復号後32byte、
+   * AES-256-GCM。opds_connections.catalog_url_ciphertext等の暗号化/復号に
+   * 使う(src/integrations/opds/connection-crypto.ts)。Wrangler secretのみ
+   * — vars に書かない。
+   */
+  OPDS_CONNECTION_ENCRYPTION_KEY?: string;
+  /**
+   * OPDSカーソル(仕様書§11.1)の暗号化鍵: standard base64、復号後32byte、
+   * AES-256-GCM。ブラウザへ返すcursorに元URLを埋め込むための暗号化に使う
+   * (src/integrations/opds/cursor-crypto.ts)。Wrangler secretのみ。
+   */
+  OPDS_CURSOR_ENCRYPTION_KEY?: string;
 }

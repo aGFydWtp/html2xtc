@@ -11,6 +11,8 @@
   import Header from "./components/Header.svelte";
   import History from "./components/History.svelte";
   import Library from "./components/Library.svelte";
+  import MemlaneConnectionDialog from "./components/MemlaneConnectionDialog.svelte";
+  import OpdsCatalogDialog from "./components/OpdsCatalogDialog.svelte";
   import PairingApprovalDialog from "./components/PairingApprovalDialog.svelte";
   import PasskeyLoginDialog from "./components/PasskeyLoginDialog.svelte";
   import PasskeyRegistrationDialog from "./components/PasskeyRegistrationDialog.svelte";
@@ -133,6 +135,8 @@
   {/if}
 </main>
 <AozoraDialog />
+<MemlaneConnectionDialog />
+<OpdsCatalogDialog />
 <PreviewDialog />
 <PasskeyLoginDialog />
 <PasskeyRegistrationDialog />

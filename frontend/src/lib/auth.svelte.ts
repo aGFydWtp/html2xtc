@@ -7,6 +7,7 @@ import { accountStore } from "./account.svelte";
 import { apiGet, apiSend, ApiError } from "./api";
 import { devicesStore } from "./devices.svelte";
 import { libraryStore } from "./library.svelte";
+import { opdsStore } from "./opds.svelte";
 import { startAuthentication, startRegistration } from "./passkeys";
 
 /**
@@ -22,6 +23,7 @@ function resetAccountScopedStores(): void {
   libraryStore.reset();
   devicesStore.reset();
   accountStore.reset();
+  opdsStore.reset();
 }
 
 export interface Account {

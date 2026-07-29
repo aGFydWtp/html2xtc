@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 aGFydWtp
 
+import { detectXxeMarker } from "../xml-safety";
+
 /**
  * Stable EPUB parsing error codes and the error type carrying them (EPUB
  * spec §17.1). Kept free of "cloudflare:workflows" so this module — and
@@ -103,77 +105,18 @@ export class EpubError extends Error {
 /**
  * XXE defense-in-depth (design decision D3, narrowed 2026-07-26 — real-world
  * repro: 河童.epub, a 青空文庫-conversion-toolchain EPUB whose nav.xhtml /
- * every XHTML file opens with a plain `<!DOCTYPE html>`). The actual XXE
- * attack surface is (a) an ENTITY declaration (billion-laughs, or an
- * external general/parameter entity used to exfiltrate or fetch something),
- * and (b) a DOCTYPE that itself names an external subset (`SYSTEM`/`PUBLIC`,
- * which points a vulnerable parser at a filesystem or network fetch) or
- * declares an internal subset (`[...]`) — the only place a *local* ENTITY
- * declaration can legally live. A DOCTYPE with neither of those — bare
- * `<!DOCTYPE name>`, no external identifier, no internal subset — carries
- * none of that risk: it cannot declare an entity, and it names nothing for a
- * parser to fetch. The old rule rejected on `<!DOCTYPE` alone, so this bare,
- * harmless form was indistinguishable from a dangerous one; in
- * navigation.ts specifically that meant parseEpubNavigation's catch-all
- * (spec §8.7) silently swallowed the resulting EpubError and degraded to
- * `{ source: "none", entries: [] }` — zero XTC chapters, with no warning
- * (see the accompanying navigation.ts XTC_TOC_PARSE_FAILED warning, added
- * alongside this change) — even though the document was perfectly safe to
- * read.
- *
- * Why relaxing to "bare DOCTYPE allowed" is still safe against the actual
- * parser in use (not just "should be" reasoning): xml.ts's parseXmlDocument
- * calls linkedom's `new DOMParser().parseFromString(xml, "text/xml")`.
- * linkedom is a pure-JS DOM implementation with no filesystem or network
- * module reachable from that call path — there is no `fetch`/`fs`/`http`
- * import anywhere between DOMParser and its XML tokenizer (verified by
- * reading node_modules/linkedom's parser source) — so it was ALREADY
- * incapable of resolving a SYSTEM/PUBLIC external identifier or fetching an
- * external entity, before or after this change. This function's checks are
- * defense-in-depth layered on top of that fact, not a substitute for it:
- * `<!ENTITY` (wherever it appears — standalone or inside a DOCTYPE's
- * internal subset) and any DOCTYPE naming an external subset or declaring an
- * internal one are still rejected unconditionally below, so nothing here
- * depends on linkedom continuing to lack that capability in some future
- * version — only the bare-DOCTYPE relaxation itself does, and a bare
- * DOCTYPE has no subset (internal or external) for any parser to act on
- * regardless of its capabilities.
- *
- * Deliberately NOT one regex over the whole document (spec §22's "CSS の
- * 安全化を正規表現 1 本だけで済ませない" caution applies equally to DTD
- * parsing): this locates every `<!DOCTYPE` occurrence first, rejects
- * outright on more than one (a well-formed XML document has at most one —
- * two or more is either malformed or an attempt to hide a dangerous second
- * declaration behind an innocuous first match), and only then asks whether
- * the SINGLE occurrence's own tail is *exactly* "whitespace, name, optional
- * whitespace, `>`" with nothing else — so `SYSTEM`/`PUBLIC` keywords, a `[`
- * internal-subset opener, an embedded comment, or any other unrecognized
- * shape all fall through to the reject at the bottom rather than needing
- * their own explicit pattern. `\s` (not `[ \t]`) so a DOCTYPE split across
- * multiple lines is still recognized as bare, and `/i` on every check
- * handles `<!doctype html>`.
+ * every XHTML file opens with a plain `<!DOCTYPE html>`). Thin EpubError
+ * wrapper around the provider-agnostic detection logic in
+ * src/xml-safety.ts's detectXxeMarker (shared with
+ * src/integrations/opds/parser-v1.ts since 2026-07-29) — see that module's
+ * doc comment for the full XXE-surface rationale, verified against
+ * linkedom's actual parser source, and for why a bare `<!DOCTYPE name>` is
+ * deliberately allowed while any DOCTYPE with an external identifier or
+ * internal subset, or any `<!ENTITY`, is still rejected unconditionally.
  */
 export function assertNoXxeMarkers(xml: string, code: EpubErrorCode): void {
-  if (/<!ENTITY/i.test(xml)) {
-    throw new EpubError(code, "ENTITY marker present");
-  }
-
-  const doctypeIndexes: number[] = [];
-  const doctypeRe = /<!DOCTYPE/gi;
-  let match: RegExpExecArray | null;
-  while ((match = doctypeRe.exec(xml)) !== null) {
-    doctypeIndexes.push(match.index);
-  }
-  if (doctypeIndexes.length === 0) {
-    return;
-  }
-  if (doctypeIndexes.length > 1) {
-    throw new EpubError(code, "multiple DOCTYPE markers present");
-  }
-
-  const tail = xml.slice(doctypeIndexes[0] as number);
-  const isBareDoctype = /^<!DOCTYPE\s+[A-Za-z_][\w:.-]*\s*>/i.test(tail);
-  if (!isBareDoctype) {
-    throw new EpubError(code, "non-bare DOCTYPE present");
+  const reason = detectXxeMarker(xml);
+  if (reason !== null) {
+    throw new EpubError(code, reason);
   }
 }

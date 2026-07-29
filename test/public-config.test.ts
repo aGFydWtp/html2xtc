@@ -100,6 +100,7 @@ describe("GET /api/public/config", () => {
         maxPasskeysPerAccount: 5,
       },
       turnstileSiteKey: "site-key-abc",
+      opdsImportEnabled: false,
     });
   });
 
@@ -155,6 +156,7 @@ describe("GET /api/public/config", () => {
         "termsVersion",
         "limits",
         "turnstileSiteKey",
+        "opdsImportEnabled",
       ].sort(),
     );
     // No key named after a secret env var, the raw account count, or the

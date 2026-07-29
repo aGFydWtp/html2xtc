@@ -71,7 +71,15 @@
 		// src/feature-flags.ts#resolveAozoraTimeoutFallbackEnabled)。他の機能
 		// フラグと違い極性が逆(未設定=無効=現行動作)なので、本番で有効化する
 		// にはキー自体を明示的に書く必要がある。
-		"AOZORA_TIMEOUT_FALLBACK_ENABLED": "true"
+		"AOZORA_TIMEOUT_FALLBACK_ENABLED": "true",
+		// 汎用OPDS基盤＋Memlane EPUB取り込み機能 (src/feature-flags.ts の
+		// resolveOpdsImportMode)。未設定=disabledが既定(安全側)なので、この
+		// 機能を有効化するにはキー自体を明示的に書く必要がある
+		// (AOZORA_TIMEOUT_FALLBACK_ENABLEDと同じ極性)。有効化には
+		// OPDS_CONNECTION_ENCRYPTION_KEY / OPDS_CURSOR_ENCRYPTION_KEY を
+		// `wrangler secret put` で先に設定しておくこと(未設定だと該当APIが
+		// 500で落ちるfail-loud設計)。
+		"OPDS_IMPORT_MODE": "enabled"
 		// 登録モード仕様 Phase 3 (src/auth/registration-mode.ts の
 		// resolveRegistrationClosedReason, src/feature-flags.ts): 以下は
 		// 意図的にキー自体を追加しない — 未設定は常に許可側(現行動作)へ

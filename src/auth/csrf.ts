@@ -17,6 +17,26 @@ export type CsrfCheckResult = { ok: true } | { ok: false; reason: string };
 const ALLOWED_SEC_FETCH_SITES = new Set(["same-origin", "none"]);
 
 /**
+ * The Sec-Fetch-Site slice of the full CSRF check, factored out so a route
+ * that has a side effect but isn't a state-changing body-carrying request
+ * (e.g. a GET that triggers a credentialed fetch to a third-party server —
+ * src/integrations/opds/routes.ts's catalog GET) can still reject a
+ * cross-site request without paying for the Origin/Content-Type checks that
+ * only make sense for POST/PATCH/PUT/DELETE.
+ */
+export function checkSecFetchSite(secFetchSite: string | null): CsrfCheckResult {
+  if (secFetchSite !== null && !ALLOWED_SEC_FETCH_SITES.has(secFetchSite)) {
+    return { ok: false, reason: "unexpected Sec-Fetch-Site" };
+  }
+  return { ok: true };
+}
+
+/** Runs checkSecFetchSite against a live Request's Sec-Fetch-Site header. */
+export function verifySecFetchSite(request: Request): CsrfCheckResult {
+  return checkSecFetchSite(request.headers.get("Sec-Fetch-Site"));
+}
+
+/**
  * Pure decision function, given the relevant header values and the
  * configured origin — kept free of any Request-object dependency so it is
  * directly unit-testable (see test/auth-csrf.test.ts).
@@ -29,8 +49,9 @@ export function checkCsrf(
   },
   expectedOrigin: string,
 ): CsrfCheckResult {
-  if (headers.secFetchSite !== null && !ALLOWED_SEC_FETCH_SITES.has(headers.secFetchSite)) {
-    return { ok: false, reason: "unexpected Sec-Fetch-Site" };
+  const secFetchSiteResult = checkSecFetchSite(headers.secFetchSite);
+  if (!secFetchSiteResult.ok) {
+    return secFetchSiteResult;
   }
 
   if (headers.origin === null) {

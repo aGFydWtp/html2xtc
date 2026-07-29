@@ -192,7 +192,8 @@ export async function peekLeadingBytes(
   return { leading, body: rebuilt };
 }
 
-async function deleteBestEffort(env: Pick<Env, "XTC_BUCKET">, key: string): Promise<void> {
+/** Exported for reuse by src/epub-job.ts's createStoredEpubJob (shared R2-cleanup-on-failure step, OPDS spec §17). */
+export async function deleteBestEffort(env: Pick<Env, "XTC_BUCKET">, key: string): Promise<void> {
   try {
     await env.XTC_BUCKET.delete(key);
   } catch (error) {

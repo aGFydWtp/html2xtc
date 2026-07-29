@@ -27,6 +27,7 @@ interface PublicConfigResponse {
   termsVersion?: unknown;
   limits?: unknown;
   turnstileSiteKey?: unknown;
+  opdsImportEnabled?: unknown;
 }
 
 function parseLimits(raw: unknown): PublicConfigLimits | null {
@@ -64,6 +65,10 @@ class PublicConfigStore {
   termsVersion = $state<string | null>(null);
   turnstileSiteKey = $state<string | null>(null);
   limits = $state<PublicConfigLimits | null>(null);
+  // OPDS（Memlane）取り込み機能の表示可否（汎用OPDS仕様書 §20）。サーバー
+  // 未応答/エラー時は既定値 false のまま — 未対応の取り込みボタンを誤って
+  // 出さない fail-safe。
+  opdsImportEnabled = $state(false);
   loaded = $state(false);
 
   async init(): Promise<void> {
@@ -84,6 +89,9 @@ class PublicConfigStore {
         this.turnstileSiteKey = body.turnstileSiteKey;
       }
       this.limits = parseLimits(body.limits);
+      if (typeof body.opdsImportEnabled === "boolean") {
+        this.opdsImportEnabled = body.opdsImportEnabled;
+      }
     } catch {
       // 取得失敗時は既定値（invite・登録不可）のまま — fail-safe。
     } finally {

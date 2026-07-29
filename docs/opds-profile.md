@@ -6,7 +6,7 @@ CrossPoint (Xteink) 側実装者向けの、html2xtc が提供する OPDS エン
 
 ## 1. 認証方式
 
-3 つのエンドポイントすべてで HTTP Basic 認証が必須。
+以下のエンドポイントすべてで HTTP Basic 認証が必須。
 
 ```
 Authorization: Basic base64(deviceId:deviceToken)

@@ -150,28 +150,28 @@
       </ul>
     {/if}
 
-    {#if opdsStore.catalogPage?.previousCursor || opdsStore.catalogPage?.nextCursor}
-      <div class="dlg-pagination">
-        {#if opdsStore.catalogPage.previousCursor}
-          <button type="button" class="dlg-cancel" onclick={() => void opdsStore.goPrevious()}>← {t("memlane_previous")}</button>
-        {/if}
-        {#if opdsStore.catalogPage.nextCursor}
-          <button type="button" class="dlg-cancel" onclick={() => void opdsStore.goNext()}>{t("memlane_next")} →</button>
-        {/if}
-      </div>
-    {/if}
+    <div class="dlg-pagination">
+      {#if opdsStore.catalogPage?.previousCursor}
+        <button type="button" class="dlg-cancel" onclick={() => void opdsStore.goPrevious()}>← {t("memlane_previous")}</button>
+      {/if}
+      {#if opdsStore.catalogPage?.nextCursor}
+        <button type="button" class="dlg-cancel" onclick={() => void opdsStore.goNext()}>{t("memlane_next")} →</button>
+      {/if}
+    </div>
   {:else}
     <div class="dlg-list-head">
       <span>{t("memlane_selected_count")(opdsStore.selectedCount, OPDS_SELECTION_MAX)}</span>
     </div>
-    <ul class="dlg-list">
-      {#each [...opdsStore.selected.values()] as entry (entry.id)}
-        <li class="dlg-summary-item">{entry.title}</li>
-      {/each}
-    </ul>
+    <div class="dlg-list">
+      <ul class="dlg-summary-list">
+        {#each [...opdsStore.selected.values()] as entry (entry.id)}
+          <li class="dlg-summary-item">{entry.title}</li>
+        {/each}
+      </ul>
 
-    <div class="dlg-options">
-      <EpubOptions bind:options={epubOptions} />
+      <div class="dlg-options">
+        <EpubOptions bind:options={epubOptions} />
+      </div>
     </div>
   {/if}
 
@@ -201,8 +201,8 @@
     padding: 0; border: 1.5px solid var(--ink); border-radius: 4px;
     background: var(--bg); color: var(--text);
     width: min(560px, calc(100vw - 32px));
-    max-height: calc(100vh - 96px);
-    max-height: calc(100dvh - 96px);
+    height: min(640px, calc(100vh - 96px));
+    height: min(640px, calc(100dvh - 96px));
     box-shadow: 4px 4px 0 rgba(28, 26, 23, .35);
   }
   dialog.catalog-dialog[open] { display: flex; flex-direction: column; }
@@ -226,7 +226,7 @@
     font-size: 14px; line-height: 1; cursor: pointer; font-family: inherit; flex: none;
   }
   .dlg-x:hover { color: var(--text); }
-  .dlg-toolbar { display: flex; align-items: center; gap: 12px; padding: 14px 22px 4px; flex: none; flex-wrap: wrap; }
+  .dlg-toolbar { display: flex; align-items: center; gap: 12px; padding: 14px 22px 4px; flex: none; flex-wrap: wrap; min-height: 58px; }
   .toolbar-btn {
     padding: 6px 12px; font: inherit; font-size: 13px; border: 1px solid var(--line); border-radius: 4px;
     background: var(--card); color: var(--text); cursor: pointer;
@@ -243,10 +243,11 @@
   .dlg-list { list-style: none; margin: 0; padding: 0 22px; overflow-y: auto; flex: 1; min-height: 100px; }
   .dlg-list-status { display: block; }
   .dlg-status { padding: 16px 2px; font-size: 14px; color: var(--muted); }
+  .dlg-summary-list { list-style: none; margin: 0; padding: 0; }
   .dlg-summary-item { padding: 10px 2px; font-size: 14px; border-bottom: 1px solid var(--line); }
   .dlg-summary-item:last-child { border-bottom: none; }
-  .dlg-pagination { display: flex; justify-content: space-between; padding: 8px 22px; flex: none; }
-  .dlg-options { padding: 4px 22px 0; flex: none; }
+  .dlg-pagination { display: flex; justify-content: space-between; padding: 8px 22px; flex: none; min-height: 38px; }
+  .dlg-options { padding: 8px 0 0; flex: none; }
   .error-text { color: #b3261e; }
   .dlg-actions {
     display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;

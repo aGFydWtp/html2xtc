@@ -241,8 +241,12 @@ class OpdsStore {
       if (params.pushHistory) this.cursorHistory = [...this.cursorHistory, this.currentCursor];
       this.currentCursor = params.cursor;
       this.catalogPage = page;
-      this.selected = new Map();
-      this.importSummary = null;
+      // 選択(selected)・直前の取り込み結果(importSummary)はここでは消さない。
+      // フォルダを降りる/遡る・ページ送り・検索はいずれもこの loadCatalog を
+      // 経由するため、以前はここでリセットしていると操作のたびに選択が消えて
+      // しまっていた。選択・summaryを明示的に消すのは resetCatalogState()
+      // （接続の置換・解除・ログアウト/アカウント切替）と、取り込み成功後の
+      // clearSelection() / startImport() 冒頭のみに限定する。
     } catch (e) {
       if (isSessionExpired(e)) {
         this.handleSessionExpired();

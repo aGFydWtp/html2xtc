@@ -132,10 +132,10 @@
     },
     "/jobs/text": {
       "post": {
-        "summary": "Upload a plain-text (.txt) file, reflow it, then convert",
+        "summary": "Upload a plain-text or Markdown (.txt/.md/.markdown) file, reflow it, then convert",
         "operationId": "createTextJob",
         "parameters": [
-          { "name": "Content-Type", "in": "header", "required": true, "schema": { "type": "string", "enum": ["text/plain", "application/octet-stream"] } },
+          { "name": "Content-Type", "in": "header", "required": true, "schema": { "type": "string", "enum": ["text/plain", "text/markdown", "application/octet-stream"] }, "description": "Media-type parameters are ignored. This header does not select the parser: TextConvertOptions.inputFormat does, so a Markdown body may be sent as text/plain." },
           { "name": "Content-Length", "in": "header", "required": true, "schema": { "type": "integer", "minimum": 1 }, "description": "Declared byte size of the request body; fixed upload limit is 5 MiB (not operator-configurable)" },
           { "name": "X-File-Name", "in": "header", "required": false, "schema": { "type": "string" }, "description": "base64url encoding of the UTF-8 display filename" },
           { "name": "X-Text-Options", "in": "header", "required": false, "schema": { "type": "string" }, "description": "base64url encoding of a TextConvertOptions JSON object. Omit to use defaults." }
@@ -145,6 +145,9 @@
           "content": {
             "text/plain": {
               "schema": { "type": "string", "contentEncoding": "binary" }
+            },
+            "text/markdown": {
+              "schema": { "type": "string", "contentEncoding": "binary" }
             }
           }
         },
@@ -153,7 +156,7 @@
           "400": { "description": "Bad Content-Length, bad X-Text-Options, or upload/declared size mismatch", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
           "411": { "description": "Content-Length header missing", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
           "413": { "description": "Declared size exceeds 5 MiB", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
-          "415": { "description": "Content-Type is not text/plain or application/octet-stream", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "415": { "description": "Content-Type is not text/plain, text/markdown, or application/octet-stream", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
           "429": { "description": "Rate limit exceeded (shared with /convert, /jobs, /jobs/pdf, /jobs/epub)", "headers": { "Retry-After": { "schema": { "type": "integer" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
           "503": { "description": "Conversion is temporarily disabled by the operator", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
           "500": { "description": "Storage or job creation failure", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
@@ -422,7 +425,7 @@
         "type": "object",
         "description": "Validated strictly: out-of-range values are rejected with 400, never silently clamped.",
         "properties": {
-          "inputFormat": { "type": "string", "enum": ["plain", "aozora"], "default": "plain", "description": "\"plain\": the body is treated as plain text only (no Markdown/HTML interpretation). \"aozora\": parsed as Aozora Bunko notation (ruby, emphasis marks, headings, indentation, etc.)." },
+          "inputFormat": { "type": "string", "enum": ["plain", "aozora", "markdown"], "default": "plain", "description": "\"plain\": the body is treated as plain text only (no Markdown/HTML interpretation). \"aozora\": parsed as Aozora Bunko notation (ruby, emphasis marks, headings, indentation, etc.). \"markdown\": parsed as Markdown (headings, emphasis, lists, quotes, code blocks, tables, etc.); links render as their label text only with no URL or attributes, images render as a text placeholder, and raw HTML is escaped, never executed." },
           "encoding": { "type": "string", "enum": ["auto", "utf-8", "shift_jis"], "default": "auto" },
           "layout": { "type": "string", "enum": ["horizontal", "vertical"], "default": "horizontal" },
           "font": { "type": "string", "default": "BIZ UDPGothic", "description": "Google Fonts family name." },
@@ -442,7 +445,7 @@
           "textAlign": { "type": "string", "enum": ["start", "justify"], "default": "start" },
           "maxConsecutiveBlankLines": { "type": "integer", "minimum": 0, "maximum": 5, "default": 2 },
           "preserveSpaces": { "type": "boolean", "default": false },
-          "joinHardWrappedLines": { "type": "boolean", "default": true, "description": "Ignored (always treated as false) when inputFormat is \"aozora\"." },
+          "joinHardWrappedLines": { "type": "boolean", "default": true, "description": "Ignored (always treated as false) when inputFormat is \"aozora\" or \"markdown\"." },
           "showPageNumbers": { "type": "boolean", "default": false, "description": "Always forced to false by POST /preview/text regardless of the submitted value." },
           "title": { "type": "string", "maxLength": 100, "default": "" },
           "author": { "type": "string", "maxLength": 100, "default": "" }

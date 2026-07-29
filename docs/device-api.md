@@ -150,14 +150,24 @@ Authorization: Basic base64(deviceId:deviceToken)
 ## 6. XTC ダウンロード
 
 ```
+GET /api/device/library-items/{itemId}/download.xtc
+Authorization: Basic base64(deviceId:deviceToken)
+```
+
+正式なダウンロード URL。OPDS フィードの acquisition link はこの URL を発行する
+（`docs/opds-profile.md` §4/§5）。
+
+後方互換のため、拡張子なしの旧 URL も同じ内部ハンドラで引き続き提供する（削除しない）。
+
+```
 GET /api/device/library-items/{itemId}/download
 Authorization: Basic base64(deviceId:deviceToken)
 ```
 
-成功応答 `200 OK`:
+成功応答 `200 OK`（両ルート共通）:
 
 ```
-Content-Type: application/octet-stream
+Content-Type: application/vnd.xteink.xtc
 Content-Length: <bytes>
 Content-Disposition: attachment; filename="<ASCII fallback>.xtc"; filename*=UTF-8''<RFC5987エンコードされたタイトル>.xtc
 ETag: "<r2 object etag>"
@@ -167,7 +177,7 @@ X-Content-Type-Options: nosniff
 
 ボディは R2 オブジェクトのバイト列そのもの（ストリーミング転送）。副作用は §4 と同じ
 last_seen_at 更新。Range Request には未対応（実装計画は「初期リリースの必須要件としない」としており、
-現状のコードにも Range 処理はない）。
+現状のコードにも Range 処理はない）。移行の背景は `docs/opds-xtc-media-type-adr.md` を参照。
 
 ## 7. OPDS・ダウンロード共通のエラーコード
 

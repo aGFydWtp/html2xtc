@@ -13,6 +13,7 @@ import { Errors } from "../security/errors";
 import type { Env } from "../types";
 import { OPDS_PAGE_SIZE, buildOpdsFeedXml, computeFeedUpdated, parsePage, trimPage } from "./feed";
 import type { OpdsFeedItem } from "./feed";
+import { XTC_MEDIA_TYPE } from "./media-type";
 import {
   getAssignedLibraryItemForDownload,
   listAssignedLibraryItems,
@@ -178,39 +179,57 @@ export function registerOpdsRoutes(router: Router): void {
     return new Response(xml, { headers: { "Content-Type": OPDS_CONTENT_TYPE } });
   });
 
-  router.get("/api/device/library-items/:itemId/download", async (request, env, params) => {
-    const device = await requireDevice(request, env);
-    if (device instanceof Response) {
-      return device;
-    }
+  router.get("/api/device/library-items/:itemId/download.xtc", handleDeviceXtcDownload);
+  // Backward-compatible alias for the pre-media-type-migration URL shape.
+  // Do NOT remove: existing crosspoint-jp/firmware installs that already
+  // cached or hard-coded this exact acquisition URL must keep working
+  // indefinitely (plan §6.2/§13 DoD) — only /download.xtc is linked from
+  // freshly generated OPDS feeds (src/opds/feed.ts).
+  router.get("/api/device/library-items/:itemId/download", handleDeviceXtcDownload);
+}
 
-    const item = await getAssignedLibraryItemForDownload(env.APP_DB, device.deviceId, params.itemId);
-    if (item === null) {
-      throw Errors.notFound("ITEM_NOT_FOUND", "library item not found");
-    }
-    const object = await env.XTC_BUCKET.get(item.r2Key);
-    if (object === null) {
-      throw Errors.notFound("ITEM_NOT_FOUND", "library item not found");
-    }
+/**
+ * Shared handler for both the canonical `.xtc` download route and the
+ * legacy extensionless one — same auth, authorization, R2 fetch,
+ * last_seen/audit side effects, and response shape either way (plan §6.2:
+ * "実装を重複させず、共通ハンドラへ委譲すること").
+ */
+async function handleDeviceXtcDownload(
+  request: Request,
+  env: Env,
+  params: Record<string, string>,
+): Promise<Response> {
+  const device = await requireDevice(request, env);
+  if (device instanceof Response) {
+    return device;
+  }
 
-    const nowIso = new Date().toISOString();
-    await markDeviceSeen(env, device, nowIso);
-    logAuditEvent("device.download.completed", {
-      accountId: device.accountId,
-      deviceId: device.deviceId,
-      itemId: item.id,
-      sizeBytes: object.size,
-    });
+  const item = await getAssignedLibraryItemForDownload(env.APP_DB, device.deviceId, params.itemId);
+  if (item === null) {
+    throw Errors.notFound("ITEM_NOT_FOUND", "library item not found");
+  }
+  const object = await env.XTC_BUCKET.get(item.r2Key);
+  if (object === null) {
+    throw Errors.notFound("ITEM_NOT_FOUND", "library item not found");
+  }
 
-    return new Response(object.body, {
-      headers: {
-        "Content-Type": "application/octet-stream",
-        "Content-Length": String(object.size),
-        "Content-Disposition": xtcContentDisposition(item.title, item.id),
-        ETag: object.httpEtag,
-        "Cache-Control": "private, no-store",
-        "X-Content-Type-Options": "nosniff",
-      },
-    });
+  const nowIso = new Date().toISOString();
+  await markDeviceSeen(env, device, nowIso);
+  logAuditEvent("device.download.completed", {
+    accountId: device.accountId,
+    deviceId: device.deviceId,
+    itemId: item.id,
+    sizeBytes: object.size,
+  });
+
+  return new Response(object.body, {
+    headers: {
+      "Content-Type": XTC_MEDIA_TYPE,
+      "Content-Length": String(object.size),
+      "Content-Disposition": xtcContentDisposition(item.title, item.id),
+      ETag: object.httpEtag,
+      "Cache-Control": "private, no-store",
+      "X-Content-Type-Options": "nosniff",
+    },
   });
 }

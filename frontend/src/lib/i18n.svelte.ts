@@ -996,8 +996,8 @@ export const I18N: Record<Lang, Messages> = {
     pairing_not_found: "ペアリングが見つかりません。コードの有効期限が切れている可能性があります。",
     pairing_action_failed: "操作に失敗しました。もう一度お試しください。",
 
-    devices_manual_add_btn: "標準 OPDS 端末を追加",
-    devices_manual_dialog_title: "標準 OPDS 端末を追加",
+    devices_manual_add_btn: "Xteink を登録",
+    devices_manual_dialog_title: "Xteink を登録",
     devices_manual_name_label: "端末名",
     devices_manual_model_label: "端末モデル",
     devices_manual_model_x3: "Xteink X3",
@@ -1501,8 +1501,8 @@ export const I18N: Record<Lang, Messages> = {
     pairing_not_found: "Pairing not found. The code may have expired.",
     pairing_action_failed: "The action failed. Please try again.",
 
-    devices_manual_add_btn: "Add a standard OPDS device",
-    devices_manual_dialog_title: "Add a standard OPDS device",
+    devices_manual_add_btn: "Register Xteink",
+    devices_manual_dialog_title: "Register Xteink",
     devices_manual_name_label: "Device name",
     devices_manual_model_label: "Device model",
     devices_manual_model_x3: "Xteink X3",

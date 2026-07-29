@@ -162,7 +162,6 @@
     display: flex; align-items: center; padding: 10px; margin: -10px -6px; border-radius: 4px;
   }
   .more-btn:hover { background: var(--panel); color: var(--text); }
-  /* ConvertForm.svelte の button.secondary（「青空文庫から選択」）と同じ見た目 */
   .label-btn {
     padding: 8px 18px; font: inherit; font-size: 14px; font-weight: 500; border-radius: 4px;
     border: 1px solid var(--ink); background: var(--card); color: var(--ink); cursor: pointer;

@@ -164,7 +164,7 @@
     gap: 10px; flex-wrap: wrap;
   }
   button.link {
-    padding: 8px 6px; font: inherit; font-size: 14px; font-weight: 500;
+    padding: 6px 6px; font: inherit; font-size: 14px; font-weight: 500;
     border: 0; background: none; color: var(--muted2); text-decoration: underline;
     cursor: pointer;
   }
@@ -172,6 +172,6 @@
   button.link:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 
   @media (max-width: 600px) {
-    .source-buttons { flex-direction: column; }
+    .source-buttons { flex-direction: column; gap: 0; }
   }
 </style>

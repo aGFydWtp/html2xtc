@@ -11,8 +11,10 @@
   import Header from "./components/Header.svelte";
   import History from "./components/History.svelte";
   import Library from "./components/Library.svelte";
+  import ManualOpdsDeviceDialog from "./components/ManualOpdsDeviceDialog.svelte";
   import MemlaneConnectionDialog from "./components/MemlaneConnectionDialog.svelte";
   import OpdsCatalogDialog from "./components/OpdsCatalogDialog.svelte";
+  import OpdsCredentialsDialog from "./components/OpdsCredentialsDialog.svelte";
   import PairingApprovalDialog from "./components/PairingApprovalDialog.svelte";
   import PasskeyLoginDialog from "./components/PasskeyLoginDialog.svelte";
   import PasskeyRegistrationDialog from "./components/PasskeyRegistrationDialog.svelte";
@@ -143,6 +145,8 @@
 <RegistrationClosedDialog />
 <PairingApprovalDialog />
 <DevicesHowtoDialog />
+<ManualOpdsDeviceDialog />
+<OpdsCredentialsDialog />
 <Account />
 
 <style>

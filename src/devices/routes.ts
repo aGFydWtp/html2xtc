@@ -4,6 +4,7 @@
 import { verifyCsrf } from "../auth/csrf";
 import type { Account } from "../auth/sessions";
 import { requireSession } from "../auth/sessions";
+import { resolveWebauthnRpId } from "../auth/webauthn";
 import { resolvePairingMode } from "../feature-flags";
 import { enforcePurposeRateLimit } from "../ratelimiter";
 import type { Router } from "../router";
@@ -21,12 +22,15 @@ import {
   startPairing,
 } from "./pairings";
 import {
+  createManualOpdsDevice,
   getDeviceLibrary,
   listDevices,
   renameDevice,
   replaceDeviceLibrary,
   revokeDevice,
+  rotateDeviceToken,
 } from "./service";
+import type { DeviceCredentialResult } from "./service";
 
 /**
  * HTTP adapter for the Phase 3 (device management + pairing, plan §9.3/§9.4)
@@ -94,6 +98,26 @@ function requirePairingSecret(request: Request): string {
 /** plan §13's per-purpose table. */
 const PAIRING_START_LIMIT = 20;
 const PAIRING_LOOKUP_LIMIT = 60;
+
+/**
+ * Builds the one-time-only OPDS connection-info block (Phase2 spec §8.1/§8.2)
+ * from a freshly issued device credential — response formatting only (the
+ * catalog URL is the same fixed `/opds/v1/catalog.xml` src/opds/routes.ts
+ * already serves, derived from WEBAUTHN_RP_ID exactly the same way that
+ * module does; no per-device URL, spec §6.2 "MVPでは全端末で共通URLを利用する").
+ */
+function buildOpdsConnectionInfo(
+  env: Env,
+  result: DeviceCredentialResult,
+): { serverName: string; catalogUrl: string; username: string; password: string } {
+  const origin = `https://${resolveWebauthnRpId(env)}`;
+  return {
+    serverName: "html2xtc",
+    catalogUrl: `${origin}/opds/v1/catalog.xml`,
+    username: result.device.id,
+    password: result.token,
+  };
+}
 
 export function registerDeviceRoutes(router: Router): void {
   // --- device-pairings: unauthenticated, called by the Xteink device itself ---
@@ -213,6 +237,41 @@ export function registerDeviceRoutes(router: Router): void {
     await revokeDevice(env, account, params.deviceId);
     logAuditEvent("device.revoked", { accountId: account.id, deviceId: params.deviceId });
     return new Response(null, { status: 204 });
+  });
+
+  // --- Phase2 (claudedocs/html2xtc-opds-phase2-spec.md §8): standard OPDS
+  // client registration — a WebUI-driven alternative to the device-initiated
+  // QR pairing flow above. Both create a 'active' devices row and return a
+  // one-time-only plaintext token; neither is ever re-shown (spec §6.1/§11).
+
+  router.post("/api/devices/manual-opds", async (request, env) => {
+    const account = await requireAccount(request, env);
+    requireCsrf(request, env);
+    const body = await readJsonBody(request);
+    const { name, deviceModel, width, height } = body;
+    if (typeof name !== "string") {
+      throw Errors.badRequest("INVALID_DEVICE_NAME", "name is required");
+    }
+    const result = await createManualOpdsDevice(env, account, { name, deviceModel, width, height });
+    logAuditEvent("device.manual_opds.created", { accountId: account.id, deviceId: result.device.id });
+    return Response.json(
+      { device: result.device, opds: buildOpdsConnectionInfo(env, result) },
+      { status: 201, headers: { "Cache-Control": "no-store" } },
+    );
+  });
+
+  router.post("/api/devices/:deviceId/rotate-token", async (request, env, params) => {
+    const account = await requireAccount(request, env);
+    requireCsrf(request, env);
+    const result = await rotateDeviceToken(env, account, params.deviceId);
+    logAuditEvent("device.token.rotated", { accountId: account.id, deviceId: result.device.id });
+    return Response.json(
+      {
+        device: { id: result.device.id, name: result.device.name, status: result.device.status },
+        opds: buildOpdsConnectionInfo(env, result),
+      },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   });
 
   // --- Phase 4: per-device library ---

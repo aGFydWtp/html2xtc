@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 aGFydWtp
 
-import { sha256Hex, timingSafeEqual } from "../security/crypto";
 import type { Env } from "../types";
+import { verifyDeviceToken } from "./credentials";
 import { getDeviceForAuth } from "./repository";
 
 /**
@@ -83,8 +83,7 @@ export const BasicDeviceTokenAuthenticator: DeviceAuthenticator = {
     if (device === null || device.status !== "active") {
       return null;
     }
-    const tokenHash = await sha256Hex(parsed.deviceToken);
-    if (!timingSafeEqual(tokenHash, device.tokenHash)) {
+    if (!(await verifyDeviceToken(parsed.deviceToken, device.tokenHash))) {
       return null;
     }
     return { deviceId: device.id, accountId: device.accountId, name: device.name, lastSeenAt: device.lastSeenAt };

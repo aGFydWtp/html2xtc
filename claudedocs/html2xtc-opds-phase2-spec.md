@@ -297,8 +297,12 @@ HTTP status:
 | 400 | INVALID_DEVICE_RESOLUTION | 解像度不正 |
 | 401 | UNAUTHORIZED | 未ログイン |
 | 403 | CSRF_REJECTED | CSRF 不正 |
-| 409 | DEVICE_LIMIT_REACHED | 端末上限 |
-| 503 | DEVICE_CREATION_DISABLED | 運用上の新規登録停止 |
+| 409 | DEVICE_LIMIT_EXCEEDED | 端末上限 |
+
+実装時の判断:
+
+- 端末上限のコードは、当初案の `DEVICE_LIMIT_REACHED` ではなく既存ペアリング承認と同じ `DEVICE_LIMIT_EXCEEDED` を使う（`src/devices/pairings.ts`）。同じ事象に 2 つのコードを作らない。
+- `503 DEVICE_CREATION_DISABLED` は該当する運用フラグが存在しないため実装しない。新規登録停止の運用要件が生じた時点で、ペアリングと共通の仕組みとして追加する。
 
 ---
 

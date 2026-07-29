@@ -154,7 +154,8 @@ pending から reject (POST /api/pairings/:id/reject) でも遷移する:
 `docs/device-library-adr.md` 参照）。
 
 1. `POST /api/pairings/{id}/approve`（Web側、Cookieセッション）で `deviceToken` を新規生成
-   （`randomToken(32)`）。
+   （`issueDeviceCredential`、`src/devices/credentials.ts`——手動OPDS端末登録・token再発行
+   [`docs/security-model.md` §9] と共通の実装で、`randomToken(32)` + `sha256Hex` の組み合わせ）。
 2. `devices.token_hash` へその SHA-256 ハッシュを永続保存（以降のBasic認証で使う正本）。
 3. `PAIRING_ENCRYPTION_KEY`（base64エンコードされた256ビット鍵、Wrangler secret）で
    `deviceToken` の平文をAES-GCM暗号化する（`encryptWithPairingKey`、`src/security/aes-gcm.ts`）。

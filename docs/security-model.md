@@ -133,11 +133,13 @@ html2xtc の端末別ライブラリ機能における認証・認可・秘密�
 | `device.library.updated` | `accountId`, `deviceId`, `version`, `itemCount` |
 | `device.opds.fetched` | `accountId`, `deviceId`, `page`, (検索時のみ)`search: 1` |
 | `device.download.completed` | `accountId`, `deviceId`, `itemId`, `sizeBytes` |
+| `device.manual_opds.created` | `accountId`, `deviceId` |
+| `device.token.rotated` | `accountId`, `deviceId` |
+| `account.quota.exceeded` | `accountId`, `quota`（`"devices"`のみ現状） |
 
 **実装計画で挙げられていたが未実装のイベント**（`auth.registration.completed` /
-`auth.session.revoked` / `device.pairing.created` / `device.registered` /
-`device.token.rotated`）は現時点のコードには存在しない。監査ログを前提にした運用・分析を
-行う場合はこの欠落を踏まえること。
+`auth.session.revoked` / `device.pairing.created` / `device.registered`）は現時点のコードには
+存在しない。監査ログを前提にした運用・分析を行う場合はこの欠落を踏まえること。
 
 ### 禁止フィールド
 
@@ -156,7 +158,7 @@ authorization, challenge, inviteToken, password, token
 | 値 | 平文で存在する場所 | 永続保存される形 |
 |---|---|---|
 | セッショントークン | `Set-Cookie` レスポンス・ブラウザのCookieジャーのみ | `sha256Hex(pepper:token)`（`sessions.token_hash`） |
-| deviceToken | ペアリング承認直後の暗号化前のみ（サーバー内メモリ）／端末側の恒久保存 | `sha256Hex(token)`（`devices.token_hash`、pepperなし） |
+| deviceToken | 発行直後のみ（サーバー内メモリ）／端末側の恒久保存。発行経路は3つ: (1) ペアリング承認直後の暗号化前、(2) `POST /api/devices/manual-opds` のレスポンスボディに一度だけ、(3) `POST /api/devices/{deviceId}/rotate-token` のレスポンスボディに一度だけ——生成・ハッシュ化は3経路とも `src/devices/credentials.ts` の共通実装 | `sha256Hex(token)`（`devices.token_hash`、pepperなし） |
 | deviceToken（受け渡し中） | 端末が復号するまでの間 | AES-GCM暗号文 + IV + 認証タグ（`device_pairings.encrypted_device_token`/`token_iv`/`token_auth_tag`、鍵は`PAIRING_ENCRYPTION_KEY`） |
 | pairingSecret | ペアリング開始時のレスポンス・端末側保持のみ | `sha256Hex(secret)`（`device_pairings.pairing_secret_hash`） |
 | 招待トークン (inviteToken) | `scripts/create-invite.mjs` の標準出力に一度だけ | `sha256Hex(token)`（`registration_invites.token_hash`、pepperなし） |
@@ -168,3 +170,50 @@ authorization, challenge, inviteToken, password, token
 （`scripts/create-invite.mjs` / `src/auth/repository.ts` の `findInviteByTokenHash`）は
 単純な `sha256Hex(token)` のみで、この secret は一切参照されていない（デッドコード）。
 削除するか実際にpepperとして組み込むかは今後の判断事項。
+
+## 9. 標準OPDS端末の手動登録・token再発行（Phase2）
+
+実装: `src/devices/service.ts`（`createManualOpdsDevice` / `rotateDeviceToken`）、
+`src/devices/routes.ts`、`src/devices/credentials.ts`（token生成・ハッシュ化の共通実装）。
+QRペアリングを使わずWebUIから直接「標準OPDSクライアント（本家CrossPoint等）」用の端末を
+登録する経路。作成後の端末はペアリング経由の端末と完全に同一に扱われる（認証・OPDS・
+配信リスト・revokeいずれも区別しない）——`devices.registration_method`
+（`migrations/app/0007_device_registration_method.sql`、値は`pairing`/`manual_opds`）は
+表示・監査用の識別情報でしかない。
+
+```
+POST /api/devices/manual-opds
+Cookie: (セッション必須) / CSRF検証必須
+{"name": "Xteink X3", "deviceModel": "x3"}
+
+201 Created, Cache-Control: no-store
+{
+  "device": {"id", "name", "status", "createdAt", "lastSeenAt", "device", "width", "height", "registrationMethod"},
+  "opds": {"serverName": "html2xtc", "catalogUrl": "https://<WEBAUTHN_RP_ID>/opds/v1/catalog.xml", "username": "<deviceId>", "password": "<平文token、以後二度と表示しない>"}
+}
+```
+
+- `deviceModel` が `x3`/`x4` の場合、`width`/`height` はクライアント値を無視し
+  `DEVICE_PROFILES`（`src/devices.ts`）の値で上書きする。`other`/省略時のみ、
+  両方指定された `width`/`height`（1〜10000の正整数）を採用する。
+- エラー: `400 INVALID_DEVICE_NAME` / `400 INVALID_DEVICE_MODEL` /
+  `400 INVALID_DEVICE_RESOLUTION` / `401 UNAUTHORIZED` / `403 CSRF_REJECTED` /
+  `409 DEVICE_LIMIT_EXCEEDED`（アカウント単位デバイス数クォータ、`account.quota.exceeded`監査あり）。
+- 監査: `device.manual_opds.created`（`accountId`, `deviceId` のみ。tokenは含めない）。
+
+```
+POST /api/devices/{deviceId}/rotate-token
+Cookie: (セッション必須) / CSRF検証必須
+
+200 OK, Cache-Control: no-store
+{"device": {"id", "name", "status"}, "opds": {"serverName", "catalogUrl", "username", "password": "<新しい平文token>"}}
+```
+
+- 対象端末が存在しない場合と他アカウント所有の場合はいずれも `404 DEVICE_NOT_FOUND`
+  （区別しない、§5のスコープ規則どおり）。
+- `revoked` 端末は `409 DEVICE_REVOKED`。
+- 新 `token_hash` は単一の条件付き `UPDATE ... WHERE status = 'active'` で書き込む
+  （`updateDeviceTokenHash`）——このUPDATEが成功した瞬間に旧tokenは無効になり、新旧が
+  同時に有効な期間は存在しない。
+- 監査: `device.token.rotated`（`accountId`, `deviceId` のみ）。
+- 手動登録・ペアリング登録のどちらの端末に対しても実行できる（登録経路を問わない）。

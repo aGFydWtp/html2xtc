@@ -19,6 +19,21 @@ export interface Device {
   device: string | null;
   width: number | null;
   height: number | null;
+  /**
+   * How the device was registered (Phase 2 §7/§8.3): "pairing" is the existing
+   * QR-based firmware pairing flow, "manual_opds" is a standard OPDS client
+   * registered by hand (createManualOpdsDevice()). Defaults to "pairing" when
+   * the server omits the field so older/mismatched server responses degrade
+   * safely instead of dropping the device from the list.
+   */
+  registrationMethod: "pairing" | "manual_opds";
+}
+
+export interface OpdsCredentials {
+  serverName: string;
+  catalogUrl: string;
+  username: string;
+  password: string;
 }
 
 export interface DeviceLibraryItem {
@@ -66,7 +81,20 @@ function parseDevice(raw: unknown): Device | null {
     device: typeof r.device === "string" ? r.device : null,
     width: typeof r.width === "number" ? r.width : null,
     height: typeof r.height === "number" ? r.height : null,
+    registrationMethod: r.registrationMethod === "manual_opds" ? "manual_opds" : "pairing",
   };
+}
+
+function parseOpdsCredentials(raw: unknown): OpdsCredentials | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  if (
+    typeof r.serverName !== "string"
+    || typeof r.catalogUrl !== "string"
+    || typeof r.username !== "string"
+    || typeof r.password !== "string"
+  ) return null;
+  return { serverName: r.serverName, catalogUrl: r.catalogUrl, username: r.username, password: r.password };
 }
 
 function parseDevices(raw: unknown): Device[] {
@@ -126,6 +154,23 @@ export type ReplaceLibraryResult =
   | { ok: true; library: DeviceLibrary }
   | { ok: false; conflict: boolean };
 
+export interface CreateManualOpdsDeviceInput {
+  name: string;
+  deviceModel?: "x3" | "x4" | "other" | null;
+  width?: number;
+  height?: number;
+}
+
+// code は ApiError.code をそのまま透過する（呼び出し元がエラーコードごとの
+// 文言を出し分けられるようにするため、既存の boolean 戻り値パターンでは足りない）。
+export type CreateManualOpdsDeviceResult =
+  | { ok: true; device: Device; opds: OpdsCredentials }
+  | { ok: false; code: string | null };
+
+export type RotateDeviceTokenResult =
+  | { ok: true; opds: OpdsCredentials }
+  | { ok: false; code: string | null };
+
 class DevicesStore {
   devices = $state<Device[]>([]);
   loadState = $state<"idle" | "loading" | "loaded" | "fail">("idle");
@@ -164,6 +209,46 @@ class DevicesStore {
       return true;
     } catch {
       return false;
+    }
+  }
+
+  /**
+   * 標準 OPDS 端末を手動登録する（Phase 2 §8.1）。opds.password は呼び出し元
+   * （接続情報ダイアログ）へ戻り値として渡すだけで、ここでも呼び出し元でも
+   * 永続 state / localStorage / sessionStorage には保存しない（§11 セキュリティ要件）。
+   * 新規端末は作成日時降順（サーバーの一覧クエリと同じ並び）で先頭に足す。
+   */
+  async createManualOpdsDevice(input: CreateManualOpdsDeviceInput): Promise<CreateManualOpdsDeviceResult> {
+    try {
+      const payload: Record<string, unknown> = { name: input.name };
+      if (input.deviceModel !== undefined) payload.deviceModel = input.deviceModel;
+      if (input.width !== undefined) payload.width = input.width;
+      if (input.height !== undefined) payload.height = input.height;
+      const body = await apiSend<{ device?: unknown; opds?: unknown }>("POST", "/api/devices/manual-opds", payload);
+      const device = parseDevice(body.device);
+      const opds = parseOpdsCredentials(body.opds);
+      if (!device || !opds) return { ok: false, code: null };
+      this.devices = [device, ...this.devices];
+      return { ok: true, device, opds };
+    } catch (e) {
+      return { ok: false, code: e instanceof ApiError ? e.code : null };
+    }
+  }
+
+  /**
+   * 接続情報（token）を再発行する（Phase 2 §8.2）。成功レスポンスの device は
+   * {id,name,status} のみで一覧表示に必要な項目（device/width/height/
+   * registrationMethod 等）を含まないため、この一覧 (this.devices) は書き換え
+   * ない — rotation は表示中の項目を変えないので更新の必要がない。
+   */
+  async rotateDeviceToken(deviceId: string): Promise<RotateDeviceTokenResult> {
+    try {
+      const body = await apiSend<{ opds?: unknown }>("POST", `/api/devices/${encodeURIComponent(deviceId)}/rotate-token`);
+      const opds = parseOpdsCredentials(body.opds);
+      if (!opds) return { ok: false, code: null };
+      return { ok: true, opds };
+    } catch (e) {
+      return { ok: false, code: e instanceof ApiError ? e.code : null };
     }
   }
 

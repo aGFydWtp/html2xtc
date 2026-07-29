@@ -34,6 +34,10 @@ interface ConnectionsResponse {
   connections?: unknown;
 }
 
+// カタログダイアログの2ステップ構成（"select" = 一覧から選ぶ、"options" =
+// 変換オプションを選んで取り込む）。
+export type OpdsCatalogStep = "select" | "options";
+
 // Worker は POST /api/integrations/opds に対して常に { connection: {...} }
 // (status 201, src/integrations/opds/routes.ts) を返す。トップレベル(素の
 // summary)も受け付けているのはテスト容易性のため（このパース関数を単体で
@@ -76,7 +80,10 @@ class OpdsStore {
   connectErrorKey = $state<OpdsErrorMessageKey | null>(null);
 
   // --- カタログダイアログ -------------------------------------------------------
+  // ステップ1「選択」→ステップ2「変換オプション」の2ステップ構成（ダイアログを
+  // 開くたびにステップ1へ戻す — openCatalogDialog() / resetCatalogState() 参照）。
   catalogDialogOpen = $state(false);
+  catalogStep = $state<OpdsCatalogStep>("select");
   catalogLoading = $state(false);
   catalogErrorKey = $state<OpdsErrorMessageKey | null>(null);
   catalogPage = $state<OpdsCatalogPage | null>(null);
@@ -180,7 +187,10 @@ class OpdsStore {
   }
 
   // --- カタログダイアログ -------------------------------------------------------
+  // ダイアログを開くときは必ずステップ1「選択」から始める（開いたままステップ2
+  // が残った状態で再度開かれることがないように、ここで明示的にリセットする）。
   openCatalogDialog(): void {
+    this.catalogStep = "select";
     this.catalogDialogOpen = true;
   }
 
@@ -188,7 +198,21 @@ class OpdsStore {
     this.catalogDialogOpen = false;
   }
 
+  // ステップ1→2（選択0件では遷移しない。ボタン側の disabled 条件と二重に防御）。
+  goToOptionsStep(): void {
+    if (this.selectedCount === 0) return;
+    this.catalogStep = "options";
+  }
+
+  // ステップ2→1。選択状態・変換オプションはどちらもこのメソッドでは変更しない
+  // （選択は store 側の selected、変換オプションはダイアログ側のローカル state
+  // のまま維持される）。
+  backToSelectStep(): void {
+    this.catalogStep = "select";
+  }
+
   private resetCatalogState(): void {
+    this.catalogStep = "select";
     this.catalogPage = null;
     this.catalogErrorKey = null;
     this.cursorHistory = [];

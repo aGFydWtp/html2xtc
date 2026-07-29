@@ -158,6 +158,18 @@ export interface StartPairingResult {
 }
 
 /**
+ * Machine-declared model/resolution passed through from
+ * src/devices/routes.ts's POST /api/device-pairings handler, already
+ * normalized (fail-soft — null fields, never a rejected request) by
+ * src/devices/declared-device.ts.
+ */
+export interface DeclaredDeviceParams {
+  device: string | null;
+  width: number | null;
+  height: number | null;
+}
+
+/**
  * POST /api/device-pairings (plan §6.1 / §9.4): unauthenticated, called by
  * the Xteink device itself. Generates the pairingId/pairingSecret/userCode,
  * persists a 'pending' row (only the secret's hash), and returns everything
@@ -166,6 +178,7 @@ export interface StartPairingResult {
 export async function startPairing(
   env: Pick<Env, "APP_DB" | "WEBAUTHN_ORIGIN">,
   requestedName: string | null,
+  declaredDevice: DeclaredDeviceParams,
 ): Promise<StartPairingResult> {
   // The per-IP "ペアリング開始 | IP | 20回/時" rate limit (plan §13) is
   // enforced by the caller (src/devices/routes.ts's POST
@@ -193,6 +206,9 @@ export async function startPairing(
         requestedName: sanitizedName !== null && sanitizedName.length > 0 ? sanitizedName : null,
         createdAt: now.toISOString(),
         expiresAt: expiresAt.toISOString(),
+        requestedDevice: declaredDevice.device,
+        requestedWidth: declaredDevice.width,
+        requestedHeight: declaredDevice.height,
       });
       userCode = candidate;
       break;
@@ -297,6 +313,10 @@ export interface PairingLookupDto {
   pairingId: string;
   requestedName: string | null;
   expiresAt: string;
+  /** Machine-declared model/resolution (migrations/app/0006_pairing_declared_device.sql), surfaced to the approval dialog so a future warning ("this is an X4, not the X3 you're about to send") can be built without another round trip. Null when undeclared. */
+  requestedDevice: string | null;
+  requestedWidth: number | null;
+  requestedHeight: number | null;
 }
 
 /**
@@ -318,7 +338,14 @@ export async function findPairingByCode(
   if (pairing === null || decidePairingStatus(pairing, Date.now()) !== "pending") {
     throw Errors.notFound("PAIRING_NOT_FOUND", "pairing not found");
   }
-  return { pairingId: pairing.id, requestedName: pairing.requestedName, expiresAt: pairing.expiresAt };
+  return {
+    pairingId: pairing.id,
+    requestedName: pairing.requestedName,
+    expiresAt: pairing.expiresAt,
+    requestedDevice: pairing.requestedDevice,
+    requestedWidth: pairing.requestedWidth,
+    requestedHeight: pairing.requestedHeight,
+  };
 }
 
 export interface ApprovedDeviceDto {
@@ -326,6 +353,9 @@ export interface ApprovedDeviceDto {
   name: string;
   status: string;
   createdAt: string;
+  device: string | null;
+  width: number | null;
+  height: number | null;
 }
 
 /**
@@ -372,6 +402,13 @@ export async function approvePairingForAccount(
     name,
     tokenHash,
     createdAt: nowIso,
+    // Machine-declared at pairing-start time (migrations/app/0006), carried
+    // over verbatim — no human input, no re-derivation from
+    // src/devices.ts's "current" profile table (see 0006's comment on why
+    // that would silently reinterpret past rows).
+    device: pairing.requestedDevice,
+    width: pairing.requestedWidth,
+    height: pairing.requestedHeight,
   });
 
   const encrypted = await encryptWithPairingKey(env, deviceToken);
@@ -392,7 +429,15 @@ export async function approvePairingForAccount(
     throw Errors.conflict("PAIRING_NOT_PENDING", "pairing is not pending");
   }
 
-  return { id: deviceId, name, status: "active", createdAt: nowIso };
+  return {
+    id: deviceId,
+    name,
+    status: "active",
+    createdAt: nowIso,
+    device: pairing.requestedDevice,
+    width: pairing.requestedWidth,
+    height: pairing.requestedHeight,
+  };
 }
 
 /** POST /api/pairings/:pairingId/reject (plan §9.4). Conditional on still-pending, same double-check shape as approve. */

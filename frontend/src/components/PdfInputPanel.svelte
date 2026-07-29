@@ -3,10 +3,12 @@
   import type { PDFDocumentProxy } from "pdfjs-dist";
   import { onDestroy } from "svelte";
   import { submitPdf, type PdfUploadHandle } from "../lib/convert.svelte";
+  import { outputSizeForDevice } from "../lib/device-profiles";
   import { t } from "../lib/i18n.svelte";
   import { loadPdfDocument, PdfLoadError } from "../lib/pdf-loader";
   import { DEFAULT_PDF_OPTIONS, isValidPdfOptions, type PdfConvertOptions } from "../lib/pdf-options";
   import { PageRangeError, resolvePageNumbers } from "../lib/pdf-page-range";
+  import { targetDeviceStore } from "../lib/targetDevice.svelte";
   import PdfOptions from "./PdfOptions.svelte";
   import PdfPreview from "./PdfPreview.svelte";
 
@@ -16,8 +18,21 @@
   let errorKind = $state<"password_protected" | "parse_failed" | null>(null);
   let pdfDocument = $state<PDFDocumentProxy | null>(null);
   let destroyDocument: (() => Promise<void>) | null = null;
-  let options = $state<PdfConvertOptions>({ ...DEFAULT_PDF_OPTIONS, crop: { ...DEFAULT_PDF_OPTIONS.crop } });
+  // device の初期値はトグル（targetDeviceStore、ConvertForm.svelte 上部）の
+  // 現在値を反映する。以後はこのパネル内では変わらない — トグル変更はパネルが
+  // 再生成される次のファイル選択時から効く。
+  let options = $state<PdfConvertOptions>({
+    ...DEFAULT_PDF_OPTIONS,
+    device: targetDeviceStore.device,
+    crop: { ...DEFAULT_PDF_OPTIONS.crop },
+  });
   let currentPage = $state(1);
+
+  // ローディング/エラー時のプレースホルダー枠（PdfPreview.svelte 側は
+  // status==="ready" になってからしか表示されないため、ここでは options.device
+  // から独立に導出する）。X3/X4 でアスペクト比が異なるため固定値のままだと
+  // 実際のプレビュー枠と見た目が揃わない。
+  const outputSize = $derived(outputSizeForDevice(options.device));
 
   let uploading = $state(false);
   let uploadPercent = $state<number | null>(null);
@@ -118,9 +133,9 @@
   {#if status === "ready" && pdfDocument}
     <PdfPreview {pdfDocument} {options} bind:currentPage {pageCount} />
   {:else if status === "loading"}
-    <div class="preview-placeholder"><span class="spinner"></span></div>
+    <div class="preview-placeholder" style="aspect-ratio: {outputSize.widthPx} / {outputSize.heightPx}"><span class="spinner"></span></div>
   {:else if status === "error" && errorKind}
-    <div class="preview-placeholder error-text">{loadErrorText(errorKind)}</div>
+    <div class="preview-placeholder error-text" style="aspect-ratio: {outputSize.widthPx} / {outputSize.heightPx}">{loadErrorText(errorKind)}</div>
   {/if}
 
   {#if status === "ready"}
@@ -146,8 +161,10 @@
 
 <style>
   .pdf-panel { padding: 20px 0; display: flex; flex-direction: column; gap: 16px; }
+  /* aspect-ratio は常に markup 側のインラインスタイル（outputSize、選択中の device
+     から算出）で指定するため、ここでは固定値を持たない。 */
   .preview-placeholder {
-    width: 100%; max-width: 220px; aspect-ratio: 528 / 792; display: flex; align-items: center;
+    width: 100%; max-width: 220px; display: flex; align-items: center;
     justify-content: center; background: #fff; border: 1.5px solid var(--ink); border-radius: 4px;
     box-shadow: 3px 3px 0 var(--line); margin: 0 auto; padding: 16px; text-align: center; font-size: 13px;
   }

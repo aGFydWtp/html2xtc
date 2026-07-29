@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // TXT変換設定の型・既定値・プリセット・バリデーション（実装仕様書 §6）。
 
+import type { Device } from "./device-tag";
 import { encodeBase64UrlUtf8 } from "./pdf-options";
 
 export type TextEncoding = "auto" | "utf-8" | "shift_jis";
@@ -54,6 +55,9 @@ export interface TextConvertOptions {
 
   /** 100文字以内 */
   author: string;
+
+  /** 変換先 Xteink 機種（src/devices.ts）。省略時サーバー側は "x3" として扱う。 */
+  device: Device;
 }
 
 // §6.2 既定値（inputFormat は実装仕様書 §5.2）
@@ -78,6 +82,7 @@ export const DEFAULT_TEXT_OPTIONS: TextConvertOptions = {
   showPageNumbers: false,
   title: "",
   author: "",
+  device: "x3",
 };
 
 // §6.3 縦書き既定値: ユーザーが個別設定を変更していない状態で縦書きへ
@@ -299,6 +304,9 @@ export function validateTextOptions(options: TextConvertOptions): TextOptionsVal
   }
   if (codePointLength(options.author) > 100) {
     errors.push({ field: "author", message: "author must be 100 characters or fewer" });
+  }
+  if (options.device !== "x3" && options.device !== "x4") {
+    errors.push({ field: "device", message: 'device must be "x3" or "x4"' });
   }
 
   return errors;

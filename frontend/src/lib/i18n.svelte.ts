@@ -12,6 +12,7 @@ export type JobStatus = "queued" | "preparing" | "rendering" | "converting" | "c
 export interface Messages {
   brand: string;
   intro: string;
+  device_toggle_label: string;
   convert: string;
   agree_before: string;
   agree_link: string;
@@ -535,7 +536,8 @@ export interface Messages {
 export const I18N: Record<Lang, Messages> = {
   ja: {
     brand: "XTC 変換",
-    intro: "公開されているWebサイトやコンテンツを、電子ペーパー端末 Xteink X3 用の XTC ファイルに変換します。",
+    intro: "公開されているWebサイトやコンテンツを、電子ペーパー端末 Xteink 用の XTC ファイルに変換します。",
+    device_toggle_label: "変換先機種",
     convert: "変換する",
     agree_before: "「変換する」を押すことで、",
     agree_link: "利用規約",
@@ -576,7 +578,7 @@ export const I18N: Record<Lang, Messages> = {
     pdf_preview_note: "プレビューは変換結果の目安です。PDFの描画方式の違いにより、実際のXTCとわずかに異なる場合があります。",
     pdf_preview_label: "表示プレビュー",
     pdf_mode_source: "元PDF",
-    pdf_mode_x3: "X3プレビュー",
+    pdf_mode_x3: "実機プレビュー",
     pdf_mode_compare: "比較",
     pdf_page_indicator: (n, total) => `${n} / ${total}`,
     pdf_target_pages: "ページ範囲",
@@ -622,7 +624,7 @@ export const I18N: Record<Lang, Messages> = {
     text_remove_file: "ファイルを解除",
     text_meta_line: (size, chars, lines) => `${size} ・ ${chars.toLocaleString("ja-JP")}字 ・ ${lines.toLocaleString("ja-JP")}行`,
     text_tab_body: "本文",
-    text_tab_x3: "X3プレビュー",
+    text_tab_x3: "実機プレビュー",
     text_encoding_label: "文字コード",
     text_encoding_option_auto: "自動判定",
     text_encoding_option_utf8: "UTF-8",
@@ -721,7 +723,7 @@ export const I18N: Record<Lang, Messages> = {
 
     file_err_unsupported_type: "対応していないファイル形式です。PDF・TXT・EPUB のいずれかを選択してください。",
 
-    text_x3_preview_regenerate_button: "X3実機プレビューを再生成",
+    text_x3_preview_regenerate_button: "実機プレビューを再生成",
     text_x3_preview_generating: "実機プレビューを生成しています…",
     text_x3_page_indicator: (n, total) => `${n} / ${total}`,
     text_x3_preview_note: "本文先頭部分のみを変換しています。",
@@ -943,7 +945,7 @@ export const I18N: Record<Lang, Messages> = {
     devices_howto_btn: "端末の追加方法",
     devices_howto_title: "使い方",
     devices_howto_step1_heading: "ステップ1: ファームウェアのインストール",
-    devices_howto_step1_device: "対応端末は Xteink X3 です。",
+    devices_howto_step1_device: "この手順で対応している端末は Xteink X3 です。",
     devices_howto_step1_firmware: "CrossPoint JP をフォークした専用ファームウェアのインストールが必要です。このファームウェアは、端末をこの「XTC 変換」アプリに接続する機能を追加したものです。",
     devices_howto_step1_connect: "Xteink X3 をポゴピンで PC/Mac に接続します。",
     devices_howto_step1_flasher: "下の「ファームウェアをインストール」を押し、画面の手順に従ってインストールします。",
@@ -1034,7 +1036,8 @@ export const I18N: Record<Lang, Messages> = {
   },
   en: {
     brand: "XTC Converter",
-    intro: "Converts publicly available websites and content into XTC files for the Xteink X3 e-paper reader.",
+    intro: "Converts publicly available websites and content into XTC files for the Xteink e-paper reader.",
+    device_toggle_label: "Target device",
     convert: "Convert",
     agree_before: "By pressing “Convert”, you agree to the ",
     agree_link: "Terms of Use",
@@ -1075,7 +1078,7 @@ export const I18N: Record<Lang, Messages> = {
     pdf_preview_note: "The preview is only an approximation of the conversion result. Because the browser and server render PDFs differently, the final XTC file may look slightly different.",
     pdf_preview_label: "Preview",
     pdf_mode_source: "Original PDF",
-    pdf_mode_x3: "X3 preview",
+    pdf_mode_x3: "Device preview",
     pdf_mode_compare: "Compare",
     pdf_page_indicator: (n, total) => `${n} / ${total}`,
     pdf_target_pages: "Pages",
@@ -1121,7 +1124,7 @@ export const I18N: Record<Lang, Messages> = {
     text_remove_file: "Remove file",
     text_meta_line: (size, chars, lines) => `${size} · ${chars.toLocaleString("en-US")} chars · ${lines.toLocaleString("en-US")} lines`,
     text_tab_body: "Text",
-    text_tab_x3: "X3 preview",
+    text_tab_x3: "Device preview",
     text_encoding_label: "Encoding",
     text_encoding_option_auto: "Auto-detect",
     text_encoding_option_utf8: "UTF-8",
@@ -1220,7 +1223,7 @@ export const I18N: Record<Lang, Messages> = {
 
     file_err_unsupported_type: "Unsupported file type. Please select a PDF, TXT, or EPUB file.",
 
-    text_x3_preview_regenerate_button: "Regenerate X3 device preview",
+    text_x3_preview_regenerate_button: "Regenerate device preview",
     text_x3_preview_generating: "Generating the device preview…",
     text_x3_page_indicator: (n, total) => `${n} / ${total}`,
     text_x3_preview_note: "Only the beginning of the text is converted for this preview.",
@@ -1444,7 +1447,7 @@ export const I18N: Record<Lang, Messages> = {
     devices_howto_btn: "How to add a device",
     devices_howto_title: "How to use",
     devices_howto_step1_heading: "Step 1: Install the firmware",
-    devices_howto_step1_device: "The supported device is the Xteink X3.",
+    devices_howto_step1_device: "The device supported by this procedure is the Xteink X3.",
     devices_howto_step1_firmware: "It needs the dedicated firmware installed — a fork of CrossPoint JP that adds the ability to connect the device to this XTC Converter app.",
     devices_howto_step1_connect: "Connect the Xteink X3 to your PC or Mac via pogo pins.",
     devices_howto_step1_flasher: "Press “Install firmware” below and follow the on-screen instructions.",

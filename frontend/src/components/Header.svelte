@@ -106,7 +106,7 @@
 <header class="site">
   <div>
     <div class="brand-name">{t("brand")}</div>
-    <div class="brand-sub">FOR XTEINK X3</div>
+    <div class="brand-sub">FOR XTEINK X3 / X4</div>
   </div>
   <button
     type="button"

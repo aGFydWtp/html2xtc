@@ -23,13 +23,15 @@ Worker
 
 - PDF/XTC のバイト列は Worker ↔ Container 間で直接送受信する（Workflow パスの PDF 送信は R2 からの stream。メモリに全量を置かない）。R2 への読み書きは Worker の binding に一元化し、Container には R2 クレデンシャルもユーザー入力 URL も渡さない。
 - Container は固定プール名（`converter-0` / `converter-1`、`max_instances: 2` に対応）に jobId のハッシュで振り分け、ウォームインスタンスを再利用する。
-- 変換設定は `converter/config-x3.toml`（528×792、1-bit xtg、日本語メタデータ）。
+- 変換設定は機種ごとに `converter/config-x3.toml`（528×792）と `converter/config-x4.toml`（480×800）。いずれも 1-bit xtg・日本語メタデータで、`[output]` の width/height 以外は同一。
 - PDF の最終ページに奥付（タイトル・サイト名・著者・URL・変換日時・個人利用の注記）を追加する（`src/pdf.ts` の `buildColophonScript`。addScriptTag による DOM 注入。ページの CSP でブロックされた場合は奥付なしで変換される）。
 - 変換パイプラインとは別に、青空文庫の公式書誌カタログを 1 日 1 回 Cron で D1（`AOZORA_DB`）へ同期する（`src/catalog-workflow.ts` の `AozoraCatalogSyncWorkflow`）。`scheduled()` は Workflow を起動するだけで、ZIP 取得・CSV 解析・D1 投入は Workflow の各 step が担う。全書誌を新しい `generation` として投入・検証しきってから `active_generation` を 1 回の UPDATE で切り替えるため、検索側（`aozora_books_active` / `aozora_book_contributors_active` ビュー）が中途半端なデータを見ることはない。詳細は「青空文庫カタログ同期（D1）」を参照。同期した書誌は `GET /api/books` で検索でき、WebUI の「青空文庫から選択」ダイアログから一括変換できる。
 
 ## WebUI
 
 `frontend/`（Vite + Svelte 5 の SPA、スマホファースト）をビルドした `frontend/dist` を Workers static assets として `/` で配信する。URL を入力すると `POST /jobs` → 数秒間隔のポーリングで進捗（待機中 → PDF 生成中 → XTC 変換中）を表示し、完了するとダウンロードリンクとプレビューボタンが出る。変換モードは **WebUI では本文抽出（extract）固定**で、UI 上の選択肢はない（`POST /jobs` へ常に `mode: "extract"` を明示送信する）。ページ丸ごとの full は API 直叩き専用（API 自体の `mode` 省略時既定は full のまま）。履歴はブラウザの localStorage に保存（最大 50 件。履歴が空の間は履歴エリア自体を表示しない。サーバー上のファイルは約 24 時間で自動削除される旨を表示）。変換中の表示はジョブごとの並行ポーリングで複数件を同時に追跡する（in-flight ＋直近の完了/失敗を上限 10 件で表示）。
+
+**変換先機種の切り替え（X3 / X4）**: 変換フォーム上部のセグメントトグルで出力先の Xteink 機種を選ぶ。状態は URL のクエリパラメータ `device` が持ち、`?device=x4` のときだけ X4、パラメータなし・不正値・`x3` はすべて X3（`src/devices.ts` の `resolveDeviceId` と同じフェイルソフト）。トグル操作は `history.replaceState` で URL に反映される（X4 のとき `?device=x4` を付与、X3 のとき削除）ため、機種を選んだ状態の URL をそのままブックマーク・共有できる。`?register=` / `?pair=` と違い読み取り後に消費・削除はせず、タブを切り替えても保持される。選んだ機種は URL 変換・PDF / TXT / EPUB アップロード・Memlane 取り込み・実機プレビューのすべての経路にそのまま渡る（`frontend/src/lib/targetDevice.svelte.ts`）。なお「端末」タブの Xteink 登録ダイアログで初期選択される機種もこのトグルに追従するが、あちらが登録するのは実機の申告値であって変換先の指定ではない（別ドメイン。`src/devices.ts` 冒頭のコメントを参照）。
 
 **EPUB アップロード**: `.epub` ファイルを選択すると添付パネル（`EpubInputPanel.svelte`）が開き、レイアウト（自動 / 横書き / 縦書き）・フォント・文字サイズ・余白・章ごとの改ページ・表紙の有無・目次の有無を設定してから `POST /jobs/epub` へ送信する。PDF/TXT と異なりクライアント側で ZIP を解凍・解析するプレビューは持たず、ファイルを選んだ時点で常に変換可能な状態になる。アップロード中は進捗バーとキャンセルボタンを表示する。
 
@@ -234,7 +236,7 @@ X-Epub-Options: <EpubConvertOptions の JSON を base64url エンコード>
 
 ### POST /preview/text
 
-TXT本文の先頭部分だけを、`POST /jobs/text` と同じ本番処理系（テキスト正規化・段落分割・HTMLエスケープ・読書用HTML生成・フォント埋め込み・Browser RunによるPDF生成・ContainerによるPDF→XTC変換）で同期的にXTCへ変換して返す、実機プレビュー専用のエンドポイント（`frontend/` のTXT設定画面「X3実機プレビューを生成」ボタンから使用）。R2への保存・Workflowの起動は一切行わない。
+TXT本文の先頭部分だけを、`POST /jobs/text` と同じ本番処理系（テキスト正規化・段落分割・HTMLエスケープ・読書用HTML生成・フォント埋め込み・Browser RunによるPDF生成・ContainerによるPDF→XTC変換）で同期的にXTCへ変換して返す、実機プレビュー専用のエンドポイント（`frontend/` のTXT設定画面「実機プレビューを再生成」ボタンから使用）。R2への保存・Workflowの起動は一切行わない。
 
 ```http
 POST /preview/text
@@ -449,5 +451,5 @@ Container イメージの Python 依存（xtctool の推移的依存を含む）
 ## 補足
 
 - Container イメージは xtctool を検証済み commit（`d7bff34`、2026-07-17 検証）に固定し、非 root ユーザー（uid 10001）で実行する。
-- `converter/config-x3.toml` の `resample_method` は BOX（テキスト向き）。写真主体のページが多い場合は LANCZOS に変更する。
+- `converter/config-x3.toml` / `converter/config-x4.toml` の `resample_method` は BOX（テキスト向き）。写真主体のページが多い場合は LANCZOS に変更する。
 - XTC 出力サイズの目安は約 51KB/ページ（1-bit xtg、無圧縮）。

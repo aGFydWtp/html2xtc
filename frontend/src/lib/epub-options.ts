@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // EPUB 変換オプション（実装仕様書 §4.1.3-4.1.5）と、アップロード API ヘッダー用の base64url エンコード。
 
+import type { Device } from "./device-tag";
 import { encodeBase64UrlUtf8 } from "./pdf-options";
 import { isValidFontFamily } from "./text-options";
 
@@ -21,6 +22,8 @@ export interface EpubConvertOptions {
   includeCover: boolean;
   /** 目次を含めるか */
   includeTableOfContents: boolean;
+  /** 変換先 Xteink 機種（src/devices.ts）。省略時サーバー側は "x3" として扱う。 */
+  device: Device;
 }
 
 // 実装仕様書 §4.1.4
@@ -32,6 +35,7 @@ export const DEFAULT_EPUB_OPTIONS: EpubConvertOptions = {
   chapterPageBreak: true,
   includeCover: true,
   includeTableOfContents: false,
+  device: "x3",
 };
 
 // 実装仕様書 §4.1.5 の範囲
@@ -81,6 +85,9 @@ export function validateEpubOptions(options: EpubConvertOptions): EpubOptionsVal
   }
   if (typeof options.includeTableOfContents !== "boolean") {
     errors.push({ field: "includeTableOfContents", message: "includeTableOfContents must be boolean" });
+  }
+  if (options.device !== "x3" && options.device !== "x4") {
+    errors.push({ field: "device", message: 'device must be "x3" or "x4"' });
   }
 
   return errors;

@@ -43,6 +43,7 @@ describe("DEFAULT_TEXT_OPTIONS", () => {
       showPageNumbers: false,
       title: "",
       author: "",
+      device: "x3",
     });
   });
 

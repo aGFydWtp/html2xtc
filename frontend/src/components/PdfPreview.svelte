@@ -2,14 +2,13 @@
 <script lang="ts">
   import type { PDFDocumentProxy } from "pdfjs-dist";
   import { onDestroy } from "svelte";
+  import { outputSizeForDevice } from "../lib/device-profiles";
   import type { PdfConvertOptions } from "../lib/pdf-options";
   import {
     bitsToCanvas,
     buildGrayscaleFrame,
     DitherWorkerClient,
     LimitedPageCache,
-    OUTPUT_HEIGHT,
-    OUTPUT_WIDTH,
     PDF_PREVIEW_DPI,
     REDRAW_DEBOUNCE_MS,
     renderPdfPageToCanvas,
@@ -29,6 +28,10 @@
   } = $props();
 
   let mode = $state<"source" | "x3" | "compare">("x3");
+  // 選択中の変換先機種（options.device）の出力解像度。source モードの枠と
+  // 表示用 aspect-ratio はここから決める — X3/X4 でアスペクト比が異なるため
+  // （528:792 と 480:800）、固定値のままだと表示が歪む。
+  const outputSize = $derived(outputSizeForDevice(options.device));
   let sourceCanvasEl = $state<HTMLCanvasElement | null>(null);
   let x3CanvasEl = $state<HTMLCanvasElement | null>(null);
   let rawPageCanvas = $state<HTMLCanvasElement | null>(null);
@@ -77,6 +80,7 @@
       rawPageCanvas, mode,
       options.rotation, options.crop.top, options.crop.right, options.crop.bottom, options.crop.left,
       options.fit, options.marginPx, options.threshold, options.dither, options.ditherStrength, options.invert,
+      options.device,
     ];
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => void redraw(), REDRAW_DEBOUNCE_MS);
@@ -98,19 +102,20 @@
     }
   }
 
-  // 元PDFモード: PDF.js が描画したページをそのまま、528:792 の枠に収まるよう
-  // 縮小表示するだけ（回転・クロップ・二値化などは適用しない。§7.7）。
+  // 元PDFモード: PDF.js が描画したページをそのまま、機種の出力解像度の枠に
+  // 収まるよう縮小表示するだけ（回転・クロップ・二値化などは適用しない。§7.7）。
   function paintSource(target: HTMLCanvasElement, source: HTMLCanvasElement): void {
-    target.width = OUTPUT_WIDTH;
-    target.height = OUTPUT_HEIGHT;
+    const { widthPx, heightPx } = outputSize;
+    target.width = widthPx;
+    target.height = heightPx;
     const ctx = target.getContext("2d");
     if (!ctx) return;
     ctx.fillStyle = "#fff";
-    ctx.fillRect(0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT);
-    const scale = Math.min(OUTPUT_WIDTH / source.width, OUTPUT_HEIGHT / source.height);
+    ctx.fillRect(0, 0, widthPx, heightPx);
+    const scale = Math.min(widthPx / source.width, heightPx / source.height);
     const w = source.width * scale;
     const h = source.height * scale;
-    ctx.drawImage(source, (OUTPUT_WIDTH - w) / 2, (OUTPUT_HEIGHT - h) / 2, w, h);
+    ctx.drawImage(source, (widthPx - w) / 2, (heightPx - h) / 2, w, h);
   }
 
   function paintFinal(target: HTMLCanvasElement, source: HTMLCanvasElement): void {
@@ -128,12 +133,12 @@
 <div class="pv-wrap">
   <div class="pv-label">{t("pdf_preview_label")}</div>
   <div class="pv-frame" class:compare={mode === "compare"}>
-    <div class="pv-page" class:pv-hidden={mode === "x3"}>
-      <canvas bind:this={sourceCanvasEl} width={OUTPUT_WIDTH} height={OUTPUT_HEIGHT}></canvas>
+    <div class="pv-page" class:pv-hidden={mode === "x3"} style="aspect-ratio: {outputSize.widthPx} / {outputSize.heightPx}">
+      <canvas bind:this={sourceCanvasEl} width={outputSize.widthPx} height={outputSize.heightPx}></canvas>
       {#if mode === "compare"}<div class="pv-page-tag">{t("pdf_mode_source")}</div>{/if}
     </div>
-    <div class="pv-page" class:pv-hidden={mode === "source"}>
-      <canvas bind:this={x3CanvasEl} width={OUTPUT_WIDTH} height={OUTPUT_HEIGHT}></canvas>
+    <div class="pv-page" class:pv-hidden={mode === "source"} style="aspect-ratio: {outputSize.widthPx} / {outputSize.heightPx}">
+      <canvas bind:this={x3CanvasEl} width={outputSize.widthPx} height={outputSize.heightPx}></canvas>
       {#if mode === "compare"}<div class="pv-page-tag">{t("pdf_mode_x3")}</div>{/if}
     </div>
   </div>
@@ -159,8 +164,10 @@
     letter-spacing: .08em;
   }
   .pv-frame { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
+  /* aspect-ratio は常に markup 側のインラインスタイル（outputSize、選択中の device
+     から算出）で指定するため、ここでは固定値を持たない — 136行目/140行目参照。 */
   .pv-page {
-    position: relative; width: 100%; max-width: 220px; aspect-ratio: 528 / 792; background: #fff;
+    position: relative; width: 100%; max-width: 220px; background: #fff;
     border: 1.5px solid var(--ink); border-radius: 4px; box-shadow: 3px 3px 0 var(--line);
     overflow: hidden;
   }

@@ -35,6 +35,8 @@ Cloudflare Containersなら、Python、ネイティブライブラリ、Linuxフ
 
 Cloudflare Browser Runには、URLをPDF化する機能があります。追加CSSも直接渡せます。
 
+以下は X3 を前提にした素描です。実装では `@page` の用紙サイズを機種ごとのプロファイル（`src/devices.ts` の `DEVICE_PROFILES`。X3 = 66mm×99mm、X4 = 60mm×100mm）から組み立てるため、この定数のように固定値は埋め込んでいません。
+
 ```ts
 interface Env {
   BROWSER: BrowserRun;
@@ -262,13 +264,16 @@ WORKDIR /app
 
 COPY app.py /app/app.py
 COPY config-x3.toml /app/config-x3.toml
+COPY config-x4.toml /app/config-x4.toml
 
 EXPOSE 8080
 
 CMD ["python", "/app/app.py"]
 ```
 
-### X3用設定
+### 機種別設定（X3 / X4）
+
+出力先の機種ごとに設定ファイルを分ける。以下は X3 用（`config-x3.toml`）。X4 用（`config-x4.toml`）は `[output]` の `width`/`height` を 480×800 に変えるだけで、それ以外の値は同一。
 
 ```toml
 [output]
@@ -300,7 +305,7 @@ dither = true
 dither_strength = 0.8
 ```
 
-X3のターゲット解像度は528×792です。XTC.jsもX3向けにこのサイズで処理しています。([GitHub][4])
+X3のターゲット解像度は528×792、X4は480×800です。XTC.jsもX3向けに528×792で処理しています。([GitHub][4])
 
 ### Container側の処理イメージ
 
@@ -312,6 +317,8 @@ xtctool convert \
   -o /tmp/output.xtc \
   -c /app/config-x3.toml
 ```
+
+`-c` に渡す設定ファイルはリクエストで指定された機種で切り替えます（X3 なら `config-x3.toml`、X4 なら `config-x4.toml`）。
 
 `xtctool`はPDFから複数ページのXTCコンテナを直接生成できます。([GitHub][2])
 

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // PDF 変換オプション（仕様書 §5）と、アップロード API ヘッダー用の base64url エンコード。
 
+import type { Device } from "./device-tag";
 import { isValidPagesSyntax } from "./pdf-page-range";
 
 export interface PdfCrop {
@@ -29,6 +30,8 @@ export interface PdfConvertOptions {
   ditherStrength: number;
   /** 白黒反転 */
   invert: boolean;
+  /** 変換先 Xteink 機種（src/devices.ts）。省略時サーバー側は "x3" として扱う。 */
+  device: Device;
 }
 
 export const DEFAULT_PDF_OPTIONS: PdfConvertOptions = {
@@ -41,6 +44,7 @@ export const DEFAULT_PDF_OPTIONS: PdfConvertOptions = {
   dither: true,
   ditherStrength: 0.8,
   invert: false,
+  device: "x3",
 };
 
 export const ROTATIONS = [0, 90, 180, 270] as const;
@@ -103,6 +107,10 @@ export function validatePdfOptions(options: PdfConvertOptions): PdfOptionsValida
 
   if (typeof options.dither !== "boolean") errors.push({ field: "dither", message: "dither must be boolean" });
   if (typeof options.invert !== "boolean") errors.push({ field: "invert", message: "invert must be boolean" });
+
+  if (options.device !== "x3" && options.device !== "x4") {
+    errors.push({ field: "device", message: 'device must be "x3" or "x4"' });
+  }
 
   return errors;
 }

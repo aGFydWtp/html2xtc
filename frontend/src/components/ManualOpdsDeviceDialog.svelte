@@ -9,14 +9,18 @@
     manualOpdsDeviceDialog,
     openOpdsCredentialsDialog,
   } from "../lib/authDialogs.svelte";
+  import type { Device } from "../lib/device-tag";
   import { devicesStore, type CreateManualOpdsDeviceInput } from "../lib/devices.svelte";
   import { t } from "../lib/i18n.svelte";
-
-  type DeviceModel = "x3" | "x4";
+  import { targetDeviceStore } from "../lib/targetDevice.svelte";
 
   let dlg = $state<HTMLDialogElement | null>(null);
   let name = $state("Xteink");
-  let model = $state<DeviceModel>("x3");
+  // 初期値は変換先機種トグル（targetDeviceStore）の現在値を反映する。ここでの
+  // model はあくまで「登録する実機の申告値」ドメイン（devicesStore.
+  // createManualOpdsDevice の deviceModel）であり、targetDeviceStore の
+  // 「変換先機種」ドメインとは別物 — 初期値の由来としてのみ参照する。
+  let model = $state<Device>(targetDeviceStore.device);
   let busy = $state(false);
   let errorCode = $state<string | null>(null);
 
@@ -25,7 +29,7 @@
     if (manualOpdsDeviceDialog.open) {
       if (!dlg.open) {
         name = "Xteink";
-        model = "x3";
+        model = targetDeviceStore.device;
         busy = false;
         errorCode = null;
         dlg.showModal();

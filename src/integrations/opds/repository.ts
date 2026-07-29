@@ -5,7 +5,7 @@ import { toArrayBuffer } from "./connection-crypto";
 import type { OpdsAuthType, OpdsConnectionSummary, OpdsProvider } from "./types";
 
 /**
- * D1 access for opds_connections (migrations/app/0007_opds_connections.sql).
+ * D1 access for opds_connections (migrations/app/0008_opds_connections.sql).
  * Row (snake_case) <-> app (camelCase) mapping follows the same convention
  * as src/auth/repository.ts / src/library/repository.ts. Every function
  * here is scoped by accountId (never trusts a bare connectionId alone) —

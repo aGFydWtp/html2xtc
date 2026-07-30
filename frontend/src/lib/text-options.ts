@@ -2,6 +2,8 @@
 // TXT変換設定の型・既定値・プリセット・バリデーション（実装仕様書 §6）。
 
 import type { Device } from "./device-tag";
+// type-only import: このファイルはランタイムでは i18n に依存しない（既存の分離を保つ）。
+import type { Lang } from "./i18n.svelte";
 import { encodeBase64UrlUtf8 } from "./pdf-options";
 
 export type TextEncoding = "auto" | "utf-8" | "shift_jis";
@@ -85,47 +87,72 @@ export const DEFAULT_TEXT_OPTIONS: TextConvertOptions = {
   device: "x3",
 };
 
+// UI言語ごとの既定フォント（フロントエンドのみの決定 — TXT/EPUBはfontを常にAPIへ
+// 明示送信するため、サーバー側の既定値とは無関係）。"ja" のときだけ日本語UI向けの
+// 書体を返し、それ以外（将来言語が増えても）はすべて英語圏の書体へフォールバック
+// する構造にする — Lang が3値以上に増えたときに、日本語以外を自動的に英語側へ
+// 倒すため。DEFAULT_TEXT_OPTIONS.font（日本語UI向け、既存の既定値のまま）と
+// 重複させないよう、そちらを参照する。
+export function defaultFontForLang(lang: Lang): string {
+  return lang === "ja" ? DEFAULT_TEXT_OPTIONS.font : "Literata";
+}
+
+// isUntouchedFromDefault/isUntouchedForAozoraPreset/setTextLayout/
+// applyAozoraPresetIfUntouched が「ユーザーが手を付けていないか」を判定する際の
+// 比較基準（baseline）。UI言語のみに応じてfontが変わり、他フィールドは
+// DEFAULT_TEXT_OPTIONS と同じ。呼び出し元（TextInputPanel.svelte）はマウント時に
+// 一度だけこれを作り、初期options自体にも・baseline判定にも同じ値を使う。
+export function defaultTextOptionsForLang(lang: Lang): TextConvertOptions {
+  return { ...DEFAULT_TEXT_OPTIONS, font: defaultFontForLang(lang), margins: { ...DEFAULT_TEXT_OPTIONS.margins } };
+}
+
 // §6.3 縦書き既定値: ユーザーが個別設定を変更していない状態で縦書きへ
-// 切り替えた場合のみ適用する。
+// 切り替えた場合のみ適用する。縦書きは日本語前提のため、UI言語に関わらず
+// BIZ UDMincho 固定（言語別にしない）。
 export const VERTICAL_DEFAULT_OVERRIDES: Pick<TextConvertOptions, "font" | "fontSizePx" | "lineHeight"> = {
   font: "BIZ UDMincho",
   fontSizePx: 26,
   lineHeight: 1.9,
 };
 
-// layout 以外の「個別設定」が既定値のままかどうかを判定する（§6.3 の「変更していない」
-// の実装: 明示的な touched フラグを持ち回す代わりに、値そのものを既定値と比較する）。
-export function isUntouchedFromDefault(options: TextConvertOptions): boolean {
+// layout 以外の「個別設定」が baseline（その環境の初期値。通常は
+// defaultTextOptionsForLang(lang) の戻り値）のままかどうかを判定する（§6.3 の
+// 「変更していない」の実装: 明示的な touched フラグを持ち回す代わりに、値そのものを
+// baseline と比較する）。「未タッチ」の基準はUI言語ごとに異なりうる（fontの既定値が
+// 変わるため）ので、固定定数ではなく引数で受け取る — 呼び出し元が渡し忘れると
+// 静かに旧挙動へ戻ることを避けるため、baseline は省略不可の必須引数にしてある。
+export function isUntouchedFromDefault(options: TextConvertOptions, baseline: TextConvertOptions): boolean {
   return (
-    options.font === DEFAULT_TEXT_OPTIONS.font &&
-    options.fontSizePx === DEFAULT_TEXT_OPTIONS.fontSizePx &&
-    options.lineHeight === DEFAULT_TEXT_OPTIONS.lineHeight &&
-    options.paragraphSpacingEm === DEFAULT_TEXT_OPTIONS.paragraphSpacingEm &&
-    options.margins.top === DEFAULT_TEXT_OPTIONS.margins.top &&
-    options.margins.right === DEFAULT_TEXT_OPTIONS.margins.right &&
-    options.margins.bottom === DEFAULT_TEXT_OPTIONS.margins.bottom &&
-    options.margins.left === DEFAULT_TEXT_OPTIONS.margins.left &&
-    options.textAlign === DEFAULT_TEXT_OPTIONS.textAlign &&
-    options.maxConsecutiveBlankLines === DEFAULT_TEXT_OPTIONS.maxConsecutiveBlankLines &&
-    options.preserveSpaces === DEFAULT_TEXT_OPTIONS.preserveSpaces &&
-    options.joinHardWrappedLines === DEFAULT_TEXT_OPTIONS.joinHardWrappedLines
+    options.font === baseline.font &&
+    options.fontSizePx === baseline.fontSizePx &&
+    options.lineHeight === baseline.lineHeight &&
+    options.paragraphSpacingEm === baseline.paragraphSpacingEm &&
+    options.margins.top === baseline.margins.top &&
+    options.margins.right === baseline.margins.right &&
+    options.margins.bottom === baseline.margins.bottom &&
+    options.margins.left === baseline.margins.left &&
+    options.textAlign === baseline.textAlign &&
+    options.maxConsecutiveBlankLines === baseline.maxConsecutiveBlankLines &&
+    options.preserveSpaces === baseline.preserveSpaces &&
+    options.joinHardWrappedLines === baseline.joinHardWrappedLines
   );
 }
 
-// 書字方向を切り替える。縦書きへの切替時、個別設定が既定値のままなら §6.3 の
+// 書字方向を切り替える。縦書きへの切替時、個別設定が baseline のままなら §6.3 の
 // 上書きを適用する。横書きへ戻すときは何も上書きしない（仕様書に明示的な既定
 // 復帰の指定がないため）。
-export function setTextLayout(options: TextConvertOptions, layout: TextLayout): TextConvertOptions {
-  if (layout === "vertical" && options.layout !== "vertical" && isUntouchedFromDefault(options)) {
+export function setTextLayout(options: TextConvertOptions, layout: TextLayout, baseline: TextConvertOptions): TextConvertOptions {
+  if (layout === "vertical" && options.layout !== "vertical" && isUntouchedFromDefault(options, baseline)) {
     return { ...options, layout: "vertical", ...VERTICAL_DEFAULT_OVERRIDES };
   }
   return { ...options, layout };
 }
 
 // 青空文庫形式選択時の初期設定（aozora-text-conversion 仕様書 §15.3）。layout/font/
-// fontSizePx/lineHeight/joinHardWrappedLines のすべてが初期値のままの場合のみ適用する
-// （isUntouchedForAozoraPreset）。VERTICAL_DEFAULT_OVERRIDES と値は同じだが、
+// fontSizePx/lineHeight/joinHardWrappedLines のすべてが baseline のままの場合のみ
+// 適用する（isUntouchedForAozoraPreset）。VERTICAL_DEFAULT_OVERRIDES と値は同じだが、
 // joinHardWrappedLines を明示的に false へ寄せる点が異なるため独立した定数にする。
+// 青空文庫は日本語前提のため、UI言語に関わらず BIZ UDMincho 固定（言語別にしない）。
 export const AOZORA_PRESET_OVERRIDES: Pick<
   TextConvertOptions,
   "layout" | "font" | "fontSizePx" | "lineHeight" | "joinHardWrappedLines"
@@ -138,22 +165,23 @@ export const AOZORA_PRESET_OVERRIDES: Pick<
 };
 
 // isUntouchedFromDefault は layout を見ない（横書き→縦書き切替専用の判定のため）。
-// aozora プリセットは layout も含めた5項目すべてが初期値のままかどうかで判定する
-// （仕様 §15.3）。
-export function isUntouchedForAozoraPreset(options: TextConvertOptions): boolean {
+// aozora プリセットは layout も含めた5項目すべてが baseline のままかどうかで判定する
+// （仕様 §15.3）。baseline は isUntouchedFromDefault と同じ理由で必須引数にする
+// （渡し忘れによる旧挙動への static fallback を型で防ぐ）。
+export function isUntouchedForAozoraPreset(options: TextConvertOptions, baseline: TextConvertOptions): boolean {
   return (
-    options.layout === DEFAULT_TEXT_OPTIONS.layout &&
-    options.font === DEFAULT_TEXT_OPTIONS.font &&
-    options.fontSizePx === DEFAULT_TEXT_OPTIONS.fontSizePx &&
-    options.lineHeight === DEFAULT_TEXT_OPTIONS.lineHeight &&
-    options.joinHardWrappedLines === DEFAULT_TEXT_OPTIONS.joinHardWrappedLines
+    options.layout === baseline.layout &&
+    options.font === baseline.font &&
+    options.fontSizePx === baseline.fontSizePx &&
+    options.lineHeight === baseline.lineHeight &&
+    options.joinHardWrappedLines === baseline.joinHardWrappedLines
   );
 }
 
 // ユーザーが個別設定済み（isUntouchedForAozoraPreset が false）なら何もしない —
 // 呼び出し側は inputFormat を "aozora" にした直後、常にこれを通してよい。
-export function applyAozoraPresetIfUntouched(options: TextConvertOptions): TextConvertOptions {
-  if (!isUntouchedForAozoraPreset(options)) {
+export function applyAozoraPresetIfUntouched(options: TextConvertOptions, baseline: TextConvertOptions): TextConvertOptions {
+  if (!isUntouchedForAozoraPreset(options, baseline)) {
     return options;
   }
   return { ...options, ...AOZORA_PRESET_OVERRIDES };
@@ -191,14 +219,20 @@ export type TextPresetId = "standard" | "vertical_novel" | "large_font";
 
 type TextPresetPatch = Partial<Pick<TextConvertOptions, "layout" | "font" | "fontSizePx" | "lineHeight">>;
 
-export const TEXT_PRESETS: Record<TextPresetId, TextPresetPatch> = {
-  standard: { layout: "horizontal", font: "BIZ UDPGothic", fontSizePx: 26, lineHeight: 1.8 },
-  vertical_novel: { layout: "vertical", font: "BIZ UDMincho", fontSizePx: 26, lineHeight: 1.9 },
-  large_font: { fontSizePx: 30, lineHeight: 1.8 },
-};
+// "standard" の font はUI言語に応じて変える（英語UIで「標準」を押して日本語書体に
+// 戻るのは不自然なため）。"vertical_novel" は縦書き前提のプリセットなので
+// BIZ UDMincho 固定（言語別にしない）。プリセット定義がfontを含む以上、静的な
+// オブジェクトのままでは言語別にできないため関数化してある。
+export function textPresetsForLang(lang: Lang): Record<TextPresetId, TextPresetPatch> {
+  return {
+    standard: { layout: "horizontal", font: defaultFontForLang(lang), fontSizePx: 26, lineHeight: 1.8 },
+    vertical_novel: { layout: "vertical", font: "BIZ UDMincho", fontSizePx: 26, lineHeight: 1.9 },
+    large_font: { fontSizePx: 30, lineHeight: 1.8 },
+  };
+}
 
-export function applyTextPreset(options: TextConvertOptions, preset: TextPresetId): TextConvertOptions {
-  return { ...options, ...TEXT_PRESETS[preset] };
+export function applyTextPreset(options: TextConvertOptions, preset: TextPresetId, lang: Lang): TextConvertOptions {
+  return { ...options, ...textPresetsForLang(lang)[preset] };
 }
 
 // --- フォント候補（ユーザー指示: 自由入力ではなく候補選択式） -----------------------
@@ -211,7 +245,7 @@ export interface FontCandidate {
   label: string;
 }
 
-export const FONT_CANDIDATES: readonly FontCandidate[] = [
+const JA_FONT_CANDIDATES: readonly FontCandidate[] = [
   { family: "BIZ UDGothic", label: "BIZ UDGothic" },
   { family: "BIZ UDPGothic", label: "BIZ UDPGothic" },
   { family: "BIZ UDMincho", label: "BIZ UDMincho" },
@@ -220,11 +254,25 @@ export const FONT_CANDIDATES: readonly FontCandidate[] = [
   { family: "Noto Serif JP", label: "Noto Serif JP" },
   { family: "Zen Maru Gothic", label: "Zen Maru Gothic" },
   { family: "Shippori Mincho", label: "Shippori Mincho" },
+];
+
+const EN_FONT_CANDIDATES: readonly FontCandidate[] = [
   { family: "Literata", label: "Literata" },
   { family: "Merriweather", label: "Merriweather" },
   { family: "EB Garamond", label: "EB Garamond" },
   { family: "Inter", label: "Inter" },
 ];
+
+// 除外はしない — 両言語で全12書体が選べる。並び順のみ言語で変える。日本語UIは
+// 既存の並び順のまま（日本語8書体→英語4書体）。
+export const FONT_CANDIDATES: readonly FontCandidate[] = [...JA_FONT_CANDIDATES, ...EN_FONT_CANDIDATES];
+
+// UI言語に応じた候補の並び順。"ja" のときだけ日本語UI向けの並び（既存のまま）を
+// 返し、それ以外は英語圏の書体を先頭にする — defaultFontForLang と同じ
+// フォールバック構造（Lang が増えてもここを触らずに済む）。
+export function fontCandidatesForLang(lang: Lang): readonly FontCandidate[] {
+  return lang === "ja" ? FONT_CANDIDATES : [...EN_FONT_CANDIDATES, ...JA_FONT_CANDIDATES];
+}
 
 // バックエンド（src/fonts.ts の sanitizeFontFamily）と同じ許容規則。frontend からは
 // src/ を import できないため意図的に複製している — 変更時は両方揃えること

@@ -5,7 +5,11 @@ import {
   applyAozoraPresetIfUntouched,
   applyTextPreset,
   DEFAULT_TEXT_OPTIONS,
+  defaultFontForLang,
+  defaultTextOptionsForLang,
   encodeTextOptionsHeader,
+  fontCandidatesForLang,
+  FONT_CANDIDATES,
   isJoinHardWrappedLinesEditable,
   isMarkdownFileName,
   isMaxConsecutiveBlankLinesEditable,
@@ -15,7 +19,7 @@ import {
   isValidFontFamily,
   isValidTextOptions,
   setTextLayout,
-  TEXT_PRESETS,
+  textPresetsForLang,
   validateTextOptions,
   VERTICAL_DEFAULT_OVERRIDES,
   type TextConvertOptions,
@@ -145,47 +149,92 @@ describe("isValidFontFamily", () => {
   });
 });
 
-describe("TEXT_PRESETS / applyTextPreset (§6.5)", () => {
-  it("standard preset matches spec", () => {
-    expect(TEXT_PRESETS.standard).toEqual({ layout: "horizontal", font: "BIZ UDPGothic", fontSizePx: 26, lineHeight: 1.8 });
+describe("textPresetsForLang / applyTextPreset (§6.5)", () => {
+  it("ja: standard preset matches spec (existing default font)", () => {
+    expect(textPresetsForLang("ja").standard).toEqual({ layout: "horizontal", font: "BIZ UDPGothic", fontSizePx: 26, lineHeight: 1.8 });
   });
 
-  it("vertical_novel preset matches spec", () => {
-    expect(TEXT_PRESETS.vertical_novel).toEqual({ layout: "vertical", font: "BIZ UDMincho", fontSizePx: 26, lineHeight: 1.9 });
+  it("en: standard preset uses the English UI default font, not the Japanese one", () => {
+    expect(textPresetsForLang("en").standard).toEqual({ layout: "horizontal", font: "Literata", fontSizePx: 26, lineHeight: 1.8 });
   });
 
-  it("large_font preset matches spec", () => {
-    expect(TEXT_PRESETS.large_font).toEqual({ fontSizePx: 30, lineHeight: 1.8 });
+  it("vertical_novel preset matches spec regardless of UI language (vertical writing is Japanese-only)", () => {
+    expect(textPresetsForLang("ja").vertical_novel).toEqual({ layout: "vertical", font: "BIZ UDMincho", fontSizePx: 26, lineHeight: 1.9 });
+    expect(textPresetsForLang("en").vertical_novel).toEqual({ layout: "vertical", font: "BIZ UDMincho", fontSizePx: 26, lineHeight: 1.9 });
+  });
+
+  it("large_font preset has no font (not language-dependent)", () => {
+    expect(textPresetsForLang("ja").large_font).toEqual({ fontSizePx: 30, lineHeight: 1.8 });
+    expect(textPresetsForLang("en").large_font).toEqual({ fontSizePx: 30, lineHeight: 1.8 });
   });
 
   it("applyTextPreset merges the preset onto existing options without touching other fields", () => {
     const opts = { ...cloneDefaults(), title: "My Book" };
-    const applied = applyTextPreset(opts, "large_font");
+    const applied = applyTextPreset(opts, "large_font", "ja");
     expect(applied.fontSizePx).toBe(30);
     expect(applied.lineHeight).toBe(1.8);
     expect(applied.title).toBe("My Book"); // untouched field preserved
     expect(applied.layout).toBe("horizontal"); // untouched field preserved
   });
+
+  it("applyTextPreset('standard') picks the font for the given language", () => {
+    expect(applyTextPreset(cloneDefaults(), "standard", "ja").font).toBe("BIZ UDPGothic");
+    expect(applyTextPreset(cloneDefaults(), "standard", "en").font).toBe("Literata");
+  });
+});
+
+describe("defaultFontForLang / defaultTextOptionsForLang / fontCandidatesForLang (frontend-only, per UI language)", () => {
+  it("ja stays on the existing default font (BIZ UDPGothic)", () => {
+    expect(defaultFontForLang("ja")).toBe("BIZ UDPGothic");
+  });
+
+  it("en (and any non-ja language) falls back to Literata", () => {
+    expect(defaultFontForLang("en")).toBe("Literata");
+  });
+
+  it("defaultTextOptionsForLang only differs from DEFAULT_TEXT_OPTIONS in font", () => {
+    const ja = defaultTextOptionsForLang("ja");
+    expect(ja).toEqual(DEFAULT_TEXT_OPTIONS);
+    const en = defaultTextOptionsForLang("en");
+    expect(en).toEqual({ ...DEFAULT_TEXT_OPTIONS, font: "Literata" });
+  });
+
+  it("fontCandidatesForLang('ja') keeps the existing order (Japanese fonts first)", () => {
+    const candidates = fontCandidatesForLang("ja");
+    expect(candidates).toEqual(FONT_CANDIDATES);
+    expect(candidates[0].family).toBe("BIZ UDGothic");
+  });
+
+  it("fontCandidatesForLang('en') puts the English fonts first, without dropping any candidate", () => {
+    const candidates = fontCandidatesForLang("en");
+    expect(candidates[0].family).toBe("Literata");
+    expect(candidates.slice(0, 4).map((c) => c.family)).toEqual(["Literata", "Merriweather", "EB Garamond", "Inter"]);
+    // 除外はしない — 両言語で全12書体が選べる（並び順のみが変わる）。
+    expect(candidates).toHaveLength(FONT_CANDIDATES.length);
+    expect(new Set(candidates.map((c) => c.family))).toEqual(new Set(FONT_CANDIDATES.map((c) => c.family)));
+  });
 });
 
 describe("isUntouchedFromDefault / setTextLayout (§6.3)", () => {
+  const jaBaseline = cloneDefaults();
+
   it("is true for a freshly cloned default", () => {
-    expect(isUntouchedFromDefault(cloneDefaults())).toBe(true);
+    expect(isUntouchedFromDefault(cloneDefaults(), jaBaseline)).toBe(true);
   });
 
   it("is false once a settable field diverges from default", () => {
-    expect(isUntouchedFromDefault({ ...cloneDefaults(), fontSizePx: 20 })).toBe(false);
+    expect(isUntouchedFromDefault({ ...cloneDefaults(), fontSizePx: 20 }, jaBaseline)).toBe(false);
     const withMargin = cloneDefaults();
     withMargin.margins.top = 40;
-    expect(isUntouchedFromDefault(withMargin)).toBe(false);
+    expect(isUntouchedFromDefault(withMargin, jaBaseline)).toBe(false);
   });
 
   it("is false once joinHardWrappedLines diverges from default", () => {
-    expect(isUntouchedFromDefault({ ...cloneDefaults(), joinHardWrappedLines: false })).toBe(false);
+    expect(isUntouchedFromDefault({ ...cloneDefaults(), joinHardWrappedLines: false }, jaBaseline)).toBe(false);
   });
 
   it("applies §6.3 vertical overrides when switching to vertical from an untouched default", () => {
-    const result = setTextLayout(cloneDefaults(), "vertical");
+    const result = setTextLayout(cloneDefaults(), "vertical", jaBaseline);
     expect(result.layout).toBe("vertical");
     expect(result.font).toBe(VERTICAL_DEFAULT_OVERRIDES.font);
     expect(result.fontSizePx).toBe(VERTICAL_DEFAULT_OVERRIDES.fontSizePx);
@@ -194,21 +243,36 @@ describe("isUntouchedFromDefault / setTextLayout (§6.3)", () => {
 
   it("does NOT apply overrides when the user already changed a setting", () => {
     const touched = { ...cloneDefaults(), fontSizePx: 22 };
-    const result = setTextLayout(touched, "vertical");
+    const result = setTextLayout(touched, "vertical", jaBaseline);
     expect(result.layout).toBe("vertical");
     expect(result.fontSizePx).toBe(22); // untouched: user's explicit choice preserved
     expect(result.font).toBe(DEFAULT_TEXT_OPTIONS.font); // not overridden to BIZ UDMincho
   });
 
   it("switching back to horizontal does not reapply any override", () => {
-    const vertical = setTextLayout(cloneDefaults(), "vertical");
-    const back = setTextLayout(vertical, "horizontal");
+    const vertical = setTextLayout(cloneDefaults(), "vertical", jaBaseline);
+    const back = setTextLayout(vertical, "horizontal", jaBaseline);
     expect(back.layout).toBe("horizontal");
     expect(back.font).toBe(VERTICAL_DEFAULT_OVERRIDES.font); // stays as-is; no reset defined by spec
+  });
+
+  // 回帰防止（英語UIの既定フォント導入時の要件）: 英語UI相当のbaselineから始めても、
+  // 縦書き切替の判定基準はそのbaseline（font: "Literata"）と比較される。「未タッチ」
+  // であれば、上書き先は VERTICAL_DEFAULT_OVERRIDES（BIZ UDMincho固定、言語非依存）
+  // になる — 縦書きは日本語前提のため、UI言語に関わらずBIZ UDMinchoへ切り替わる。
+  it("English-UI baseline: switching to vertical from an untouched English default still lands on BIZ UDMincho", () => {
+    const enBaseline = defaultTextOptionsForLang("en");
+    const enOptions = { ...enBaseline, margins: { ...enBaseline.margins } };
+    expect(enOptions.font).toBe("Literata");
+    const result = setTextLayout(enOptions, "vertical", enBaseline);
+    expect(result.layout).toBe("vertical");
+    expect(result.font).toBe("BIZ UDMincho");
   });
 });
 
 describe("isUntouchedForAozoraPreset / applyAozoraPresetIfUntouched (§15.3)", () => {
+  const jaBaseline = cloneDefaults();
+
   it("matches the spec's aozora preset overrides", () => {
     expect(AOZORA_PRESET_OVERRIDES).toEqual({
       layout: "vertical",
@@ -220,11 +284,11 @@ describe("isUntouchedForAozoraPreset / applyAozoraPresetIfUntouched (§15.3)", (
   });
 
   it("is true for a freshly cloned default (layout/font/fontSizePx/lineHeight/joinHardWrappedLines all default)", () => {
-    expect(isUntouchedForAozoraPreset(cloneDefaults())).toBe(true);
+    expect(isUntouchedForAozoraPreset(cloneDefaults(), jaBaseline)).toBe(true);
   });
 
   it("applies the aozora preset when every relevant field is still at its default", () => {
-    const applied = applyAozoraPresetIfUntouched(cloneDefaults());
+    const applied = applyAozoraPresetIfUntouched(cloneDefaults(), jaBaseline);
     expect(applied.layout).toBe("vertical");
     expect(applied.font).toBe("BIZ UDMincho");
     expect(applied.fontSizePx).toBe(26);
@@ -233,23 +297,37 @@ describe("isUntouchedForAozoraPreset / applyAozoraPresetIfUntouched (§15.3)", (
   });
 
   it("does NOT apply the preset once the user has changed any of the five fields", () => {
-    const touchedFontSize = applyAozoraPresetIfUntouched({ ...cloneDefaults(), fontSizePx: 22 });
+    const touchedFontSize = applyAozoraPresetIfUntouched({ ...cloneDefaults(), fontSizePx: 22 }, jaBaseline);
     expect(touchedFontSize.fontSizePx).toBe(22);
     expect(touchedFontSize.layout).toBe("horizontal"); // no override applied at all, not just fontSizePx spared
 
-    const touchedLayout = applyAozoraPresetIfUntouched({ ...cloneDefaults(), layout: "vertical" });
+    const touchedLayout = applyAozoraPresetIfUntouched({ ...cloneDefaults(), layout: "vertical" }, jaBaseline);
     expect(touchedLayout.font).toBe(DEFAULT_TEXT_OPTIONS.font); // still BIZ UDPGothic, not overridden
 
-    const touchedJoin = applyAozoraPresetIfUntouched({ ...cloneDefaults(), joinHardWrappedLines: false });
+    const touchedJoin = applyAozoraPresetIfUntouched({ ...cloneDefaults(), joinHardWrappedLines: false }, jaBaseline);
     expect(touchedJoin.layout).toBe("horizontal");
   });
 
   it("preserves unrelated fields (title/author/margins) untouched", () => {
     const opts = { ...cloneDefaults(), title: "My Book", author: "Someone" };
-    const applied = applyAozoraPresetIfUntouched(opts);
+    const applied = applyAozoraPresetIfUntouched(opts, jaBaseline);
     expect(applied.title).toBe("My Book");
     expect(applied.author).toBe("Someone");
     expect(applied.margins).toEqual(DEFAULT_TEXT_OPTIONS.margins);
+  });
+
+  // 回帰防止（英語UIの既定フォント導入時の要件）: 英語UI相当のbaseline
+  // （font: "Literata"）から始めても、青空文庫プリセットは baseline との比較で
+  // 「未タッチ」と判定され、AOZORA_PRESET_OVERRIDES（BIZ UDMincho固定、
+  // 言語非依存）が適用される — 青空文庫はUI言語に関わらず現状の挙動を維持する。
+  it("English-UI baseline: the aozora preset still applies and still lands on BIZ UDMincho", () => {
+    const enBaseline = defaultTextOptionsForLang("en");
+    const enOptions = { ...enBaseline, margins: { ...enBaseline.margins } };
+    expect(enOptions.font).toBe("Literata");
+    const applied = applyAozoraPresetIfUntouched(enOptions, enBaseline);
+    expect(applied.layout).toBe("vertical");
+    expect(applied.font).toBe("BIZ UDMincho");
+    expect(applied.joinHardWrappedLines).toBe(false);
   });
 });
 

@@ -1,8 +1,8 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import { submitEpub, type EpubUploadHandle } from "../lib/convert.svelte";
-  import { DEFAULT_EPUB_OPTIONS, isValidEpubOptions, type EpubConvertOptions } from "../lib/epub-options";
-  import { t } from "../lib/i18n.svelte";
+  import { DEFAULT_EPUB_OPTIONS, defaultEpubFontForLang, isValidEpubOptions, type EpubConvertOptions } from "../lib/epub-options";
+  import { getLang, t } from "../lib/i18n.svelte";
   import { targetDeviceStore } from "../lib/targetDevice.svelte";
   import EpubOptions from "./EpubOptions.svelte";
 
@@ -12,8 +12,13 @@
   // プレビュー要求がない）ため、ファイルを受け取った時点で常に変換可能な状態になる。
   // device の初期値はトグル（targetDeviceStore、ConvertForm.svelte 上部）の
   // 現在値を反映する。以後はこのパネル内では変わらない — トグル変更はパネルが
-  // 再生成される次のファイル選択時から効く。
-  let options = $state<EpubConvertOptions>({ ...DEFAULT_EPUB_OPTIONS, device: targetDeviceStore.device });
+  // 再生成される次のファイル選択時から効く。font（UI言語ごとの既定値）も同じ扱い:
+  // マウント時に一度だけ getLang() を読む。
+  let options = $state<EpubConvertOptions>({
+    ...DEFAULT_EPUB_OPTIONS,
+    font: defaultEpubFontForLang(getLang()),
+    device: targetDeviceStore.device,
+  });
 
   let uploading = $state(false);
   let uploadPercent = $state<number | null>(null);

@@ -165,7 +165,7 @@
      から算出）で指定するため、ここでは固定値を持たない。 */
   .preview-placeholder {
     width: 100%; max-width: 220px; display: flex; align-items: center;
-    justify-content: center; background: #fff; border: 1.5px solid var(--ink); border-radius: 4px;
+    justify-content: center; background: var(--paper); border: 1.5px solid var(--ink); border-radius: 4px;
     box-shadow: 3px 3px 0 var(--line); margin: 0 auto; padding: 16px; text-align: center; font-size: 13px;
   }
   .att-row {
@@ -174,7 +174,7 @@
   }
   .att-badge {
     flex: none; font-family: var(--mono); font-size: 12px; font-weight: 600; padding: 3px 8px;
-    background: var(--panel); color: #4d4a42; border-radius: 4px;
+    background: var(--panel); color: var(--badge-text); border-radius: 4px;
   }
   .att-info { flex: 1; min-width: 0; }
   .att-name { font-size: 14px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

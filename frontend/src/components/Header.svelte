@@ -162,7 +162,7 @@
   .hd-menu {
     position: fixed; display: none; margin: 0; padding: 6px; min-width: 200px;
     border: 1px solid var(--line); border-radius: 4px; background: var(--card);
-    box-shadow: 0 4px 16px rgba(28, 26, 23, .16);
+    box-shadow: 0 4px 16px rgba(var(--ink-rgb), .16);
   }
   /* この 2 つのルールは分けたままにする: Popover API 非対応ブラウザでは、セレクタ
      リスト中の未知の :popover-open がリスト全体を無効にしてしまうため。 */
@@ -183,5 +183,5 @@
     border: 1px solid transparent; background: none; color: var(--muted);
   }
   .lang button[aria-pressed="true"] { background: var(--ink); color: var(--ink-text); }
-  .lang button[aria-pressed="false"] { border-color: #cfc9bd; }
+  .lang button[aria-pressed="false"] { border-color: var(--line-strong); }
 </style>

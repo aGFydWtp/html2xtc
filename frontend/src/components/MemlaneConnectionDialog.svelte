@@ -102,10 +102,10 @@
     width: min(480px, calc(100vw - 32px));
     max-height: calc(100vh - 96px);
     max-height: calc(100dvh - 96px);
-    box-shadow: 4px 4px 0 rgba(28, 26, 23, .35);
+    box-shadow: 4px 4px 0 rgba(var(--ink-rgb), .35);
   }
   dialog.memlane-dialog[open] { display: flex; flex-direction: column; }
-  dialog.memlane-dialog::backdrop { background: rgba(28, 26, 23, .45); }
+  dialog.memlane-dialog::backdrop { background: rgba(var(--ink-rgb), .45); }
   .dlg-head {
     display: flex; align-items: center; justify-content: space-between; gap: 12px;
     padding: 16px 22px; border-bottom: 1px solid var(--line); flex: none;
@@ -113,7 +113,7 @@
   .dlg-title { font-size: 16px; font-weight: 700; letter-spacing: .04em; }
   .dlg-x {
     width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
-    border: 1px solid #cfc9bd; border-radius: 4px; background: none; color: var(--muted);
+    border: 1px solid var(--line-strong); border-radius: 4px; background: none; color: var(--muted);
     font-size: 14px; line-height: 1; cursor: pointer; font-family: inherit;
   }
   .dlg-x:hover { color: var(--text); }
@@ -126,7 +126,7 @@
   }
   input[type="url"]:focus { outline: 2px solid var(--ink); outline-offset: 1px; }
   input[type="url"]:disabled { opacity: .6; }
-  .error-text { font-size: 13px; color: #b3261e; }
+  .error-text { font-size: 13px; color: var(--error); }
   .dlg-actions { display: flex; align-items: center; justify-content: flex-end; gap: 16px; margin-top: 8px; }
   .dlg-cancel {
     border: 0; background: none; font: inherit; font-size: 14px; color: var(--muted);

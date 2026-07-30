@@ -3,6 +3,7 @@
    共有するものと文書全体のベース）。それ以外は各コンポーネントの scoped style へ。 */
 :root {
   --bg: #f4f1ea;
+  --bg-rgb: 244, 241, 234;
   --card: #fdfcf9;
   --panel: #ece8dd;
   --text: #1c1a17;
@@ -11,10 +12,48 @@
   --faint: #a39d90;
   --disabled: #c4beb0;
   --line: #ddd6c8;
+  --line-strong: #cfc9bd;
   --ink: #1c1a17;
+  --ink-rgb: 28, 26, 23;
   --ink-text: #f4f1ea;
   --error: #8a3d33;
+  --warning: #8a6d1a;
+  --link-hover: #555;
+  --badge-bg: #e8e3d6;
+  --badge-text: #4d4a42;
+  /* 端末出力プレビュー（紙面）専用の色。紙は常に白・インクは常に黒という
+     現実の紙面を模したものでテーマ色ではないため、:root[data-device="x4"]
+     では上書きしない。PdfPreview.svelte / lib/pdf-preview.ts の canvas
+     fillStyle は JS から CSS 変数を参照できないため #fff を直書きしているが、
+     この --paper と同じ色である（変更時は両方を揃えること）。 */
+  --paper: #fff;
+  --paper-ink: #1c1a17;
   --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+/* X4 選択時の淡いパープルテーマ。targetDeviceStore.device を App.svelte が
+   document.documentElement の data-device に反映する（lib/targetDevice.svelte.ts）。
+   各色相はクリーム版から色相のみを紫寄り（H≈258）へ回転し、明度・彩度は
+   クリーム版と同等のトーンを保つ（--muted 等の彩度のみ視認性のため少し強める）。
+   --ink-rgb / --bg-rgb を書き忘れると影・backdrop がクリームのまま残るので注意。
+   --error / --warning（意味色）と --link-hover（無彩色）は色相を回さず据え置く
+   （意図的。漏れではない）。 */
+:root[data-device="x4"] {
+  --bg: #ede9f5;
+  --bg-rgb: 237, 233, 245;
+  --card: #faf9fd;
+  --panel: #e1dced;
+  --text: #18171c;
+  --muted: #7f7a8b;
+  --muted2: #605b6c;
+  --faint: #958fa4;
+  --disabled: #b5afc6;
+  --line: #cec6df;
+  --line-strong: #c2bcd0;
+  --ink: #18171c;
+  --ink-rgb: 24, 23, 28;
+  --ink-text: #ede9f5;
+  --badge-bg: #dbd5e9;
+  --badge-text: #45414e;
 }
 * { box-sizing: border-box; }
 body {
@@ -27,12 +66,12 @@ body {
   font-size: 16px;
 }
 a { color: var(--text); }
-a:hover { color: #555; }
+a:hover { color: var(--link-hover); }
 
 /* CurrentJob と PreviewDialog で共用 */
 .badge {
   font-family: var(--mono); font-size: 14px; padding: 3px 10px; border-radius: 4px;
-  background: #e8e3d6; color: #4d4a42; white-space: nowrap;
+  background: var(--badge-bg); color: var(--badge-text); white-space: nowrap;
 }
 .badge.err { background: none; border: 1px solid var(--error); color: var(--error); }
 .spinner {
@@ -55,10 +94,10 @@ dialog.simple-dialog {
   /* iOS Safari ではツールバー分を除いた dvh を優先（非対応環境は vh にフォールバック） */
   max-height: min(80vh, calc(100vh - 96px));
   max-height: min(80dvh, calc(100dvh - 96px));
-  box-shadow: 4px 4px 0 rgba(28, 26, 23, .35);
+  box-shadow: 4px 4px 0 rgba(var(--ink-rgb), .35);
 }
 dialog.simple-dialog[open] { display: flex; flex-direction: column; }
-dialog.simple-dialog::backdrop { background: rgba(28, 26, 23, .45); }
+dialog.simple-dialog::backdrop { background: rgba(var(--ink-rgb), .45); }
 dialog.simple-dialog.wide { width: min(560px, calc(100vw - 32px)); }
 .simple-dialog .dlg-head {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
@@ -67,7 +106,7 @@ dialog.simple-dialog.wide { width: min(560px, calc(100vw - 32px)); }
 .simple-dialog .dlg-title { font-size: 16px; font-weight: 700; letter-spacing: .04em; }
 .simple-dialog .dlg-x {
   width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
-  border: 1px solid #cfc9bd; border-radius: 4px; background: none; color: var(--muted);
+  border: 1px solid var(--line-strong); border-radius: 4px; background: none; color: var(--muted);
   font-size: 14px; line-height: 1; cursor: pointer; font-family: inherit;
 }
 .simple-dialog .dlg-x:hover { color: var(--text); }

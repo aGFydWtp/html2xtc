@@ -76,10 +76,10 @@
     border: 0; background: none; padding: 0; margin-left: 4px; font: inherit; font-size: 14px;
     color: var(--text); text-decoration: underline; cursor: pointer;
   }
-  .linkish:hover { color: #555; }
+  .linkish:hover { color: var(--link-hover); }
   .zone-drag-label {
     position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-    font-size: 16px; font-weight: 700; color: var(--ink); background: rgba(244, 241, 234, .85);
+    font-size: 16px; font-weight: 700; color: var(--ink); background: rgba(var(--bg-rgb), .85);
     pointer-events: none; border-radius: 4px;
   }
 </style>

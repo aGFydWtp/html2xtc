@@ -118,7 +118,7 @@
     background: var(--card); color: var(--text);
     width: min(560px, calc(100vw - 32px));
   }
-  dialog.preview-dialog::backdrop { background: rgba(28, 26, 23, .5); }
+  dialog.preview-dialog::backdrop { background: rgba(var(--ink-rgb), .5); }
   .pd-inner { padding: 14px 16px 16px; }
   .pd-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   .pd-title { font-weight: 700; letter-spacing: .06em; }

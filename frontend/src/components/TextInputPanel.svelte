@@ -595,7 +595,7 @@
      から算出）で指定するため、ここでは固定値を持たない。 */
   .preview-placeholder {
     width: 100%; max-width: 220px; display: flex; align-items: center;
-    justify-content: center; background: #fff; border: 1.5px solid var(--ink); border-radius: 4px;
+    justify-content: center; background: var(--paper); border: 1.5px solid var(--ink); border-radius: 4px;
     box-shadow: 3px 3px 0 var(--line); margin: 0 auto; padding: 16px; text-align: center; font-size: 13px;
   }
   .att-row {
@@ -604,7 +604,7 @@
   }
   .att-badge {
     flex: none; font-family: var(--mono); font-size: 12px; font-weight: 600; padding: 3px 8px;
-    background: var(--panel); color: #4d4a42; border-radius: 4px;
+    background: var(--panel); color: var(--badge-text); border-radius: 4px;
   }
   .att-info { flex: 1; min-width: 0; }
   .att-name { font-size: 14px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -624,7 +624,7 @@
   /* aspect-ratio は常に markup 側のインラインスタイル（outputSize、選択中の device
      から算出）で指定するため、ここでは固定値を持たない。 */
   .pv-page {
-    position: relative; width: 100%; max-width: 220px; background: #fff;
+    position: relative; width: 100%; max-width: 220px; background: var(--paper);
     border: 1.5px solid var(--ink); border-radius: 4px; box-shadow: 3px 3px 0 var(--line);
     overflow: hidden; margin: 0 auto; display: flex; align-items: center; justify-content: center;
   }
@@ -634,7 +634,7 @@
     display: block; overflow-y: auto; overflow-x: hidden; align-items: unset; justify-content: unset;
     padding: 14px; box-sizing: border-box; text-align: left;
   }
-  .body-text { font-size: 12px; line-height: 1.8; color: #1c1a17; overflow-wrap: anywhere; }
+  .body-text { font-size: 12px; line-height: 1.8; color: var(--paper-ink); overflow-wrap: anywhere; }
   .body-text :global(p) { margin: 0 0 1em; }
   .body-text :global(p:last-child) { margin-bottom: 0; }
   .pv-pager { display: flex; align-items: center; gap: 14px; }

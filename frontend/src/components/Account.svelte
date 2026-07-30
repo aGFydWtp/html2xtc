@@ -224,7 +224,7 @@
 
 <style>
   .note { color: var(--muted); font-size: 14px; margin: 0; }
-  .warn-text { color: #8a6d1a; font-size: 14px; margin: 4px 0 0; }
+  .warn-text { color: var(--warning); font-size: 14px; margin: 4px 0 0; }
   .acc-section { margin-bottom: 26px; }
   .acc-section:last-child { margin-bottom: 0; }
   .acc-section h3 { margin: 0 0 10px; font-size: 15px; font-weight: 700; letter-spacing: .03em; }

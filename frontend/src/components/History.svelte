@@ -190,7 +190,7 @@
   ul.jobs .job-title.dim { color: var(--faint); }
   .src-badge {
     font-family: var(--mono); font-size: 11px; font-weight: 600; padding: 1px 6px;
-    background: var(--panel); color: #4d4a42; border-radius: 4px; margin-right: 6px;
+    background: var(--panel); color: var(--badge-text); border-radius: 4px; margin-right: 6px;
   }
   ul.jobs .date { font-family: var(--mono); font-size: 14px; color: var(--faint); }
   .more-btn {
@@ -201,7 +201,7 @@
   .job-menu {
     position: fixed; display: none; margin: 0; padding: 6px; min-width: 180px;
     border: 1px solid var(--line); border-radius: 4px; background: var(--card);
-    box-shadow: 0 4px 16px rgba(28, 26, 23, .16);
+    box-shadow: 0 4px 16px rgba(var(--ink-rgb), .16);
   }
   /* この 2 つのルールは分けたままにする: Popover API 非対応ブラウザでは、セレクタ
      リスト中の未知の :popover-open がリスト全体を無効にしてしまうため。 */

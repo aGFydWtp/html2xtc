@@ -238,8 +238,12 @@ export interface Messages {
   aozora_empty: string;
   aozora_fail: string;
   aozora_results: (n: number) => string;
+  aozora_results_more: (n: number) => string;
   aozora_selected: (n: number, max: number) => string;
   aozora_convert: (n: number) => string;
+  aozora_load_more: string;
+  aozora_loading_more: string;
+  aozora_load_more_failed: string;
 
   // --- 汎用OPDS基盤 / Memlane EPUB取り込み（OPDS/Memlane実装仕様書 §8, §23） -----
   // 内部の型・store・APIは汎用OPDSだが、初期リリースのUI文言はMemlane専用。
@@ -748,8 +752,12 @@ export const I18N: Record<Lang, Messages> = {
     aozora_empty: "該当する作品が見つかりませんでした。",
     aozora_fail: "検索に失敗しました。時間をおいてお試しください。",
     aozora_results: (n) => `検索結果 · ${n}件`,
+    aozora_results_more: (n) => `検索結果 · ${n}件以上`,
     aozora_selected: (n, max) => `${n} / ${max} 件選択中`,
     aozora_convert: (n) => n > 0 ? `${n} 件を変換する` : "変換する",
+    aozora_load_more: "もっと読み込む",
+    aozora_loading_more: "読み込み中…",
+    aozora_load_more_failed: "読み込みに失敗しました（タップで再試行）",
 
     memlane_open: "Memlaneから取り込み",
     memlane_connect_title: "Memlaneを接続",
@@ -1247,8 +1255,12 @@ export const I18N: Record<Lang, Messages> = {
     aozora_empty: "No matching works found.",
     aozora_fail: "Search failed. Please try again later.",
     aozora_results: (n) => `Results · ${n}`,
+    aozora_results_more: (n) => `Results · ${n}+`,
     aozora_selected: (n, max) => `${n} / ${max} selected`,
     aozora_convert: (n) => n > 0 ? `Convert ${n} selected` : "Convert",
+    aozora_load_more: "Load more",
+    aozora_loading_more: "Loading more…",
+    aozora_load_more_failed: "Failed to load more. Tap to retry.",
 
     memlane_open: "Import from Memlane",
     memlane_connect_title: "Connect Memlane",

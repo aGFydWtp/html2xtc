@@ -7,23 +7,43 @@
   let dlg = $state<HTMLDialogElement | null>(null);
   let input = $state<HTMLInputElement | null>(null);
   let listEl = $state<HTMLUListElement | null>(null);
-  let sentinel = $state<HTMLLIElement | null>(null);
 
-  // 末尾のセンチネルが見えたら次ページを読み込む。IntersectionObserver 未対応環境や
-  // reduced motion 環境のための「もっと読み込む」ボタンも別途用意する（キーボード操作の保険）。
-  // ダイアログが閉じている間・センチネルが無い間は観測しない。開閉・アンマウント時は
-  // 必ず disconnect する。
-  $effect(() => {
-    if (!aozora.open || !sentinel) return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((e) => e.isIntersecting)) void aozora.loadMore();
-      },
-      { root: listEl, rootMargin: "120px" },
-    );
-    observer.observe(sentinel);
-    return () => observer.disconnect();
-  });
+  // 末尾からこの距離（px）まで来たら次ページを読み込む。
+  const SCROLL_LOAD_THRESHOLD_PX = 200;
+
+  // .dlg-list の scroll イベントは高頻度で発火するため requestAnimationFrame で間引く。
+  // setTimeout によるデバウンスは使わない（末尾で止まったままだと発火しなくなるため）。
+  let scrollCheckScheduled = false;
+
+  // スクロール位置が末尾付近かどうかを判定し、必要なら次ページを読み込む。
+  // 本来は IntersectionObserver でセンチネルの可視化を検出する方式だったが、
+  // <dialog showModal()> の top layer 内では intersection が計算されず（本番実測で
+  // 確認済み）まったく発火しなかったため、スクロール位置ベースの判定に置き換えている。
+  // 「もっと読み込む」ボタン（キーボード操作の保険）は引き続き残す。
+  function checkScrollPosition(): void {
+    const list = listEl;
+    if (!list) return;
+    const remaining = list.scrollHeight - list.scrollTop - list.clientHeight;
+    if (remaining < SCROLL_LOAD_THRESHOLD_PX) void loadMoreAndRecheck();
+  }
+
+  // 次ページ読み込み後、まだ末尾付近にいるならもう一度判定する。追記でリストが
+  // 伸びても末尾付近にいる場合（.dlg-list が非常に高い場合など）に連続して読み込む。
+  // loadMore() 自体の二重発火防止・stale レスポンス対策は aozora.svelte.ts 側の
+  // moreState / hasNext / #seq ガードが同期的に効くのでここでは何もしない。
+  async function loadMoreAndRecheck(): Promise<void> {
+    await aozora.loadMore();
+    checkScrollPosition();
+  }
+
+  function onListScroll(): void {
+    if (scrollCheckScheduled) return;
+    scrollCheckScheduled = true;
+    requestAnimationFrame(() => {
+      scrollCheckScheduled = false;
+      checkScrollPosition();
+    });
+  }
 
   // open 状態とネイティブ <dialog> の開閉を同期する。開いた直後に検索ボックスへ
   // フォーカスする。閉じるは onclose → aozora.hide() で状態側へ反映する。
@@ -115,7 +135,7 @@
   </div>
 
   {#if aozora.listState === "results"}
-    <ul class="dlg-list" bind:this={listEl}>
+    <ul class="dlg-list" bind:this={listEl} onscroll={onListScroll}>
       {#each aozora.results as b (b.workId)}
         {@const on = aozora.isSelected(b.workId)}
         {@const full = !on && aozora.selectedCount >= AOZORA_MAX}
@@ -135,15 +155,15 @@
         </li>
       {/each}
       {#if aozora.hasNext || aozora.moreState === "fail"}
-        <li class="dlg-more" bind:this={sentinel}>
+        <li class="dlg-more">
           {#if aozora.moreState === "loading"}
             <div class="dlg-more-status">{t("aozora_loading_more")}</div>
           {:else if aozora.moreState === "fail"}
-            <button type="button" class="dlg-more-btn dlg-more-fail" onclick={() => void aozora.loadMore()}>
+            <button type="button" class="dlg-more-btn dlg-more-fail" onclick={() => void loadMoreAndRecheck()}>
               {t("aozora_load_more_failed")}
             </button>
           {:else}
-            <button type="button" class="dlg-more-btn" onclick={() => void aozora.loadMore()}>
+            <button type="button" class="dlg-more-btn" onclick={() => void loadMoreAndRecheck()}>
               {t("aozora_load_more")}
             </button>
           {/if}

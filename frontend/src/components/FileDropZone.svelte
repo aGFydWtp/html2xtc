@@ -45,7 +45,7 @@
   }
 </script>
 
-<!-- svelte-ignore a11y_no_static_element_interactions -- ドラッグ&ドロップは補助手段（モバイルでは使えない）。同じ操作は下のファイル選択リンクからも可能。 -->
+<!-- svelte-ignore a11y_no_static_element_interactions -- ドラッグ&ドロップは補助手段（モバイルでは使えない）。同じ操作は下のリンク風ボタンからも可能。 -->
 <div
   class="zone"
   class:drag={dragActive}

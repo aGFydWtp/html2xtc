@@ -204,8 +204,8 @@ export function applyTextPreset(options: TextConvertOptions, preset: TextPresetI
 // --- フォント候補（ユーザー指示: 自由入力ではなく候補選択式） -----------------------
 // バックエンド（src/fonts.ts）で 400/700 デュアルウェイト対応済みの BIZ UD 4書体
 // （UDGothic / UDPGothic / UDMincho / UDPMincho。P付き=プロポーショナル、Pなし=等幅。
-// ゴシック・明朝それぞれで P 有無を選べる）と、日本語書籍向けの定番 Google Fonts を
-// 候補にする。
+// ゴシック・明朝それぞれで P 有無を選べる）と、日本語書籍向けの定番 Google Fonts、
+// 加えて英語圏で定番の Google Fonts を候補にする。
 export interface FontCandidate {
   family: string;
   label: string;
@@ -220,6 +220,10 @@ export const FONT_CANDIDATES: readonly FontCandidate[] = [
   { family: "Noto Serif JP", label: "Noto Serif JP" },
   { family: "Zen Maru Gothic", label: "Zen Maru Gothic" },
   { family: "Shippori Mincho", label: "Shippori Mincho" },
+  { family: "Literata", label: "Literata" },
+  { family: "Merriweather", label: "Merriweather" },
+  { family: "EB Garamond", label: "EB Garamond" },
+  { family: "Inter", label: "Inter" },
 ];
 
 // バックエンド（src/fonts.ts の sanitizeFontFamily）と同じ許容規則。frontend からは

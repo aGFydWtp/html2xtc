@@ -258,7 +258,7 @@
     padding: 8px 22px 4px; font-family: var(--mono); font-size: 12px; color: var(--muted);
     letter-spacing: .12em; flex: none;
   }
-  .dlg-list { list-style: none; margin: 0; padding: 0 22px; overflow-y: auto; flex: 1; min-height: 100px; }
+  .dlg-list { list-style: none; margin: 0; padding: 0 22px; overflow-y: auto; flex: 1; }
   .dlg-list-status { display: block; }
   .dlg-status { padding: 16px 2px; font-size: 14px; color: var(--muted); }
   .dlg-summary-list { list-style: none; margin: 0; padding: 0; }

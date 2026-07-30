@@ -325,7 +325,12 @@ const I18N = {
   },
 };
 const LANG_KEY = "xtc-lang";
-let lang = localStorage.getItem(LANG_KEY) === "en" ? "en" : "ja";
+// Same rule as index.html: the stored choice wins; otherwise fall back to the
+// browser's primary language ("ja*" => Japanese, anything else => English).
+const savedLang = localStorage.getItem(LANG_KEY);
+let lang = savedLang === "ja" || savedLang === "en"
+  ? savedLang
+  : navigator.language.toLowerCase().startsWith("ja") ? "ja" : "en";
 const t = (key) => I18N[lang][key];
 const $ = (id) => document.getElementById(id);
 

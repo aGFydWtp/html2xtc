@@ -1537,8 +1537,17 @@ export const I18N: Record<Lang, Messages> = {
 
 const LANG_KEY = "xtc-lang";
 
+// ユーザーが選んだ言語（localStorage）を最優先し、未選択のときだけブラウザの
+// 第一言語で決める。"ja" 系なら日本語、それ以外は英語。
+// about.html（静的ページ）にも同じ判定を複製してある。
+function initialLang(): Lang {
+  const saved = localStorage.getItem(LANG_KEY);
+  if (saved === "ja" || saved === "en") return saved;
+  return navigator.language.toLowerCase().startsWith("ja") ? "ja" : "en";
+}
+
 const state = $state<{ lang: Lang }>({
-  lang: localStorage.getItem(LANG_KEY) === "en" ? "en" : "ja",
+  lang: initialLang(),
 });
 document.documentElement.lang = state.lang;
 

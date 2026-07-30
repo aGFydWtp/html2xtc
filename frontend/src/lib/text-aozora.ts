@@ -11,7 +11,9 @@ import {
   type AozoraDetectionResult,
   type AozoraDiagnostic,
 } from "@html2xtc/aozora-text";
-import { applyAozoraPresetIfUntouched } from "./text-options";
+// type-only import: text-options.ts と同じ分離方針。
+import type { Lang } from "./i18n.svelte";
+import { applyAozoraPresetIfUntouched, defaultTextOptionsForLang } from "./text-options";
 import { applyTextPreset, isMarkdownFileName, type TextConvertOptions, type TextInputFormat } from "./text-options";
 import { normalizeText } from "./text-normalize";
 
@@ -51,6 +53,9 @@ export function resolveAutoInputFormat(
  * 依存しない）。`fileName`/`fileType` はMarkdown拡張子・MIME判定用（§5.4）。
  * markdown にはaozoraのような専用プリセットは仕様上不要なため、plainと同じく
  * "standard" プリセットを適用する。
+ *
+ * `lang` は「未タッチ」の基準（baseline）とstandardプリセットのfontを言語別に
+ * するために必要（呼び出し元 TextInputPanel.svelte がマウント時に一度読んだ値）。
  */
 export function computeInitialTextOptions(
   options: TextConvertOptions,
@@ -58,6 +63,7 @@ export function computeInitialTextOptions(
   manuallySet: boolean,
   fileName: string,
   fileType: string,
+  lang: Lang,
 ): TextConvertOptions {
   const format = resolveAutoInputFormat(
     options.inputFormat,
@@ -68,8 +74,8 @@ export function computeInitialTextOptions(
   );
   const withFormat = format === options.inputFormat ? options : { ...options, inputFormat: format };
   return withFormat.inputFormat === "aozora"
-    ? applyAozoraPresetIfUntouched(withFormat)
-    : applyTextPreset(withFormat, "standard");
+    ? applyAozoraPresetIfUntouched(withFormat, defaultTextOptionsForLang(lang))
+    : applyTextPreset(withFormat, "standard", lang);
 }
 
 export interface InitialTextState {
@@ -101,8 +107,9 @@ export function computeInitialTextState(
   autoDerivedTitle: string,
   fileName: string,
   fileType: string,
+  lang: Lang,
 ): InitialTextState {
-  const initialOptions = computeInitialTextOptions(options, decodedText, manuallySet, fileName, fileType);
+  const initialOptions = computeInitialTextOptions(options, decodedText, manuallySet, fileName, fileType, lang);
   const normalizedText = normalizeText(decodedText, {
     maxConsecutiveBlankLines: initialOptions.maxConsecutiveBlankLines,
     preserveSpaces: initialOptions.preserveSpaces,

@@ -21,13 +21,22 @@
   --link-hover: #555;
   --badge-bg: #e8e3d6;
   --badge-text: #4d4a42;
+  /* 端末出力プレビュー（紙面）専用の色。紙は常に白・インクは常に黒という
+     現実の紙面を模したものでテーマ色ではないため、:root[data-device="x4"]
+     では上書きしない。PdfPreview.svelte / lib/pdf-preview.ts の canvas
+     fillStyle は JS から CSS 変数を参照できないため #fff を直書きしているが、
+     この --paper と同じ色である（変更時は両方を揃えること）。 */
+  --paper: #fff;
+  --paper-ink: #1c1a17;
   --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 /* X4 選択時の淡いパープルテーマ。targetDeviceStore.device を App.svelte が
    document.documentElement の data-device に反映する（lib/targetDevice.svelte.ts）。
    各色相はクリーム版から色相のみを紫寄り（H≈258）へ回転し、明度・彩度は
    クリーム版と同等のトーンを保つ（--muted 等の彩度のみ視認性のため少し強める）。
-   --ink-rgb / --bg-rgb を書き忘れると影・backdrop がクリームのまま残るので注意。 */
+   --ink-rgb / --bg-rgb を書き忘れると影・backdrop がクリームのまま残るので注意。
+   --error / --warning（意味色）と --link-hover（無彩色）は色相を回さず据え置く
+   （意図的。漏れではない）。 */
 :root[data-device="x4"] {
   --bg: #ede9f5;
   --bg-rgb: 237, 233, 245;
@@ -42,6 +51,7 @@
   --line-strong: #c2bcd0;
   --ink: #18171c;
   --ink-rgb: 24, 23, 28;
+  --ink-text: #ede9f5;
   --badge-bg: #dbd5e9;
   --badge-text: #45414e;
 }

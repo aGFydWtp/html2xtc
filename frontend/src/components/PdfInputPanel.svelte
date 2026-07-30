@@ -165,7 +165,7 @@
      から算出）で指定するため、ここでは固定値を持たない。 */
   .preview-placeholder {
     width: 100%; max-width: 220px; display: flex; align-items: center;
-    justify-content: center; background: #fff; border: 1.5px solid var(--ink); border-radius: 4px;
+    justify-content: center; background: var(--paper); border: 1.5px solid var(--ink); border-radius: 4px;
     box-shadow: 3px 3px 0 var(--line); margin: 0 auto; padding: 16px; text-align: center; font-size: 13px;
   }
   .att-row {

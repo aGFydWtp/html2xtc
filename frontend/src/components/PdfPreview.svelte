@@ -110,6 +110,8 @@
     target.height = heightPx;
     const ctx = target.getContext("2d");
     if (!ctx) return;
+    // 紙面の色（app.css の --paper と同じ #fff）。canvas からは CSS 変数を
+    // 参照できないため直書きしている。変更時は両方を揃えること。
     ctx.fillStyle = "#fff";
     ctx.fillRect(0, 0, widthPx, heightPx);
     const scale = Math.min(widthPx / source.width, heightPx / source.height);
@@ -167,7 +169,7 @@
   /* aspect-ratio は常に markup 側のインラインスタイル（outputSize、選択中の device
      から算出）で指定するため、ここでは固定値を持たない — 136行目/140行目参照。 */
   .pv-page {
-    position: relative; width: 100%; max-width: 220px; background: #fff;
+    position: relative; width: 100%; max-width: 220px; background: var(--paper);
     border: 1.5px solid var(--ink); border-radius: 4px; box-shadow: 3px 3px 0 var(--line);
     overflow: hidden;
   }

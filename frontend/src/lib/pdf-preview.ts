@@ -144,6 +144,8 @@ export function placeInFrame(
   const { widthPx, heightPx } = outputSizeForDevice(device);
   const out = newCanvas(widthPx, heightPx);
   const octx = ctx2d(out);
+  // 紙面の色（app.css の --paper と同じ #fff）。canvas からは CSS 変数を
+  // 参照できないため直書きしている。変更時は両方を揃えること。
   octx.fillStyle = "#fff";
   octx.fillRect(0, 0, widthPx, heightPx);
 

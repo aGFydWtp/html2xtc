@@ -173,8 +173,8 @@
     background: var(--bg); color: var(--text);
     width: min(480px, calc(100vw - 32px));
     /* iOS Safari ではツールバー分を除いた dvh を優先（非対応環境は vh にフォールバック） */
-    max-height: calc(100vh - 96px);
-    max-height: calc(100dvh - 96px);
+    height: min(640px, calc(100vh - 96px));
+    height: min(640px, calc(100dvh - 96px));
     box-shadow: 4px 4px 0 rgba(var(--ink-rgb), .35);
   }
   dialog.aozora-dialog[open] { display: flex; flex-direction: column; }
@@ -213,7 +213,7 @@
     padding: 10px 22px 4px; font-family: var(--mono); font-size: 12px; color: var(--muted);
     letter-spacing: .12em; flex: none;
   }
-  .dlg-list { list-style: none; margin: 0; padding: 0 22px; overflow-y: auto; flex: 1; min-height: 120px; }
+  .dlg-list { list-style: none; margin: 0; padding: 0 22px; overflow-y: auto; flex: 1; }
   .dlg-list li { border-top: 1px solid var(--line); }
   .dlg-list li:last-child { border-bottom: 1px solid var(--line); }
   .dlg-list label { display: flex; align-items: center; gap: 12px; padding: 11px 2px; cursor: pointer; }
@@ -225,7 +225,7 @@
   .dlg-book { flex: 1; min-width: 0; }
   .dlg-book-title { font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .dlg-list li.on .dlg-book-title { font-weight: 700; }
-  .dlg-book-author { font-family: var(--mono); font-size: 12px; color: var(--faint); }
+  .dlg-book-author { font-family: var(--mono); font-size: 12px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .dlg-more { display: flex; justify-content: center; }
   .dlg-more-status {
     padding: 14px 2px; font-family: var(--mono); font-size: 12px; color: var(--muted);

@@ -2,6 +2,8 @@
 // EPUB 変換オプション（実装仕様書 §4.1.3-4.1.5）と、アップロード API ヘッダー用の base64url エンコード。
 
 import type { Device } from "./device-tag";
+// type-only import: 既存の text-options.ts と同じ分離方針。
+import type { Lang } from "./i18n.svelte";
 import { encodeBase64UrlUtf8 } from "./pdf-options";
 import { isValidFontFamily } from "./text-options";
 
@@ -37,6 +39,14 @@ export const DEFAULT_EPUB_OPTIONS: EpubConvertOptions = {
   includeTableOfContents: false,
   device: "x3",
 };
+
+// UI言語ごとの既定フォント（フロントエンドのみの決定。text-options.ts の
+// defaultFontForLang と同じフォールバック構造 — "ja" のときだけ日本語UI向けの
+// 書体、それ以外は英語圏の書体）。EPUBの日本語既定は TXT と異なり BIZ UDMincho
+// のため、text-options.ts の defaultFontForLang とは独立した関数にしてある。
+export function defaultEpubFontForLang(lang: Lang): string {
+  return lang === "ja" ? DEFAULT_EPUB_OPTIONS.font : "Literata";
+}
 
 // 実装仕様書 §4.1.5 の範囲
 export const FONT_SIZE_PX_MIN = 12;

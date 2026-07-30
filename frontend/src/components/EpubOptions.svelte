@@ -1,11 +1,14 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import { FONT_SIZE_PX_MAX, FONT_SIZE_PX_MIN, MARGIN_PX_MAX, MARGIN_PX_MIN, type EpubConvertOptions } from "../lib/epub-options";
-  import { t } from "../lib/i18n.svelte";
-  import { FONT_CANDIDATES } from "../lib/text-options";
+  import { getLang, t } from "../lib/i18n.svelte";
+  import { fontCandidatesForLang } from "../lib/text-options";
   import FontSelect from "./FontSelect.svelte";
 
   let { options = $bindable() }: { options: EpubConvertOptions } = $props();
+
+  // 候補の並び順はUI言語に追従してよい（TextOptions.svelte と同じ理由）。
+  const fontCandidates = $derived(fontCandidatesForLang(getLang()));
 </script>
 
 <div class="epub-options">
@@ -21,7 +24,7 @@
 
     <div class="field">
       <label class="opt-label" for="epub-font">{t("epub_font_label")}</label>
-      <FontSelect id="epub-font" candidates={FONT_CANDIDATES} bind:value={options.font} />
+      <FontSelect id="epub-font" candidates={fontCandidates} bind:value={options.font} />
     </div>
   </div>
 

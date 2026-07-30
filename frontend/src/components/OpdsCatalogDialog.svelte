@@ -6,8 +6,8 @@
   // (opdsStore.catalogStep) は store 側で持つ（ダイアログ開閉状態など、既存の
   // カタログダイアログ関連 state と同じ置き場所に揃えている）。
   import { registerCreatedJob } from "../lib/convert.svelte";
-  import { DEFAULT_EPUB_OPTIONS, isValidEpubOptions, type EpubConvertOptions } from "../lib/epub-options";
-  import { t } from "../lib/i18n.svelte";
+  import { DEFAULT_EPUB_OPTIONS, defaultEpubFontForLang, isValidEpubOptions, type EpubConvertOptions } from "../lib/epub-options";
+  import { getLang, t } from "../lib/i18n.svelte";
   import { opdsStore } from "../lib/opds.svelte";
   import { OPDS_SELECTION_MAX, type OpdsPublicationEntry } from "../lib/opds-entry";
   import { targetDeviceStore } from "../lib/targetDevice.svelte";
@@ -16,7 +16,16 @@
 
   let dlg = $state<HTMLDialogElement | null>(null);
   let searchText = $state("");
-  let epubOptions = $state<EpubConvertOptions>({ ...DEFAULT_EPUB_OPTIONS, device: targetDeviceStore.device });
+  // font（UI言語ごとの既定値）はEpubInputPanel.svelteと同じ扱い: マウント時に
+  // 一度だけ getLang() を読む。このダイアログはApp.svelteで常時マウントされる
+  // シングルトンのため、deviceのように開くたびに追従はさせない（フォームを
+  // 開いてからUI言語を切り替えても、次にダイアログを開き直すまでは既存の
+  // 選択のまま — 他のフォーム項目と同じ扱い）。
+  let epubOptions = $state<EpubConvertOptions>({
+    ...DEFAULT_EPUB_OPTIONS,
+    font: defaultEpubFontForLang(getLang()),
+    device: targetDeviceStore.device,
+  });
 
   // このダイアログは App.svelte で常時マウントされるシングルトンのため、
   // モジュール初期化時（アプリ起動時）の $state 初期値だけでは device が

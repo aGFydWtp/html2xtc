@@ -1,9 +1,9 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
-  import { t } from "../lib/i18n.svelte";
+  import { getLang, t } from "../lib/i18n.svelte";
   import type { EncodingDetectionResult } from "../lib/text-decode";
   import {
-    FONT_CANDIDATES,
+    fontCandidatesForLang,
     isJoinHardWrappedLinesEditable,
     isMaxConsecutiveBlankLinesEditable,
     isPreserveSpacesEditable,
@@ -18,6 +18,7 @@
     detectionResult,
     hasEncodingError = false,
     onInputFormatChange,
+    baseline,
   }: {
     options: TextConvertOptions;
     detectionResult: EncodingDetectionResult | null;
@@ -26,7 +27,16 @@
      * 残す必要があるため、options.inputFormat への直接代入ではなくコールバック
      * 経由にする（仕様 §15.2「ユーザーが一度手動変更した後は再判定で上書きしない」）。 */
     onInputFormatChange: (next: TextInputFormat) => void;
+    /** 縦書き切替時の「未タッチ」判定（setTextLayout）の比較基準。UI言語ごとに
+     * fontの既定値が変わるため、親（TextInputPanel.svelte）がマウント時に
+     * 決めた値をそのまま渡す（このコンポーネント自身では作らない）。 */
+    baseline: TextConvertOptions;
   } = $props();
+
+  // 候補の並び順はUI言語に追従してよい（既定値と違い、こちらは表示専用で
+  // 「未タッチ」判定に影響しないため）。getLang() は言語切替でstateが更新される
+  // ため、$derivedにすることで言語切替に自然に追従する。
+  const fontCandidates = $derived(fontCandidatesForLang(getLang()));
 
   const joinLinesEditable = $derived(isJoinHardWrappedLinesEditable(options.inputFormat));
   const maxBlankLinesEditable = $derived(isMaxConsecutiveBlankLinesEditable(options.inputFormat));
@@ -94,14 +104,14 @@
           <div class="field">
             <div class="opt-label">{t("text_layout_label")}</div>
             <div class="seg">
-              <button type="button" aria-pressed={options.layout === "horizontal"} onclick={() => (options = setTextLayout(options, "horizontal"))}>{t("text_layout_horizontal")}</button>
-              <button type="button" aria-pressed={options.layout === "vertical"} onclick={() => (options = setTextLayout(options, "vertical"))}>{t("text_layout_vertical")}</button>
+              <button type="button" aria-pressed={options.layout === "horizontal"} onclick={() => (options = setTextLayout(options, "horizontal", baseline))}>{t("text_layout_horizontal")}</button>
+              <button type="button" aria-pressed={options.layout === "vertical"} onclick={() => (options = setTextLayout(options, "vertical", baseline))}>{t("text_layout_vertical")}</button>
             </div>
           </div>
 
           <div class="field">
             <label class="opt-label" for="text-font">{t("text_font_label")}</label>
-            <FontSelect id="text-font" candidates={FONT_CANDIDATES} bind:value={options.font} />
+            <FontSelect id="text-font" candidates={fontCandidates} bind:value={options.font} />
           </div>
         </div>
 

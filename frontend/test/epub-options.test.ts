@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_EPUB_OPTIONS,
+  defaultEpubFontForLang,
   encodeEpubOptionsHeader,
   type EpubConvertOptions,
   FONT_SIZE_PX_MAX,
@@ -68,6 +69,16 @@ describe("validateEpubOptions", () => {
     expect(validateEpubOptions(withOverrides({ includeCover: 1 })).some((e) => e.field === "includeCover")).toBe(true);
     // @ts-expect-error intentionally invalid for the test
     expect(validateEpubOptions(withOverrides({ includeTableOfContents: null })).some((e) => e.field === "includeTableOfContents")).toBe(true);
+  });
+});
+
+describe("defaultEpubFontForLang (frontend-only, per UI language)", () => {
+  it("ja stays on the existing EPUB default font (BIZ UDMincho)", () => {
+    expect(defaultEpubFontForLang("ja")).toBe("BIZ UDMincho");
+  });
+
+  it("en (and any non-ja language) falls back to Literata", () => {
+    expect(defaultEpubFontForLang("en")).toBe("Literata");
   });
 });
 

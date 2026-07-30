@@ -25,6 +25,7 @@
   import { refreshStale } from "./lib/convert.svelte";
   import { t } from "./lib/i18n.svelte";
   import { publicConfigStore } from "./lib/publicConfig.svelte";
+  import { targetDeviceStore } from "./lib/targetDevice.svelte";
 
   type Tab = "convert" | "library" | "devices" | "flasher";
 
@@ -64,6 +65,13 @@
       tab = "convert";
       history.replaceState(null, "", TAB_TO_PATH.convert + location.search + location.hash);
     }
+  });
+
+  // 変換先機種（X3/X4）に応じたテーマ切り替え（app.css の :root[data-device="x4"]）。
+  // 初期表示（?device=x4 で直接来た場合を含む）・トグル操作の両方で反映されるよう
+  // $effect でリアクティブに同期する。
+  $effect(() => {
+    document.documentElement.dataset.device = targetDeviceStore.device;
   });
 
   function selectTab(next: Tab) {

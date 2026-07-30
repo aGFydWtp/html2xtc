@@ -23,6 +23,28 @@
   --badge-text: #4d4a42;
   --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 }
+/* X4 選択時の淡いパープルテーマ。targetDeviceStore.device を App.svelte が
+   document.documentElement の data-device に反映する（lib/targetDevice.svelte.ts）。
+   各色相はクリーム版から色相のみを紫寄り（H≈258）へ回転し、明度・彩度は
+   クリーム版と同等のトーンを保つ（--muted 等の彩度のみ視認性のため少し強める）。
+   --ink-rgb / --bg-rgb を書き忘れると影・backdrop がクリームのまま残るので注意。 */
+:root[data-device="x4"] {
+  --bg: #ede9f5;
+  --bg-rgb: 237, 233, 245;
+  --card: #faf9fd;
+  --panel: #e1dced;
+  --text: #18171c;
+  --muted: #7f7a8b;
+  --muted2: #605b6c;
+  --faint: #958fa4;
+  --disabled: #b5afc6;
+  --line: #cec6df;
+  --line-strong: #c2bcd0;
+  --ink: #18171c;
+  --ink-rgb: 24, 23, 28;
+  --badge-bg: #dbd5e9;
+  --badge-text: #45414e;
+}
 * { box-sizing: border-box; }
 body {
   margin: 0;

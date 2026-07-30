@@ -5,7 +5,9 @@ import { registerAuthRoutes } from "./auth/routes";
 import {
   clampBookSearchLimit,
   normalizeBookSearchQuery,
+  parseBookSearchPage,
   searchBooks,
+  trimBookSearchPage,
 } from "./catalog-db";
 import { convertInContainer } from "./container";
 import { cleanupAppDb } from "./db/cleanup";
@@ -315,29 +317,46 @@ function methodNotAllowed(allow: string): Response {
 const BOOK_SEARCH_CACHE_CONTROL = "public, max-age=300";
 
 /**
- * GET /api/books?q=<query>&limit=<n> — substring search over the active Aozora
- * catalogue generation. q is normalized with normalizeCatalogText; a missing,
- * blank, or punctuation-only q returns 200 {books:[]} without touching D1.
- * limit defaults to 50, capped at 50 (invalid values fall back to the
- * default). Rows without HTML are excluded, so every hit has a non-empty
- * htmlUrl. Responses carry a 5-minute cache.
+ * GET /api/books?q=<query>&page=<n>&limit=<n> — substring search over the
+ * active Aozora catalogue generation, page/limit paginated (1-始まり, same
+ * convention as src/opds/feed.ts's parsePage). q is normalized with
+ * normalizeCatalogText; a missing, blank, or punctuation-only q returns 200
+ * {books:[],page,limit,hasNext:false} without touching D1. An absent page
+ * defaults to 1; anything that isn't a plain positive integer 400s with the
+ * legacy {error:"<string>"} shape this route already uses (not the newer
+ * Router's {error:{code,message}}). limit falls back to
+ * DEFAULT_BOOK_SEARCH_LIMIT and is clamped to MAX_BOOK_SEARCH_LIMIT
+ * (clampBookSearchLimit, src/catalog-db.ts). hasNext is derived by fetching
+ * one row past the page (trimBookSearchPage) rather than a separate
+ * COUNT(*), which would double the cost of the LIKE full-table scan. Rows
+ * without HTML are excluded, so every hit has a non-empty htmlUrl. Responses
+ * carry a 5-minute cache.
  */
 async function handleBookSearch(
   request: Request,
   env: Env,
 ): Promise<Response> {
   const { searchParams } = new URL(request.url);
-  const query = normalizeBookSearchQuery(searchParams.get("q"));
-  if (query === "") {
+  const page = parseBookSearchPage(searchParams.get("page"));
+  if (page === null) {
     return Response.json(
-      { books: [] },
-      { headers: { "Cache-Control": BOOK_SEARCH_CACHE_CONTROL } },
+      { error: "page must be a positive integer" },
+      { status: 400 },
     );
   }
   const limit = clampBookSearchLimit(searchParams.get("limit"));
-  const books = await searchBooks(env.AOZORA_DB, query, limit);
+  const query = normalizeBookSearchQuery(searchParams.get("q"));
+  if (query === "") {
+    return Response.json(
+      { books: [], page, limit, hasNext: false },
+      { headers: { "Cache-Control": BOOK_SEARCH_CACHE_CONTROL } },
+    );
+  }
+  const offset = (page - 1) * limit;
+  const rows = await searchBooks(env.AOZORA_DB, query, { limit: limit + 1, offset });
+  const { books, hasNext } = trimBookSearchPage(rows, limit);
   return Response.json(
-    { books },
+    { books, page, limit, hasNext },
     { headers: { "Cache-Control": BOOK_SEARCH_CACHE_CONTROL } },
   );
 }

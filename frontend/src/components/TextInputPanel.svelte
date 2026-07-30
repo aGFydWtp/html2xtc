@@ -11,7 +11,7 @@
   import { MARKDOWN_DOCUMENT_CSS } from "@html2xtc/markdown-text";
   import { submitText, type TextUploadHandle } from "../lib/convert.svelte";
   import { outputSizeForDevice } from "../lib/device-profiles";
-  import { t } from "../lib/i18n.svelte";
+  import { getLang, t } from "../lib/i18n.svelte";
   import { targetDeviceStore } from "../lib/targetDevice.svelte";
   import {
     computeInitialTextState,
@@ -25,7 +25,7 @@
   import {
     applyAozoraPresetIfUntouched,
     applyTextPreset,
-    DEFAULT_TEXT_OPTIONS,
+    defaultTextOptionsForLang,
     isMarkdownFileName,
     isValidTextOptions,
     type TextConvertOptions,
@@ -55,11 +55,16 @@
 
   // device の初期値はトグル（targetDeviceStore、ConvertForm.svelte 上部）の
   // 現在値を反映する。以後はこのパネル内では変わらない — トグル変更はパネルが
-  // 再生成される次のファイル選択時から効く。
+  // 再生成される次のファイル選択時から効く。lang（UI言語）も同じ扱い: マウント時に
+  // 一度だけ読み、以後はこのパネル内では追従させない（言語切替はパネルが再生成
+  // される次のファイル選択時から効く）。baseline は「未タッチ」判定
+  // （isUntouchedFromDefault等）の比較基準で、初期optionsと同じ値を使う。
+  const lang = getLang();
+  const baseline = defaultTextOptionsForLang(lang);
   let options = $state<TextConvertOptions>({
-    ...DEFAULT_TEXT_OPTIONS,
+    ...baseline,
     device: targetDeviceStore.device,
-    margins: { ...DEFAULT_TEXT_OPTIONS.margins },
+    margins: { ...baseline.margins },
   });
 
   // 選択中の変換先機種（options.device）の出力解像度。プレビュー枠の
@@ -101,7 +106,7 @@
     // §15.3: aozora へ切り替えた瞬間だけ、個別設定が初期値のままの場合に限り
     // 縦書き・BIZ UDMincho 等のプリセットを適用する（plain へ戻す側には
     // 対応する既定復帰の指定が無いため何もしない）。
-    options = next === "aozora" ? applyAozoraPresetIfUntouched(switched) : switched;
+    options = next === "aozora" ? applyAozoraPresetIfUntouched(switched, baseline) : switched;
   }
 
   // 青空文庫ヘッダ（表題・著者）の自動入力（仕様 §15.4）。normalizedText
@@ -332,7 +337,7 @@
   }
 
   function applyPreset(preset: TextPresetId): void {
-    options = applyTextPreset(options, preset);
+    options = applyTextPreset(options, preset, lang);
     // プリセットが変えるのはlayout/font/fontSizePx/lineHeightのみでnormalizedTextには
     // 影響しないため、上のoptions代入は同期的に反映済み。直後に呼ぶ
     // generateX3Preview() は新しいoptionsを読める。
@@ -450,7 +455,7 @@
         clearTimeout(normalizeTimer);
         normalizeTimer = undefined;
       }
-      const initial = computeInitialTextState(options, decodedText, inputFormatManuallySet, autoTitle, current.name, current.type);
+      const initial = computeInitialTextState(options, decodedText, inputFormatManuallySet, autoTitle, current.name, current.type, lang);
       options = initial.options;
       normalizedText = initial.normalizedText;
       previewMode = "x3";
@@ -573,7 +578,7 @@
   {/if}
 
   {#if status !== "loading"}
-    <TextOptions bind:options {detectionResult} {hasEncodingError} {onInputFormatChange} />
+    <TextOptions bind:options {detectionResult} {hasEncodingError} {onInputFormatChange} {baseline} />
   {/if}
 
   {#if uploading}

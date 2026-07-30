@@ -24,7 +24,7 @@ export type AozoraListState = "start" | "searching" | "empty" | "fail" | "result
 export type AozoraMoreState = "idle" | "loading" | "fail";
 
 export const AOZORA_MAX = 5; // ダイアログで選択できる作品数の上限（検索結果件数の上限ではない）
-export const AOZORA_FETCH_LIMIT = 100; // 1リクエストで取得する件数。サーバー上限（1..100）に合わせる
+export const AOZORA_FETCH_LIMIT = 100; // 1リクエストで取得する件数。サーバー側が上限を超える値を黙ってクランプするため、上限を超えても機能は壊れない
 const DEBOUNCE_MS = 350;
 
 interface BooksResponse {

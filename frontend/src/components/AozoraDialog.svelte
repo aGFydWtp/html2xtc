@@ -213,7 +213,7 @@
     padding: 10px 22px 4px; font-family: var(--mono); font-size: 12px; color: var(--muted);
     letter-spacing: .12em; flex: none;
   }
-  .dlg-list { list-style: none; margin: 0; padding: 0 22px; overflow-y: auto; flex: 1; min-height: 120px; }
+  .dlg-list { list-style: none; margin: 0; padding: 0 22px; overflow-y: auto; flex: 1; }
   .dlg-list li { border-top: 1px solid var(--line); }
   .dlg-list li:last-child { border-bottom: 1px solid var(--line); }
   .dlg-list label { display: flex; align-items: center; gap: 12px; padding: 11px 2px; cursor: pointer; }

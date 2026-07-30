@@ -43,7 +43,7 @@ export interface Messages {
   pdf_too_large: string;
 
   // --- PDFアップロード入力（実装仕様書 §7, §14） -----------------------------
-  pdf_or_drop: string;
+  pdf_pick_prefix: string;
   pdf_pick_file: string;
   pdf_drop_active: string;
   pdf_file_label: string;
@@ -420,7 +420,6 @@ export interface Messages {
   library_add_to_device_none: string;
   library_add_to_device_done: string;
   library_add_to_device_failed: string;
-  library_add_to_device_hint: string;
   library_author_none: string;
   library_save: string;
   library_saving: string;
@@ -536,7 +535,7 @@ export interface Messages {
 export const I18N: Record<Lang, Messages> = {
   ja: {
     brand: "XTC 変換",
-    intro: "公開されているWebサイトやコンテンツを、電子ペーパー端末 Xteink 用の XTC ファイルに変換します。",
+    intro: "公開されているWebサイトやコンテンツを、Xteink 用の XTC ファイルに変換します。",
     device_toggle_label: "変換先機種",
     convert: "変換する",
     agree_before: "「変換する」を押すことで、",
@@ -567,8 +566,8 @@ export const I18N: Record<Lang, Messages> = {
     http_error: (s) => `エラー (HTTP ${s})`,
     pdf_too_large: "生成された PDF がサイズ上限を超えました。分割された章のページなど、より短いページで試してください。",
 
-    pdf_or_drop: "または PDF / TXT / EPUB をここにドラッグ＆ドロップ ／ ",
-    pdf_pick_file: "ファイルを選択",
+    pdf_pick_prefix: "または",
+    pdf_pick_file: "PDF / TXT / EPUB ファイルを選択",
     pdf_drop_active: "ここにドロップ",
     pdf_file_label: "ファイル",
     pdf_size_label: "サイズ",
@@ -924,7 +923,6 @@ export const I18N: Record<Lang, Messages> = {
     library_add_to_device_none: "端末の配信リストに追加（端末未登録）",
     library_add_to_device_done: "端末の配信リストに追加しました。",
     library_add_to_device_failed: "端末の配信リストへの追加に失敗しました。",
-    library_add_to_device_hint: "追加したファイルは端末の OPDS ライブラリに表示されます。端末側でダウンロードしてください。",
     library_author_none: "著者（任意）",
     library_save: "ライブラリへ保存",
     library_saving: "保存中…",
@@ -1036,7 +1034,7 @@ export const I18N: Record<Lang, Messages> = {
   },
   en: {
     brand: "XTC Converter",
-    intro: "Converts publicly available websites and content into XTC files for the Xteink e-paper reader.",
+    intro: "Converts publicly available websites and content into XTC files for Xteink.",
     device_toggle_label: "Target device",
     convert: "Convert",
     agree_before: "By pressing “Convert”, you agree to the ",
@@ -1067,8 +1065,8 @@ export const I18N: Record<Lang, Messages> = {
     http_error: (s) => `Error (HTTP ${s})`,
     pdf_too_large: "The rendered PDF exceeds the size limit. Try a shorter page, such as a single chapter instead of a whole book.",
 
-    pdf_or_drop: "or drag & drop a PDF, TXT, or EPUB file here / ",
-    pdf_pick_file: "Choose file",
+    pdf_pick_prefix: "or",
+    pdf_pick_file: "choose a PDF, TXT, or EPUB file",
     pdf_drop_active: "Drop here",
     pdf_file_label: "File",
     pdf_size_label: "Size",
@@ -1426,7 +1424,6 @@ export const I18N: Record<Lang, Messages> = {
     library_add_to_device_none: "Add to device catalog (no devices)",
     library_add_to_device_done: "Added to device catalog.",
     library_add_to_device_failed: "Failed to add to the device catalog.",
-    library_add_to_device_hint: "Added files appear in the device's OPDS library. Download them from the device.",
     library_author_none: "Author (optional)",
     library_save: "Save to library",
     library_saving: "Saving…",

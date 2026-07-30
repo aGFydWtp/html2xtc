@@ -45,7 +45,7 @@
   }
 </script>
 
-<!-- svelte-ignore a11y_no_static_element_interactions -- ドラッグ&ドロップは補助手段。同じ操作は下の「ファイルを選択」ボタンからも可能。 -->
+<!-- svelte-ignore a11y_no_static_element_interactions -- ドラッグ&ドロップは補助手段（モバイルでは使えない）。同じ操作は下のリンク風ボタンからも可能。 -->
 <div
   class="zone"
   class:drag={dragActive}
@@ -57,7 +57,7 @@
   {@render children()}
   {#if below}{@render below()}{/if}
   <div class="zone-hint">
-    <span>{t("pdf_or_drop")}</span><button type="button" class="linkish" onclick={onPick}>{t("pdf_pick_file")}</button>
+    <span>{t("pdf_pick_prefix")}</span><button type="button" class="linkish" onclick={onPick}>{t("pdf_pick_file")}</button>
   </div>
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <input bind:this={fileInput} type="file" {accept} hidden onchange={onFileInputChange} />

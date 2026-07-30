@@ -118,8 +118,6 @@
   {:else if libraryStore.items.length === 0}
     <p class="note">{t("library_empty")}</p>
   {:else}
-    <!-- 「端末に追加」は Pull 型（OPDS 配信リストに載るだけ）であることの補足。選択の有無に関わらず常時表示。 -->
-    <p class="note device-hint">{t("library_add_to_device_hint")}</p>
     <!-- 選択 0 件でも高さを確保したまま visibility で隠す（チェック時のレイアウトシフト防止） -->
     <div class="bulk-bar" class:invisible={selectedIds.length === 0}>
       <span class="bulk-count">{t("library_selected_count")(selectedIds.length)}</span>
@@ -158,7 +156,6 @@
   section.library { padding: 0 0 24px; }
   .login-gate { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; }
   .note { color: var(--muted); font-size: 14px; }
-  .note.device-hint { margin: 0 0 10px; }
   /* 折り返さず横スクロール。スクロールバーは非表示（スワイプ/ホイールで操作可能）。 */
   .bulk-bar {
     display: flex; align-items: center; gap: 10px; margin-bottom: 10px;

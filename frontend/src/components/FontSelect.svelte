@@ -241,10 +241,9 @@
   }
   .fs-listbox.fs-fonts-ready .fs-option { opacity: 1; }
   .fs-option.active { background: var(--line); }
-  /* 選択中の強調は font-weight ではなく背景+左罫線+チェックマークで示す。候補の
-     Noto Sans JP / Noto Serif JP / Zen Maru Gothic / Shippori Mincho は 400 しか
-     ロードしていないため、太字化すると合成太字(faux bold)で字形が歪む。字形サンプルは
-     常に通常ウェイトのまま見せるのが「その書体自身の字形を見せる」目的に忠実。 */
+  /* 選択中の強調は font-weight ではなく背景+左罫線+チェックマークで示す。他の候補書体は
+     まだダウンロードされていないため、太字化すると合成太字(faux bold)で字形が歪む。
+     字形サンプルは常に通常ウェイトのまま見せるのが「その書体自身の字形を見せる」目的に忠実。 */
   .fs-option.selected { background: var(--panel); border-left-color: var(--ink); }
   .fs-option.selected::after { content: " ✓"; font-weight: 400; color: var(--muted); }
 </style>

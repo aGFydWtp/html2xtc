@@ -176,7 +176,7 @@
   .pv-page canvas { display: block; width: 100%; height: 100%; }
   .pv-page-tag {
     position: absolute; left: 0; right: 0; bottom: 0; padding: 2px 6px; text-align: center;
-    font-family: var(--mono); font-size: 10px; color: var(--ink-text); background: rgba(28, 26, 23, .72);
+    font-family: var(--mono); font-size: 10px; color: var(--ink-text); background: rgba(var(--ink-rgb), .72);
   }
   .pv-pager { display: flex; align-items: center; gap: 14px; }
   .pv-pager button {

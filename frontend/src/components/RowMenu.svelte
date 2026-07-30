@@ -171,7 +171,7 @@
   .row-menu {
     position: fixed; display: none; margin: 0; padding: 6px; min-width: 180px;
     border: 1px solid var(--line); border-radius: 4px; background: var(--card);
-    box-shadow: 0 4px 16px rgba(28, 26, 23, .16);
+    box-shadow: 0 4px 16px rgba(var(--ink-rgb), .16);
   }
   /* この 2 つのルールは分けたままにする: Popover API 非対応ブラウザでは、セレクタ
      リスト中の未知の :popover-open がリスト全体を無効にしてしまうため。 */

@@ -604,7 +604,7 @@
   }
   .att-badge {
     flex: none; font-family: var(--mono); font-size: 12px; font-weight: 600; padding: 3px 8px;
-    background: var(--panel); color: #4d4a42; border-radius: 4px;
+    background: var(--panel); color: var(--badge-text); border-radius: 4px;
   }
   .att-info { flex: 1; min-width: 0; }
   .att-name { font-size: 14px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

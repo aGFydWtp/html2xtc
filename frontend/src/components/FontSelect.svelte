@@ -231,7 +231,7 @@
     position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; right: 0;
     max-height: 260px; overflow-y: auto; margin: 0; padding: 6px;
     border: 1px solid var(--line); border-radius: 4px; background: var(--card);
-    box-shadow: 0 4px 16px rgba(28, 26, 23, .16);
+    box-shadow: 0 4px 16px rgba(var(--ink-rgb), .16);
   }
   .fs-listbox:focus-visible { outline: none; }
 

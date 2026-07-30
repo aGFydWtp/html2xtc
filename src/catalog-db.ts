@@ -588,7 +588,7 @@ export function mapBookRow(row: BookSearchRow): BookSearchResult {
 }
 
 export const DEFAULT_BOOK_SEARCH_LIMIT = 50;
-export const MAX_BOOK_SEARCH_LIMIT = 50;
+export const MAX_BOOK_SEARCH_LIMIT = 100;
 
 /**
  * Parses ?limit=. Absent, blank, or invalid (non-numeric, non-integer, < 1)
@@ -604,6 +604,26 @@ export function clampBookSearchLimit(raw: string | null): number {
     return DEFAULT_BOOK_SEARCH_LIMIT;
   }
   return Math.min(value, MAX_BOOK_SEARCH_LIMIT);
+}
+
+/**
+ * Parses ?page=: missing means page 1; anything that isn't a plain positive
+ * integer (no leading zero, no sign, no decimal) is rejected as null so the
+ * handler can 400 rather than silently coerce "abc" or "-1" to some page.
+ * Same rule as src/opds/feed.ts's parsePage, kept as a separate copy here
+ * rather than imported -- catalog-db.ts (Aozora import/search) and
+ * src/opds/ (device library feeds) are unrelated domains that happen to
+ * share this one generic parsing rule.
+ */
+export function parseBookSearchPage(raw: string | null): number | null {
+  if (raw === null) {
+    return 1;
+  }
+  if (!/^[1-9][0-9]*$/.test(raw)) {
+    return null;
+  }
+  const parsed = Number(raw);
+  return Number.isSafeInteger(parsed) ? parsed : null;
 }
 
 /**
@@ -625,8 +645,15 @@ export function normalizeBookSearchQuery(raw: string | null): string {
  * ?1 and reused three times: the search_text substring filter plus two prefix
  * probes that rank title-prefix matches (0) above author-prefix matches (1)
  * above plain substring hits (2), then shortest normalized title, then
- * title order. Rows without HTML (html_url null/empty) are excluded so
- * htmlUrl is always present. ?2 is the row limit.
+ * title order, then work_id as a final tiebreak -- without it, rows tied on
+ * every prior key (same title length/text, e.g. same title in multiple
+ * editions) fall back to SQLite's internal row order, which is not
+ * guaranteed stable across the OFFSET-paged calls searchBooks now makes, and
+ * ties could duplicate or drop rows across a page boundary. Rows without
+ * HTML (html_url null/empty) are excluded so htmlUrl is always present. ?2 is
+ * the fetch window's row count (the caller passes requested limit + 1 so
+ * trimBookSearchPage below can detect a next page without a COUNT(*) query,
+ * the same trick as src/opds/feed.ts's trimPage) and ?3 is the offset.
  */
 export const BOOK_SEARCH_SQL =
   "SELECT work_id, title, subtitle, contributor_names, copyrighted, html_url, card_url " +
@@ -640,22 +667,53 @@ export const BOOK_SEARCH_SQL =
   "    ELSE 2 " +
   "  END, " +
   "  length(title_normalized), " +
-  "  title_normalized " +
-  "LIMIT ?2";
+  "  title_normalized, " +
+  "  work_id " +
+  "LIMIT ?2 OFFSET ?3";
+
+export interface BookSearchWindow {
+  /** Rows requested -- callers pass requested limit + 1 so trimBookSearchPage can detect a next page without a COUNT(*) query. */
+  limit: number;
+  offset: number;
+}
 
 /**
  * Runs BOOK_SEARCH_SQL against the active generation. normalizedQuery must
  * already be normalized (normalizeBookSearchQuery) and non-empty -- the caller
- * short-circuits the empty case before reaching D1. Returns camelCased hits.
+ * short-circuits the empty case before reaching D1. Returns camelCased hits,
+ * still shaped as the raw fetch window (up to window.limit rows) -- callers
+ * pass window.limit one row past what they intend to serve and trim the
+ * result with trimBookSearchPage.
  */
 export async function searchBooks(
   db: D1Database,
   normalizedQuery: string,
-  limit: number,
+  window: BookSearchWindow,
 ): Promise<BookSearchResult[]> {
   const result = await db
     .prepare(BOOK_SEARCH_SQL)
-    .bind(normalizedQuery, limit)
+    .bind(normalizedQuery, window.limit, window.offset)
     .all<BookSearchRow>();
   return result.results.map(mapBookRow);
+}
+
+export interface BookSearchPage<T> {
+  books: T[];
+  hasNext: boolean;
+}
+
+/**
+ * Trims a `limit + 1`-row fetch window (searchBooks's result, given
+ * window.limit = limit + 1) down to at most `limit` rows plus hasNext --
+ * pure, so the pagination boundary math is unit-testable without D1. Mirrors
+ * src/opds/feed.ts's trimPage, but kept separate: that function's hasNext
+ * also derives hasPrevious from its own `page` argument, which GET /api/books
+ * has no equivalent use for.
+ */
+export function trimBookSearchPage<T>(rows: T[], limit: number): BookSearchPage<T> {
+  const hasNext = rows.length > limit;
+  return {
+    books: hasNext ? rows.slice(0, limit) : rows,
+    hasNext,
+  };
 }

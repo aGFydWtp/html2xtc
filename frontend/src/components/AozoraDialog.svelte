@@ -6,6 +6,24 @@
 
   let dlg = $state<HTMLDialogElement | null>(null);
   let input = $state<HTMLInputElement | null>(null);
+  let listEl = $state<HTMLUListElement | null>(null);
+  let sentinel = $state<HTMLLIElement | null>(null);
+
+  // 末尾のセンチネルが見えたら次ページを読み込む。IntersectionObserver 未対応環境や
+  // reduced motion 環境のための「もっと読み込む」ボタンも別途用意する（キーボード操作の保険）。
+  // ダイアログが閉じている間・センチネルが無い間は観測しない。開閉・アンマウント時は
+  // 必ず disconnect する。
+  $effect(() => {
+    if (!aozora.open || !sentinel) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) void aozora.loadMore();
+      },
+      { root: listEl, rootMargin: "120px" },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  });
 
   // open 状態とネイティブ <dialog> の開閉を同期する。開いた直後に検索ボックスへ
   // フォーカスする。閉じるは onclose → aozora.hide() で状態側へ反映する。
@@ -88,12 +106,16 @@
   </div>
 
   <div class="dlg-list-head">
-    <span>{aozora.listState === "results" ? t("aozora_results")(aozora.results.length) : ""}</span>
+    <span aria-live="polite">
+      {aozora.listState === "results"
+        ? (aozora.hasNext ? t("aozora_results_more")(aozora.results.length) : t("aozora_results")(aozora.results.length))
+        : ""}
+    </span>
     <span>{t("aozora_selected")(aozora.selectedCount, AOZORA_MAX)}</span>
   </div>
 
   {#if aozora.listState === "results"}
-    <ul class="dlg-list">
+    <ul class="dlg-list" bind:this={listEl}>
       {#each aozora.results as b (b.workId)}
         {@const on = aozora.isSelected(b.workId)}
         {@const full = !on && aozora.selectedCount >= AOZORA_MAX}
@@ -112,6 +134,21 @@
           </label>
         </li>
       {/each}
+      {#if aozora.hasNext || aozora.moreState === "fail"}
+        <li class="dlg-more" bind:this={sentinel}>
+          {#if aozora.moreState === "loading"}
+            <div class="dlg-more-status">{t("aozora_loading_more")}</div>
+          {:else if aozora.moreState === "fail"}
+            <button type="button" class="dlg-more-btn dlg-more-fail" onclick={() => void aozora.loadMore()}>
+              {t("aozora_load_more_failed")}
+            </button>
+          {:else}
+            <button type="button" class="dlg-more-btn" onclick={() => void aozora.loadMore()}>
+              {t("aozora_load_more")}
+            </button>
+          {/if}
+        </li>
+      {/if}
     </ul>
   {:else}
     <div class="dlg-list dlg-list-status"><div class="dlg-status">{statusText}</div></div>
@@ -189,6 +226,17 @@
   .dlg-book-title { font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .dlg-list li.on .dlg-book-title { font-weight: 700; }
   .dlg-book-author { font-family: var(--mono); font-size: 12px; color: var(--faint); }
+  .dlg-more { display: flex; justify-content: center; }
+  .dlg-more-status {
+    padding: 14px 2px; font-family: var(--mono); font-size: 12px; color: var(--muted);
+    letter-spacing: .08em;
+  }
+  .dlg-more-btn {
+    width: 100%; padding: 11px 2px; margin: 4px 0; font: inherit; font-size: 13px;
+    border: 0; background: none; color: var(--muted); cursor: pointer; text-align: center;
+  }
+  .dlg-more-btn:hover { color: var(--text); }
+  .dlg-more-btn.dlg-more-fail { color: var(--muted); text-decoration: underline; }
   .dlg-list-status { display: block; }
   .dlg-status { padding: 16px 2px; font-size: 14px; color: var(--muted); }
   .dlg-actions {

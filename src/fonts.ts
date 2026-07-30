@@ -45,13 +45,20 @@ export const DEFAULT_FONT_FAMILY = "BIZ UDPGothic";
  * safe for families whose weights are known. Arbitrary user-supplied
  * families are requested without a weight axis instead — css2 then serves
  * regular (400) only, which every family has; bold text falls back to
- * synthetic bold. Both defaults ship exactly 400/700 on Google Fonts.
+ * synthetic bold. Invariant: only add a family here after confirming its 700
+ * weight actually exists on Google Fonts (e.g. a 200 from css2?family=<name>
+ * with a 400;700 weight axis) — an incorrect entry makes every request for
+ * that family fail outright, not just lose bold.
  */
 const DUAL_WEIGHT_FAMILIES = new Set([
   "BIZ UDGothic",
   "BIZ UDPGothic",
   "BIZ UDMincho",
   "BIZ UDPMincho",
+  "Literata",
+  "Merriweather",
+  "EB Garamond",
+  "Inter",
 ]);
 
 /**

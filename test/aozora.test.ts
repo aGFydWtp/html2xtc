@@ -220,6 +220,15 @@ describe("fontCssEndpoint", () => {
     expect(fontCssEndpoint("BIZ UDMincho")).toContain(":wght@400;700");
   });
 
+  it("requests 400;700 for the English-language dual-weight candidates", () => {
+    expect(fontCssEndpoint("Literata")).toContain(":wght@400;700");
+    expect(fontCssEndpoint("Merriweather")).toContain(":wght@400;700");
+    expect(fontCssEndpoint("EB Garamond")).toBe(
+      "https://fonts.googleapis.com/css2?family=EB+Garamond:wght@400;700&display=swap",
+    );
+    expect(fontCssEndpoint("Inter")).toContain(":wght@400;700");
+  });
+
   it("requests regular only for arbitrary families (+-encoded)", () => {
     // css2 rejects the whole request when a listed weight is missing from
     // the family, so unknown families must not pin a weight axis.

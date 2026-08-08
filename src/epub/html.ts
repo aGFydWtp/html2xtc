@@ -619,16 +619,18 @@ html, body {
   color: #000;
 }
 
-* {
+*, .epub-book * {
   /* Emergency line breaking for unbreakable tokens. A single token longer
      than the column extent — real repro: a 54-char URL in body text, which
      at fontSizePx 30 exceeds the X3 page's 712px column in vertical-rl
      writing mode — does not merely overflow its own line: it
-     broke pagination for the WHOLE document, with the majority of body
-     text emitted on no page at all and every page's margins collapsed
-     (measured on the minimal repro: 3 pages with the ink pushed into the
-     page margin vs 5 pages with normal margins once wrapping was enabled —
-     the 2 extra pages being the text that had silently vanished). The
+     broke pagination for the WHOLE document, with roughly a third of the
+     body text emitted on no page at all and every page's margins collapsed
+     (measured: 348 of the real book's 1092 pages — 32% — never rendered,
+     and on the minimal repro 2 of 5 pages — 40%: 3 pages with the ink
+     pushed into the page margin vs 5 pages with normal margins once
+     wrapping was enabled, the 2 extra pages being the text that had
+     silently vanished). The
      TXT/Aozora pipeline (src/text-html.ts) has always declared
      "overflow-wrap: anywhere" on its .content; this EPUB path had no wrap
      declaration at all, and that one difference was the whole bug.
@@ -654,19 +656,41 @@ html, body {
      comment documents. The universal selector puts the declaration
      directly on every element, so there is no inherited value to lose.
 
+     Selector scope — a two-part list, the bare universal selector PLUS
+     .epub-book with a universal descendant: specificity is taken per
+     complex selector, so an element inside the epub-book main matches
+     the 0,1,0 variant, which beats an author's element-only !important
+     rule (0,0,1 for p, 0,0,2 for div p, ...) inside the important tier —
+     the one fight the bare universal selector (0,0,0) always loses. All
+     chapter content — everything EPUB author CSS can actually target
+     with rules written for the book's own markup — lives inside that
+     main (see the document assembly in prepareEpubDocument), so the
+     higher-specificity variant covers every element where a competing
+     author declaration is realistic. The bare universal variant is kept
+     alongside it for the generated sections OUTSIDE the main
+     (.epub-cover, and .epub-generated-toc — whose text is author-derived
+     nav labels and can carry the same over-long tokens), which it
+     protects against every non-important declaration. Pure cascade
+     arithmetic, not a rendering change: wherever both variants apply the
+     computed value is identical.
+
      Unconditional !important — same stance as the img/svg
      float:none/max-width rules below: an unbreakable token that destroys
      pagination is a text-legibility (here: text-EXISTENCE) failure this
      converter must always prevent, never an authored presentation choice
-     for an "auto" layout to defer to. With it, this 0,0,0-specificity
-     rule still beats every non-!important author declaration (the
-     importance tier outranks specificity). Residual gaps, accepted and
-     NOT fixed here (same shape as the img rule's own residual-gap
-     paragraph): (1) an author declaration that is ITSELF !important wins
-     within the important tier on specificity (css.ts keeps authored
-     !important verbatim); (2) an author "white-space: nowrap" (also an
-     allowed property) disables wrapping outright, and overflow-wrap only
-     creates break opportunities where wrapping is enabled at all.
+     for an "auto" layout to defer to. With it, this rule beats every
+     non-!important author declaration outright (the importance tier
+     outranks specificity). Residual gaps, accepted and NOT fixed here
+     (same shape as the img rule's own residual-gap paragraph): (1) an
+     author declaration that is ITSELF !important (css.ts keeps authored
+     !important verbatim) wins within the important tier once its
+     specificity exceeds 0,1,0 — class-plus-element, two classes, any id,
+     ... — while an exact 0,1,0 tie falls to source order, which this
+     stylesheet wins by coming last; (2) white-space values that disable
+     wrapping make overflow-wrap inert wherever they apply — the one
+     UA-DEFAULT surface with such a value, pre, is closed by the
+     dedicated pre rule below, but an author "white-space: nowrap" (an
+     allowed property) on any other element remains open.
 
      Japanese typography is untouched: overflow-wrap adds EMERGENCY break
      points only, considered when a line has no otherwise-acceptable
@@ -686,6 +710,38 @@ html, body, .epub-book {
 
 pre, code, kbd, samp {
   font-family: monospace${important};
+}
+
+pre {
+  /* The UA stylesheet gives pre "white-space: pre", which disables line
+     wrapping entirely — and where wrapping is disabled, the
+     overflow-wrap rule above is inert. So a single pre line longer than
+     the column (a long URL or identifier in a tech book's code block)
+     reproduces the exact pagination destruction that rule exists to
+     prevent, with NO author CSS involved at all. Measured on the minimal
+     repro: the skeleton renders 4 normal pages; adding one pre with one
+     over-long line collapsed it to 2 pages with the surrounding prose
+     gone and the ink pushed to the page edge; with this rule it renders
+     5 normal pages with nothing lost. pre-wrap preserves the author's
+     newlines and interior spaces exactly — a line that fits renders
+     identically to white-space: pre — and only adds soft wrap
+     opportunities, which the emergency breaking above then uses for
+     over-long tokens. The accepted trade-off (same text-first stance as
+     everything else in this stylesheet): a wrapped code line loses its
+     column alignment from the wrap point on, but misaligned code is
+     still readable while text that appears on no page is not. Scoped to
+     pre alone, NOT the font-family rule's pre/code/kbd/samp group:
+     code/kbd/samp default to white-space normal (nothing to fix there),
+     and forcing pre-wrap on them would newly preserve interior space
+     runs that an EPUB's inline code spans currently render collapsed.
+     !important because white-space is on css.ts's ALLOWED_PROPERTIES, so
+     a plain declaration here would lose to any author reset that
+     re-declares white-space: pre on pre; with it, an author's own
+     !important on the same bare pre selector still loses on source order
+     (this stylesheet comes last), leaving only higher-specificity author
+     !important rules as the residual — the same accepted shape as the
+     overflow-wrap rule's residual gap (1) above. */
+  white-space: pre-wrap !important;
 }
 
 img, svg {

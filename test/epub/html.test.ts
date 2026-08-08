@@ -28,6 +28,16 @@ function options(overrides: Partial<EpubConvertOptions> = {}): EpubConvertOption
   return { ...DEFAULT_EPUB_OPTIONS, ...overrides };
 }
 
+/**
+ * Strips CSS comments so structural `selector { ...decls... }` regexes can't
+ * be broken by prose inside a rule's own doc comment — buildFinalCss's rules
+ * carry long CSS comments, and a `[^}]*` span dies the moment one of them
+ * quotes a CSS example containing a closing brace (review-flagged fragility).
+ */
+function withoutCssComments(html: string): string {
+  return html.replace(/\/\*[\s\S]*?\*\//g, "");
+}
+
 describe("prepareEpubDocument: spine order (spec §19.1 spine順)", () => {
   it("renders multi-chapter spine items in document order", () => {
     const zip = buildEpubZip({
@@ -301,35 +311,54 @@ describe("prepareEpubDocument: image max-size ceiling (本文中の画像がペ�
 // unbreakable token longer than the column extent — a 54-char URL in body
 // text, which at fontSizePx 30 exceeds the X3 page's 712px column
 // (792 - 40*2) in writing-mode:vertical-rl — broke pagination for the WHOLE
-// document, with the majority of body text emitted on no page at all. The
-// TXT/Aozora pipeline (src/text-html.ts) always declared
-// `overflow-wrap: anywhere` on its .content; the EPUB path had no wrap
-// declaration anywhere, and that one difference was the entire bug. The fix
-// is a UNIVERSAL `overflow-wrap: anywhere !important` rule in buildFinalCss
-// — see that rule's own doc comment for the measured evidence behind each
-// half of it (`anywhere` vs `break-word`: break-word leaves min-content
-// intrinsic sizing unwrapped, so the same URL inside a table cell stayed
-// broken under break-word and was fixed by anywhere; universal selector vs
-// html/body: overflow-wrap is on css.ts's ALLOWED_PROPERTIES, so an
-// EPUB-authored declaration sitting directly on an element would beat any
-// merely-inherited value; unconditional !important: same text-first stance
-// as the img/svg float/max-width rules, importance tier beats every
-// non-!important author declaration).
+// document, with roughly a third of the body text emitted on no page at all
+// (measured: 348 of the real book's 1092 pages, 32%; 2 of the minimal
+// repro's 5 pages, 40%). The TXT/Aozora pipeline (src/text-html.ts) always
+// declared `overflow-wrap: anywhere` on its .content; the EPUB path had no
+// wrap declaration anywhere, and that one difference was the entire bug.
+// The fix is an `overflow-wrap: anywhere !important` rule in buildFinalCss
+// on the two-part selector list `*, .epub-book *` — see that rule's own doc
+// comment for the measured evidence behind each half of it (`anywhere` vs
+// `break-word`: break-word leaves min-content intrinsic sizing unwrapped,
+// so the same URL inside a table cell stayed broken under break-word and
+// was fixed by anywhere; universal selector vs html/body: overflow-wrap is
+// on css.ts's ALLOWED_PROPERTIES, so an EPUB-authored declaration sitting
+// directly on an element would beat any merely-inherited value; the added
+// `.epub-book *` variant (0,1,0): outranks an author's element-only
+// !important rule within the important tier, which the bare universal's
+// 0,0,0 loses to; unconditional !important: same text-first stance as the
+// img/svg float/max-width rules, importance tier beats every non-!important
+// author declaration).
 describe("prepareEpubDocument: unbreakable-token wrapping (列より長い分割不能トークンが縦書きの本文の大半を消す不具合の修正)", () => {
-  it("emits a universal overflow-wrap: anywhere !important rule", () => {
+  it("emits the overflow-wrap: anywhere !important rule on the two-part selector list (*, .epub-book *)", () => {
     const zip = buildEpubZip(minimalEpub3Files());
-    const result = prepareEpubDocument(zip, options(), context());
-    expect(result.html).toMatch(/\*\s*{[^}]*overflow-wrap:\s*anywhere\s*!important/);
+    const css = withoutCssComments(prepareEpubDocument(zip, options(), context()).html);
+    expect(css).toMatch(/\*\s*,\s*\.epub-book\s+\*\s*{[^}]*overflow-wrap:\s*anywhere\s*!important/);
     // `anywhere`, never `break-word` — break-word does not affect
     // min-content sizing, so a long token in a table cell reproduces the
     // exact same text loss (measured — see buildFinalCss's rule comment).
-    expect(result.html).not.toMatch(/overflow-wrap:\s*break-word/);
+    expect(css).not.toMatch(/overflow-wrap:\s*break-word/);
   });
 
   it("emits the rule for an explicitly horizontal layout too (TXT pipeline parity — its horizontal .content also wraps)", () => {
     const zip = buildEpubZip(minimalEpub3Files());
-    const result = prepareEpubDocument(zip, options({ layout: "horizontal" }), context());
-    expect(result.html).toMatch(/\*\s*{[^}]*overflow-wrap:\s*anywhere\s*!important/);
+    const css = withoutCssComments(prepareEpubDocument(zip, options({ layout: "horizontal" }), context()).html);
+    expect(css).toMatch(/\*\s*,\s*\.epub-book\s+\*\s*{[^}]*overflow-wrap:\s*anywhere\s*!important/);
+  });
+
+  // UA stylesheets give pre `white-space: pre`, which disables wrapping
+  // entirely and makes the overflow-wrap rule inert inside it — so one
+  // over-long pre line reproduced the same pagination destruction with NO
+  // author CSS involved at all (measured: the minimal repro's skeleton
+  // renders 4 normal pages; adding a pre with one over-long line collapsed
+  // it to 2 pages with the surrounding prose gone; white-space: pre-wrap
+  // restored 5 normal pages with nothing lost). See the pre rule's doc
+  // comment in buildFinalCss for the alignment trade-off and why the rule
+  // is scoped to pre alone, not the pre/code/kbd/samp font-family group.
+  it("forces white-space: pre-wrap !important on pre so an over-long pre line cannot destroy pagination (UA default disables wrapping)", () => {
+    const zip = buildEpubZip(minimalEpub3Files());
+    const css = withoutCssComments(prepareEpubDocument(zip, options(), context()).html);
+    expect(css).toMatch(/pre\s*{[^}]*white-space:\s*pre-wrap\s*!important/);
   });
 
   // Documents WHY the rule must be universal AND !important rather than an
@@ -350,23 +379,25 @@ describe("prepareEpubDocument: unbreakable-token wrapping (列より長い分割
         "<html><head><style>p { overflow-wrap: normal; }</style></head>" +
         "<body><p>https://example.invalid/a-very-long-unbreakable-token</p></body></html>",
     });
-    const result = prepareEpubDocument(zip, options(), context());
+    const css = withoutCssComments(prepareEpubDocument(zip, options(), context()).html);
     // The EPUB's own declaration survived sanitization (allowed property)...
-    expect(result.html).toMatch(/p\s*{[^}]*overflow-wrap:\s*normal/);
+    expect(css).toMatch(/p\s*{[^}]*overflow-wrap:\s*normal/);
     // ...which is exactly why the fix must sit directly on every element
     // (universal selector) and carry !important to outrank it.
-    expect(result.html).toMatch(/\*\s*{[^}]*overflow-wrap:\s*anywhere\s*!important/);
+    expect(css).toMatch(/\*\s*,\s*\.epub-book\s+\*\s*{[^}]*overflow-wrap:\s*anywhere\s*!important/);
   });
 
   // Documents a residual, NOT-fixed-by-this-change risk, mirroring the img
   // rule's own residual-gap test above: css.ts keeps an EPUB-authored
   // !important verbatim, and within the important tier the cascade falls
-  // back to specificity, where any real selector (0,0,1+) beats this
-  // universal rule's 0,0,0 — so an EPUB that declares
-  // `overflow-wrap: normal !important` on an element could still disable
-  // emergency wrapping there. Not a regression from this change (pre-fix
-  // code had no wrap declaration to lose in the first place); this only
-  // pins the mechanism behind the documented residual.
+  // back to specificity. The `.epub-book *` selector variant (0,1,0)
+  // outranks an author's element-only !important rule (this example's bare
+  // `p` is 0,0,1, which only the bare universal variant would lose to),
+  // but an author !important above 0,1,0 — class-plus-element, two
+  // classes, any id — still wins and could disable emergency wrapping on
+  // that element. Not a regression from this change (pre-fix code had no
+  // wrap declaration to lose in the first place); this only pins the
+  // mechanism behind the documented residual.
   it("does NOT strip an EPUB-authored !important overflow-wrap (documents the residual gap)", () => {
     const files = minimalEpub3Files();
     const zip = buildEpubZip({
@@ -375,8 +406,8 @@ describe("prepareEpubDocument: unbreakable-token wrapping (列より長い分割
         "<html><head><style>p { overflow-wrap: normal !important; }</style></head>" +
         "<body><p>body</p></body></html>",
     });
-    const result = prepareEpubDocument(zip, options(), context());
-    expect(result.html).toMatch(/p\s*{[^}]*overflow-wrap:\s*normal\s*!important/);
+    const css = withoutCssComments(prepareEpubDocument(zip, options(), context()).html);
+    expect(css).toMatch(/p\s*{[^}]*overflow-wrap:\s*normal\s*!important/);
   });
 });
 

@@ -603,34 +603,56 @@ pre, code, kbd, samp {
 
 img, svg {
   /* PX, not the more obvious percentage form (max-width/max-height at 100%)
-     — same underlying
-     CSS rule .epub-cover's own doc comment below documents (percentage
-     sizes only resolve against a containing block that is definite in that
-     axis), but hitting a DIFFERENT element here: .epub-cover's box is a
-     purpose-built div this function itself sizes explicitly, so it was easy
-     to make definite; an in-chapter <img>'s containing block is whatever
-     ordinary flow element the EPUB's own markup put it in, and in
-     vertical-writing-mode body text that ancestor's inline size (the img's
-     block-direction max, since size keywords are physical, not logical, on
-     max-width/max-height) is not reliably definite the way a dedicated
-     cover box is — so a max-width of 100% there regularly computed to
-     "none" and the <img> rendered at its raw intrinsic size instead of
-     being clamped to the page. Empirically reproduced against a real EPUB
-     (X3 device, marginPx 40 -> 448x712px page content box, pageContentWidthPx/
-     pageContentHeightPx above): with only the percentage rule, a 752x465
-     in-chapter image rendered at full intrinsic size, overflowed the page,
-     and was silently clipped at the page boundary in the actual PDF — not
-     merely pushed to the next page, GONE (the clipped-off portion, a
-     chart's rightmost data column, appeared on no page at all). Six of
+     — same underlying CSS rule .epub-cover's own doc comment below
+     documents (percentage sizes only resolve against a containing block
+     that is definite in that axis), but hitting a DIFFERENT element here:
+     .epub-cover's box is a purpose-built div this function itself sizes
+     explicitly, so it was easy to make definite; an in-chapter <img>'s
+     containing block is whatever ordinary flow element the EPUB's own
+     markup put it in, and in vertical-writing-mode body text that
+     ancestor's inline size (the img's block-direction max, since size
+     keywords are physical, not logical, on max-width/max-height) is not
+     reliably definite the way a dedicated cover box is — so a max-width of
+     100% there regularly computed to "none" and the <img> rendered at its
+     raw intrinsic size instead of being clamped to the page.
+     pageContentWidthPx/pageContentHeightPx are always definite numbers
+     (computed above from @page's own size and margin), so using them here
+     removes the "is the containing block definite?" question entirely
+     rather than depending on how any given EPUB happens to markup its
+     image's ancestors.
+
+     !important — unconditionally, like this rule's existing float:none
+     !important below, NOT gated on layoutIsExplicit the way this
+     function's other rules are: found necessary, not just defensive,
+     against a real EPUB whose own stylesheet declares a max-width of 100%
+     and a height of auto, scoped to a class-plus-tag selector matching this
+     exact figure's img (one class, one type — specificity 0,1,1). That
+     beats this bare "img, svg" rule's specificity of 0,0,1 regardless of
+     which one appears later in the document, so without !important the
+     EPUB's own percentage rule won the cascade outright and reproduced the
+     exact same "renders at intrinsic size, clipped at the page edge"
+     failure this rule exists to prevent — this was not a hypothetical, it
+     is what actually happened first, on the SAME empirical repro this doc
+     comment cites below, before !important was added. The float rule's own
+     doc comment already establishes the standing rule this codebase
+     applies to img/svg sizing/behavior corrections: never something an
+     "honor the EPUB's own presentation" auto choice should defer to,
+     because the alternative is a text- or content-legibility regression
+     this converter must always prevent. A clipped, silently-truncated
+     illustration is that same failure mode, so the same unconditional
+     !important applies here too.
+
+     Empirically reproduced end-to-end against a real EPUB (X3 device,
+     marginPx 40 -> 448x712px page content box): with only the percentage
+     rule (no !important, pre-dating this fix), a 752x465 in-chapter image
+     rendered at full intrinsic size, overflowed the page, and was silently
+     clipped at the page boundary in the actual PDF — not merely pushed to
+     the next page, GONE (the clipped-off portion, a chart's rightmost data
+     column and the table beneath it, appeared on no page at all). Six of
      seven in-chapter images in that same book exceeded 448px in the block
-     direction, so an indefinite containing block was the common case there,
-     not a rare one. pageContentWidthPx/pageContentHeightPx are always
-     definite numbers (computed above from @page's own size and margin), so
-     using them here removes the "is the containing block definite?"
-     question entirely rather than depending on how any given EPUB happens
-     to markup its image's ancestors. */
-  max-width: ${pageContentWidthPx}px;
-  max-height: ${pageContentHeightPx}px;
+     direction, so this was not a rare edge case for that book. */
+  max-width: ${pageContentWidthPx}px !important;
+  max-height: ${pageContentHeightPx}px !important;
   object-fit: contain;
   break-inside: avoid;
   /* Unconditional !important, unlike this function's other rules (which

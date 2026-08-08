@@ -205,19 +205,22 @@ describe("prepareEpubDocument: image float reset (画像のfloatをEPUB側CSSか
 // 448x712px page content box), a 752x465 in-chapter image overflowed the page
 // and was silently clipped in the actual PDF, with the clipped-off portion
 // gone from every page rather than pushed to the next one. The fix gives
-// max-width/max-height an explicit PX ceiling (the same page content box
-// .epub-cover below uses) instead of a percentage, so the value is always
-// definite. See buildFinalCss's img/svg rule doc comment for the full
-// evidence and for why this is the same root cause as .epub-cover's own
-// definite-size fix below.
+// max-width/max-height an explicit, !important PX ceiling (the same page
+// content box .epub-cover below uses) instead of a percentage, so the value
+// is always definite AND always wins the cascade. See buildFinalCss's img/svg
+// rule doc comment for the full evidence — including why !important is
+// required (a real EPUB's own higher-specificity `figure.h-figure img` rule
+// otherwise defeated a plain, non-!important px rule the same way) — and for
+// why the px-vs-percentage half of this is the same root cause as
+// .epub-cover's own definite-size fix below.
 describe("prepareEpubDocument: image max-size ceiling (本文中の画像がページ幅・高さを超えてクリップされ内容が消える不具合の修正)", () => {
-  it("gives the global img/svg rule a definite PX max-width/max-height (the page content box), not a percentage", () => {
+  it("gives the global img/svg rule a definite, !important PX max-width/max-height (the page content box), not a percentage", () => {
     const zip = buildEpubZip(minimalEpub3Files());
     const result = prepareEpubDocument(zip, options(), context());
     // Default options: X3 device (528x792) minus marginPx 40 on every side
     // = 448x712 page content box (src/devices.ts, src/epub-options.ts).
-    expect(result.html).toMatch(/img,\s*svg\s*{[^}]*max-width:\s*448px/);
-    expect(result.html).toMatch(/img,\s*svg\s*{[^}]*max-height:\s*712px/);
+    expect(result.html).toMatch(/img,\s*svg\s*{[^}]*max-width:\s*448px\s*!important/);
+    expect(result.html).toMatch(/img,\s*svg\s*{[^}]*max-height:\s*712px\s*!important/);
     // Actual CSS declarations only ("max-width:"/"max-height:", with the
     // colon) — the img/svg rule's own doc comment (also inside this `{ }`
     // block) discusses the old percentage-based version in prose, which a
@@ -231,8 +234,39 @@ describe("prepareEpubDocument: image max-size ceiling (本文中の画像がペ�
     const result = prepareEpubDocument(zip, options({ device: "x4", marginPx: 20 }), context());
     // X4 device (480x800, src/devices.ts) minus marginPx 20 on every side
     // = 440x760.
-    expect(result.html).toMatch(/img,\s*svg\s*{[^}]*max-width:\s*440px/);
-    expect(result.html).toMatch(/img,\s*svg\s*{[^}]*max-height:\s*760px/);
+    expect(result.html).toMatch(/img,\s*svg\s*{[^}]*max-width:\s*440px\s*!important/);
+    expect(result.html).toMatch(/img,\s*svg\s*{[^}]*max-height:\s*760px\s*!important/);
+  });
+
+  // Regression test for the SECOND, independently-reproduced way this bug
+  // came back: even with a definite px max-width/max-height, an EPUB's own
+  // stylesheet can carry a MORE SPECIFIC selector (e.g. a class-scoped
+  // `figure img` rule, specificity 0,1,1) that beats this bare `img, svg`
+  // rule's specificity (0,0,1) regardless of source order. Without
+  // !important, that EPUB rule's own `max-width: 100%` won the cascade
+  // outright and reintroduced the exact same intrinsic-size-and-clip
+  // failure — reproduced against a real commercial EPUB whose style.css
+  // declares `figure.h-figure img { max-width: 100%; height: auto; }`.
+  // vitest has no CSS cascade engine, so this can only pin that BOTH the
+  // higher-specificity EPUB rule survives sanitization AND this rule's own
+  // max-width/max-height carry !important (which is what actually wins that
+  // cascade in a real renderer) — not simulate the cascade outcome itself.
+  it("keeps !important on max-width/max-height even when the EPUB's own CSS has a higher-specificity img selector (figure.h-figure img)", () => {
+    const files = minimalEpub3Files();
+    const zip = buildEpubZip({
+      ...files,
+      "OEBPS/chapter1.xhtml":
+        "<html><head><style>figure.h-figure img { max-width: 100%; height: auto; }</style></head>" +
+        '<body><figure class="h-figure"><img src="cover.png"/></figure></body></html>',
+    });
+    const result = prepareEpubDocument(zip, options(), context());
+    // The EPUB's higher-specificity rule survived sanitization (max-width
+    // and height are both on css.ts's ALLOWED_PROPERTIES allowlist) ...
+    expect(result.html).toMatch(/figure\.h-figure img\s*{[^}]*max-width:\s*100%/);
+    // ... which is exactly why this rule's own max-width/max-height must
+    // still carry !important to win against it.
+    expect(result.html).toMatch(/img,\s*svg\s*{[^}]*max-width:\s*448px\s*!important/);
+    expect(result.html).toMatch(/img,\s*svg\s*{[^}]*max-height:\s*712px\s*!important/);
   });
 });
 

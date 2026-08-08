@@ -741,7 +741,7 @@ describe("prepareEpubDocument: XTC chapter/table-of-contents metadata (top-level
     // color) — the cascade-ordering guarantee itself is a CSS spec fact
     // (CSS Cascading Level 4 §5.1), not something re-verified here.
     expect(result.html).toMatch(
-      /<span(?=[^>]*class="xtc-chapter-marker")(?=[^>]*style="color:white!important;-webkit-text-fill-color:white!important;font-size:1px!important;user-select:none!important;-webkit-user-select:none!important")[^>]*>XTCCH0001<\/span>/,
+      /<span(?=[^>]*class="xtc-chapter-marker")(?=[^>]*style="color:white!important;-webkit-text-fill-color:white!important;font-size:1px!important;position:absolute!important;user-select:none!important;-webkit-user-select:none!important")[^>]*>XTCCH0001<\/span>/,
     );
   });
 
@@ -761,7 +761,7 @@ describe("prepareEpubDocument: XTC chapter/table-of-contents metadata (top-level
     // But the marker span's own inline style is unconditional and present
     // regardless, which is what actually keeps it invisible.
     expect(result.html).toMatch(
-      /<span(?=[^>]*class="xtc-chapter-marker")(?=[^>]*style="color:white!important;-webkit-text-fill-color:white!important;font-size:1px!important;user-select:none!important;-webkit-user-select:none!important")[^>]*>XTCCH0001<\/span>/,
+      /<span(?=[^>]*class="xtc-chapter-marker")(?=[^>]*style="color:white!important;-webkit-text-fill-color:white!important;font-size:1px!important;position:absolute!important;user-select:none!important;-webkit-user-select:none!important")[^>]*>XTCCH0001<\/span>/,
     );
   });
 });

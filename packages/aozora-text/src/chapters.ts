@@ -212,6 +212,25 @@ export const XTC_CHAPTER_MARKER_CLASS = "xtc-chapter-marker";
  * marker is always laid out ON the heading's own line). A few px of
  * invisible heading drift is preferable to a wrong chapter page number.
  *
+ * UPDATE — this class stays in-flow here on purpose, but src/epub/sanitize.ts's
+ * XTC_CHAPTER_MARKER_INLINE_STYLE (and its html.ts backup rule) now DIVERGE
+ * from this and DO use `position: absolute`. That is not an oversight: an
+ * EPUB `atStart` marker is inserted as a preceding SIBLING of the whole
+ * chapter `<section>`, not as the heading's own first child the way this
+ * package's marker always is, so it never actually shared the heading's line
+ * box the paragraph above assumes — being a bare inline node before a
+ * block-level sibling, it gets wrapped in an anonymous block box whose line
+ * box inherits the EPUB's own (author-controlled, arbitrary) `line-height`.
+ * Combined with `writing-mode: vertical-rl` this reproduced a 90-150px
+ * block-direction page displacement on a real book, which `position:
+ * absolute` fixes there without the risk described above (empirically
+ * checked — see XTC_CHAPTER_MARKER_INLINE_STYLE's doc comment). Nothing
+ * about aozora's own marker placement or CSS changed; do not copy `position:
+ * absolute` here without re-deriving whether the same "never shared the
+ * line box to begin with" precondition actually holds for this package's
+ * insertion site (as of this writing, it does not — see
+ * renderChapterMarkerHtml/src/aozora.ts's insertChapterMarkers).
+ *
  * Embedded into AOZORA_DOCUMENT_CSS (styles.ts) so every renderer that
  * already includes that stylesheet (the AST-based TXT renderer, the Aozora
  * Bunko URL-extraction path, its 4-chunk fallback, and the frontend's live

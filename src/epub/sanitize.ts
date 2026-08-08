@@ -202,9 +202,74 @@ export interface ChapterMarkerPlan {
  * survives. `-webkit-text-fill-color` is set alongside `color` because an
  * EPUB stylesheet could otherwise repaint the glyphs via that property alone
  * even with `color` pinned inline.
+ *
+ * `position:absolute` — added for a bug DELIBERATELY NOT present in
+ * packages/aozora-text's XTC_CHAPTER_MARKER_CSS (see that constant's own doc
+ * comment, which explicitly rejects `position: absolute` and keeps this span
+ * an ordinary in-flow inline element instead). That rejection is correct for
+ * where AOZORA'S marker is inserted (as the heading's own first child, so it
+ * shares the heading's line box) but does not hold for the EPUB path's
+ * `atStart` markers specifically: insertChapterMarkerSpans's `atStart`
+ * branch (this file, below) inserts the marker as `body`'s first child — a
+ * PRECEDING SIBLING of the whole chapter `<section>`, not a child of the
+ * heading. Because the sibling after it is block-level, the UA wraps the
+ * bare inline marker in an anonymous block box (CSS2.1 §9.2.1.1), and that
+ * anonymous block's line box takes its strut from the INHERITED
+ * font-size/line-height of its containing block — `html`/`body`'s own
+ * values, which for an EPUB can be anything the source stylesheet sets
+ * (line-height survives css.ts's ALLOWED_PROPERTIES sanitization
+ * unrestricted). A real book (レベニューオペレーション(RevOps)の教科書, source
+ * style.css: `line-height: 1.9`) combined with `writing-mode: vertical-rl`
+ * reproduced roughly one extra column's worth (~48-57px at this book's
+ * fontSizePx:30/line-height:1.9, i.e. close to one line-height-tall strut)
+ * of block-direction blank space, isolated specifically to the chapter's
+ * OWN first page (measured both in a short isolated repro and via a
+ * before/after A/B on the real book's own chapter-start pages: page
+ * right-margin 120px→63px truncated, 187px→139px in the full book) — not
+ * the documented "few px of invisible heading drift" the aozora doc
+ * measured, which assumed the marker shares the heading's own
+ * (author-controlled, not arbitrary-EPUB-controlled) line-height.
+ * `position: absolute` removes the marker from box generation entirely
+ * (CSS2.1 §9.7), so there is no anonymous block and no inherited strut.
+ *
+ * IMPORTANT SCOPE NOTE: this same real book was ALSO found, during this
+ * investigation, to have a SECOND, unrelated pagination defect — nearly
+ * every interior page of a long (multi-chapter) vertical-rl document is
+ * pushed to the physical left edge with a much larger (~130px+),
+ * marker-INDEPENDENT block-direction gap; reproduced identically with every
+ * marker span deleted outright, and appears only once total document length
+ * crosses some threshold (absent in a truncated ~34-page slice of the same
+ * content, present once the slice reaches ~61 pages). That defect is not
+ * touched by this change — see the accompanying task report for the
+ * bisection evidence — and still needs its own investigation/fix. Do not
+ * read the fix here as having resolved the full margin symptom by itself.
+ * Measured empirically (not just
+ * reasoned) before adopting this: `display: block` variants were tried
+ * first and rejected — they DO fix the displacement, but Chromium's print
+ * pagination then attributes the marker span to the PAGE BEFORE the one its
+ * heading actually renders on whenever a forced page break immediately
+ * precedes it (reproduced with local Chrome + PyMuPDF, matching
+ * converter/app.py's own extraction method) — silently breaking chapter
+ * detection, a worse regression than the margin bug it would have fixed.
+ * `position: absolute` (no offsets — its static position is used, CSS2.1
+ * §10.3.7) was verified NOT to have that failure: PyMuPDF page-by-page text
+ * extraction (same method as converter/app.py's detect_chapter_pages) found
+ * the marker on the exact same PDF page as its heading in two scenarios —
+ * (1) an `atStart` marker immediately after a forced `break-after: page`,
+ * and (2) a marker inserted as a heading's own first child (the `byId`
+ * shape) at a NATURAL (non-forced) page boundary reached after a long
+ * preceding flow. Both are local-Chrome-only passes (this codebase's
+ * existing standing caveat: production runs Cloudflare Browser Rendering, a
+ * different Chromium build never exercised here) and neither is a
+ * from-first-principles proof that no document can ever split an absolutely
+ * positioned box from its heading — only that this specific, previously
+ * un-tested claim is not correct as a blanket assumption for the box shapes
+ * that actually occur in this codebase's output, and margin correctness
+ * regressed a supported case (vertical EPUBs with non-default line-height)
+ * users were actually hitting.
  */
 const XTC_CHAPTER_MARKER_INLINE_STYLE =
-  "color:white!important;-webkit-text-fill-color:white!important;font-size:1px!important;user-select:none!important;-webkit-user-select:none!important";
+  "color:white!important;-webkit-text-fill-color:white!important;font-size:1px!important;position:absolute!important;user-select:none!important;-webkit-user-select:none!important";
 
 /**
  * Creates one invisible XTC chapter-marker `<span>` (XTC_CHAPTER_MARKER_INLINE_STYLE

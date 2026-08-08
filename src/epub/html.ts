@@ -547,11 +547,36 @@ function buildFinalCss(
   // were fixed — its dead-today status is exactly why it was easy to miss,
   // and exactly why test/epub/html.test.ts pins its actual color value
   // rather than only the selector's presence.
+  //
+  // `position: absolute` — kept in sync with XTC_CHAPTER_MARKER_INLINE_STYLE
+  // (sanitize.ts) for the same layout bug that constant's own doc comment
+  // documents in full: an `atStart` marker is inserted as a PRECEDING
+  // SIBLING of the whole chapter `<section>`, not as the heading's own
+  // child, so as an ordinary in-flow inline element it gets wrapped in an
+  // anonymous block box whose line box inherits the EPUB's own (arbitrary)
+  // `line-height` — reproduced as roughly one extra column's worth
+  // (~48-57px at fontSizePx:30/line-height:1.9) of block-direction blank
+  // space on the chapter's own first page of a real vertical-writing EPUB
+  // (a SEPARATE, much larger, marker-independent pagination defect was also
+  // found on that same book's later pages during this investigation — see
+  // XTC_CHAPTER_MARKER_INLINE_STYLE's doc comment and the task report for
+  // why this fix does not, by itself, resolve that one). `position:
+  // absolute` removes it from box generation entirely. Deliberately DIVERGES
+  // from
+  // packages/aozora-text's XTC_CHAPTER_MARKER_CSS, which explicitly rejects
+  // `position: absolute` — that rejection is still correct there (aozora's
+  // marker is always the heading's own first child, sharing its line box
+  // under aozora's own fixed, non-arbitrary CSS, so the anonymous-block
+  // strut this fix targets never applies) and must not be copied over
+  // blindly; see XTC_CHAPTER_MARKER_INLINE_STYLE's doc comment for the full
+  // reasoning and the empirical page-association check (PyMuPDF, matching
+  // converter/app.py's own extraction method) that cleared this choice.
   const xtcChapterMarkerRule = hasXtcChapters
     ? `.${XTC_CHAPTER_MARKER_CLASS} {
   color: white !important;
   -webkit-text-fill-color: white !important;
   font-size: 1px !important;
+  position: absolute !important;
   user-select: none !important;
   -webkit-user-select: none !important;
 }

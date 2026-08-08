@@ -210,15 +210,32 @@ export interface ChapterMarkerPlan {
  * where AOZORA'S marker is inserted (as the heading's own first child, so it
  * shares the heading's line box) but does not hold for the EPUB path's
  * `atStart` markers specifically: insertChapterMarkerSpans's `atStart`
- * branch (this file, below) inserts the marker as `body`'s first child — a
- * PRECEDING SIBLING of the whole chapter `<section>`, not a child of the
- * heading. Because the sibling after it is block-level, the UA wraps the
- * bare inline marker in an anonymous block box (CSS2.1 §9.2.1.1), and that
- * anonymous block's line box takes its strut from the INHERITED
- * font-size/line-height of its containing block — `html`/`body`'s own
- * values, which for an EPUB can be anything the source stylesheet sets
- * (line-height survives css.ts's ALLOWED_PROPERTIES sanitization
- * unrestricted). A real book (レベニューオペレーション(RevOps)の教科書, source
+ * branch (this file, below) is called as `insertChapterMarkerSpans(document,
+ * body, markerPlan.atStart)` where `body` is THIS chapter's own
+ * (independently parsed) `document.body` — the marker is inserted as
+ * `body.firstChild` (`body.insertBefore`), i.e. before whatever `body`'s
+ * first element already was (in every real EPUB seen so far, a block-level
+ * wrapper such as `<section epub:type="chapter">`). `body.innerHTML` is then
+ * returned as `bodyHtml` and embedded VERBATIM as the content of html.ts's
+ * `<section class="epub-spine-item">` wrapper — so in the final document the
+ * marker is that `epub-spine-item` section's first child, a PRECEDING
+ * SIBLING of the chapter's own top-level element, never a child of it or of
+ * the heading. (What actually decides whether an anonymous block forms is
+ * simpler than "sibling of the section vs. child of it": it's whether the
+ * marker's own next sibling is block-level — CSS2.1 §9.2.1.1 wraps a run of
+ * inline-level siblings preceding a block-level one. If a chapter's body
+ * ever starts with inline-level content or a bare text node instead — not
+ * observed in any real EPUB used to derive this fix, and not exhaustively
+ * checked — no anonymous block would form in the first place and this whole
+ * mechanism would not apply; the fix is still correct in that case, just
+ * inert rather than doing work.) Because the sibling after it is
+ * block-level in every case actually measured, the UA wraps the bare inline
+ * marker in an anonymous block box, and that anonymous block's line box
+ * takes its strut from the INHERITED font-size/line-height of its
+ * containing block — `html`/`body`'s own values, which for an EPUB can be
+ * anything the source stylesheet sets (line-height survives
+ * css.ts's ALLOWED_PROPERTIES sanitization unrestricted). A real book
+ * (レベニューオペレーション(RevOps)の教科書, source
  * style.css: `line-height: 1.9`) combined with `writing-mode: vertical-rl`
  * reproduced roughly one extra column's worth (~48-57px at this book's
  * fontSizePx:30/line-height:1.9, i.e. close to one line-height-tall strut)
@@ -258,13 +275,17 @@ export interface ChapterMarkerPlan {
  * (1) an `atStart` marker immediately after a forced `break-after: page`,
  * and (2) a marker inserted as a heading's own first child (the `byId`
  * shape) at a NATURAL (non-forced) page boundary reached after a long
- * preceding flow. Both are local-Chrome-only passes (this codebase's
- * existing standing caveat: production runs Cloudflare Browser Rendering, a
- * different Chromium build never exercised here) and neither is a
- * from-first-principles proof that no document can ever split an absolutely
- * positioned box from its heading — only that this specific, previously
- * un-tested claim is not correct as a blanket assumption for the box shapes
- * that actually occur in this codebase's output, and margin correctness
+ * preceding flow. There are four combinations of {insertion path: atStart,
+ * byId} x {page-break kind immediately before the marker: natural, forced}
+ * and only these two were actually checked — `atStart` at a NATURAL
+ * boundary and `byId` at a FORCED one remain untested. Both checked passes
+ * are also local-Chrome-only (this codebase's existing standing caveat:
+ * production runs Cloudflare Browser Rendering, a different Chromium build
+ * never exercised here) and neither is a from-first-principles proof that
+ * no document can ever split an absolutely positioned box from its heading
+ * — only that this specific, previously un-tested claim is not correct as a
+ * blanket assumption for the box shapes that actually occur in this
+ * codebase's output, and margin correctness
  * regressed a supported case (vertical EPUBs with non-default line-height)
  * users were actually hitting.
  */

@@ -550,11 +550,14 @@ function buildFinalCss(
   //
   // `position: absolute` — kept in sync with XTC_CHAPTER_MARKER_INLINE_STYLE
   // (sanitize.ts) for the same layout bug that constant's own doc comment
-  // documents in full: an `atStart` marker is inserted as a PRECEDING
-  // SIBLING of the whole chapter `<section>`, not as the heading's own
-  // child, so as an ordinary in-flow inline element it gets wrapped in an
-  // anonymous block box whose line box inherits the EPUB's own (arbitrary)
-  // `line-height` — reproduced as roughly one extra column's worth
+  // documents in full (including exactly which element the marker ends up a
+  // sibling of, and why — do not re-derive that here, read it there): an
+  // `atStart` marker ends up a PRECEDING SIBLING of the chapter's own
+  // top-level element inside the `epub-spine-item` section this function
+  // builds below, not a child of it or of the heading, so as an ordinary
+  // in-flow inline element it gets wrapped in an anonymous block box whose
+  // line box inherits the EPUB's own (arbitrary) `line-height` — reproduced
+  // as roughly one extra column's worth
   // (~48-57px at fontSizePx:30/line-height:1.9) of block-direction blank
   // space on the chapter's own first page of a real vertical-writing EPUB
   // (a SEPARATE, much larger, marker-independent pagination defect was also

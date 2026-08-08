@@ -196,6 +196,107 @@ describe("prepareEpubDocument: image float reset (画像のfloatをEPUB側CSSか
   });
 });
 
+// Pins the fix for a real, reproduced content-loss bug: max-width/max-height
+// as PERCENTAGES only resolve against a containing block that is definite in
+// that axis (CSS spec), and an in-chapter <img>'s containing block in
+// writing-mode:vertical-rl body text is not reliably definite — so
+// max-width:100% regularly computed to "none" and the image rendered at its
+// raw intrinsic size. Measured against a real EPUB (X3 device, marginPx 40 ->
+// 448x712px page content box), a 752x465 in-chapter image overflowed the page
+// and was silently clipped in the actual PDF, with the clipped-off portion
+// gone from every page rather than pushed to the next one. The fix gives
+// max-width/max-height an explicit, !important PX ceiling (the same page
+// content box .epub-cover below uses) instead of a percentage, so the value
+// is always definite AND always wins the cascade. See buildFinalCss's img/svg
+// rule doc comment for the full evidence — including why !important is
+// required (a real EPUB's own higher-specificity `figure.h-figure img` rule
+// otherwise defeated a plain, non-!important px rule the same way) — and for
+// why the px-vs-percentage half of this is the same root cause as
+// .epub-cover's own definite-size fix below.
+describe("prepareEpubDocument: image max-size ceiling (本文中の画像がページ幅・高さを超えてクリップされ内容が消える不具合の修正)", () => {
+  it("gives the global img/svg rule a definite, !important PX max-width/max-height (the page content box), not a percentage", () => {
+    const zip = buildEpubZip(minimalEpub3Files());
+    const result = prepareEpubDocument(zip, options(), context());
+    // Default options: X3 device (528x792) minus marginPx 40 on every side
+    // = 448x712 page content box (src/devices.ts, src/epub-options.ts).
+    expect(result.html).toMatch(/img,\s*svg\s*{[^}]*max-width:\s*448px\s*!important/);
+    expect(result.html).toMatch(/img,\s*svg\s*{[^}]*max-height:\s*712px\s*!important/);
+    // Actual CSS declarations only ("max-width:"/"max-height:", with the
+    // colon) — the img/svg rule's own doc comment (also inside this `{ }`
+    // block) discusses the old percentage-based version in prose, which a
+    // bare substring check would false-positive on.
+    expect(result.html).not.toMatch(/img,\s*svg\s*{[^}]*max-width\s*:\s*100%/);
+    expect(result.html).not.toMatch(/img,\s*svg\s*{[^}]*max-height\s*:\s*100%/);
+  });
+
+  it("recomputes the img/svg max-width/max-height ceiling from a non-default device and marginPx", () => {
+    const zip = buildEpubZip(minimalEpub3Files());
+    const result = prepareEpubDocument(zip, options({ device: "x4", marginPx: 20 }), context());
+    // X4 device (480x800, src/devices.ts) minus marginPx 20 on every side
+    // = 440x760.
+    expect(result.html).toMatch(/img,\s*svg\s*{[^}]*max-width:\s*440px\s*!important/);
+    expect(result.html).toMatch(/img,\s*svg\s*{[^}]*max-height:\s*760px\s*!important/);
+  });
+
+  // Regression test for the SECOND, independently-reproduced way this bug
+  // came back: even with a definite px max-width/max-height, an EPUB's own
+  // stylesheet can carry a MORE SPECIFIC selector — `figure.h-figure img`
+  // (one class, TWO types: figure and img, so specificity 0,1,2) — that
+  // beats this bare `img, svg` rule's specificity (0,0,1) regardless of
+  // source order. Without !important, that EPUB rule's own `max-width: 100%`
+  // won the cascade outright and reintroduced the exact same
+  // intrinsic-size-and-clip failure — reproduced against a real commercial
+  // EPUB whose style.css declares exactly this selector and declaration
+  // (`figure.h-figure img { max-width: 100%; height: auto; }`).
+  // vitest has no CSS cascade engine, so this can only pin that BOTH the
+  // higher-specificity EPUB rule survives sanitization AND this rule's own
+  // max-width/max-height carry !important (which is what actually wins that
+  // cascade in a real renderer) — not simulate the cascade outcome itself.
+  it("keeps !important on max-width/max-height even when the EPUB's own CSS has a higher-specificity img selector (figure.h-figure img)", () => {
+    const files = minimalEpub3Files();
+    const zip = buildEpubZip({
+      ...files,
+      "OEBPS/chapter1.xhtml":
+        "<html><head><style>figure.h-figure img { max-width: 100%; height: auto; }</style></head>" +
+        '<body><figure class="h-figure"><img src="cover.png"/></figure></body></html>',
+    });
+    const result = prepareEpubDocument(zip, options(), context());
+    // The EPUB's higher-specificity rule survived sanitization (max-width
+    // and height are both on css.ts's ALLOWED_PROPERTIES allowlist) ...
+    expect(result.html).toMatch(/figure\.h-figure img\s*{[^}]*max-width:\s*100%/);
+    // ... which is exactly why this rule's own max-width/max-height must
+    // still carry !important to win against it.
+    expect(result.html).toMatch(/img,\s*svg\s*{[^}]*max-width:\s*448px\s*!important/);
+    expect(result.html).toMatch(/img,\s*svg\s*{[^}]*max-height:\s*712px\s*!important/);
+  });
+
+  // Documents a residual, NOT-fixed-by-this-change risk (see buildFinalCss's
+  // img/svg rule doc comment's own "Residual gap" paragraph): css.ts's
+  // sanitizeDeclaration never strips an EPUB-authored declaration's own
+  // !important (parseDeclarations keeps the value, including any
+  // "!important" suffix, verbatim). So if an EPUB's own higher-specificity
+  // img rule ALSO carries !important — unlike the real book that motivated
+  // this fix, whose figure.h-figure img rule does not — the cascade would
+  // compare specificity within the "important" bucket the same way it does
+  // for normal declarations, and the EPUB's 0,1,2 would still beat this
+  // rule's 0,0,1, reproducing this exact clipping bug again. This is not a
+  // regression from this change (the pre-fix code lost to a non-!important
+  // EPUB rule just as easily), so nothing here is asserted to "fix" it —
+  // this test only pins that an EPUB's own !important survives sanitization
+  // unmodified, which is the actual mechanism behind that residual risk.
+  it("does NOT strip an EPUB-authored !important on a competing img rule (documents why that case can still defeat this fix's !important)", () => {
+    const files = minimalEpub3Files();
+    const zip = buildEpubZip({
+      ...files,
+      "OEBPS/chapter1.xhtml":
+        "<html><head><style>figure.h-figure img { max-width: 100% !important; }</style></head>" +
+        '<body><figure class="h-figure"><img src="cover.png"/></figure></body></html>',
+    });
+    const result = prepareEpubDocument(zip, options(), context());
+    expect(result.html).toMatch(/figure\.h-figure img\s*{[^}]*max-width:\s*100%\s*!important/);
+  });
+});
+
 describe("prepareEpubDocument: cover section sizing (紙面いっぱい・中央配置・改ページ)", () => {
   function coverOnlyFiles(coverBytes: Uint8Array = new Uint8Array([1, 2, 3, 4])) {
     const files = minimalEpub3Files();

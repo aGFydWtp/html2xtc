@@ -569,15 +569,16 @@ function buildFinalCss(
   text-orientation: mixed${important};
 }
 `;
-  // The cover page has no text to fragment across pages, so it can simply
-  // be sized to fill its one page's content box (page width/height minus
-  // the @page margin on every side) and centered — no separate padding
-  // needed, @page's margin already insets it like every other page. Both
-  // dimensions are needed, not just height — see .epub-cover's own doc
-  // comment below for why.
+  // Page content box (page size minus the @page margin on every side) —
+  // named for what it is, not for who first needed it: originally computed
+  // only for .epub-cover (see that rule's own doc comment below for why a
+  // definite box matters there), but the same number is now also the img/svg
+  // rule's max-width/max-height ceiling below, for the identical reason. Both
+  // dimensions are needed, not just height — again, see .epub-cover's doc
+  // comment for why.
   const device = resolveDeviceProfile(options.device);
-  const coverContentWidthPx = Math.max(0, device.outputWidthPx - options.marginPx * 2);
-  const coverContentHeightPx = Math.max(0, device.outputHeightPx - options.marginPx * 2);
+  const pageContentWidthPx = Math.max(0, device.outputWidthPx - options.marginPx * 2);
+  const pageContentHeightPx = Math.max(0, device.outputHeightPx - options.marginPx * 2);
   return `@page {
   size: ${device.outputWidthPx}px ${device.outputHeightPx}px;
   margin: ${options.marginPx}px;
@@ -601,8 +602,98 @@ pre, code, kbd, samp {
 }
 
 img, svg {
-  max-width: 100%;
-  max-height: 100%;
+  /* PX, not the more obvious percentage form (max-width/max-height at 100%)
+     — same underlying CSS rule .epub-cover's own doc comment below
+     documents (percentage sizes only resolve against a containing block
+     that is definite in that axis), but hitting a DIFFERENT element here:
+     .epub-cover's box is a purpose-built div this function itself sizes
+     explicitly, so it was easy to make definite; an in-chapter <img>'s
+     containing block is whatever ordinary flow element the EPUB's own
+     markup put it in, and in vertical-writing-mode body text that
+     ancestor's inline size (the img's block-direction max, since size
+     keywords are physical, not logical, on max-width/max-height) is not
+     reliably definite the way a dedicated cover box is — so a max-width of
+     100% there regularly computed to "none" and the <img> rendered at its
+     raw intrinsic size instead of being clamped to the page.
+     pageContentWidthPx/pageContentHeightPx are always definite numbers
+     (computed above from @page's own size and margin), so using them here
+     removes the "is the containing block definite?" question entirely
+     rather than depending on how any given EPUB happens to markup its
+     image's ancestors.
+
+     !important — unconditionally, like this rule's existing float:none
+     !important below, NOT gated on layoutIsExplicit the way this
+     function's other rules are: found necessary, not just defensive,
+     against a real EPUB whose own stylesheet declares a max-width of 100%
+     and a height of auto, scoped to a class-plus-tag selector matching this
+     exact figure's img (one class, two types — figure AND img — so
+     specificity 0,1,2). That beats this bare "img, svg" rule's specificity
+     of 0,0,1 regardless of which one appears later in the document, so
+     without !important the EPUB's own percentage rule won the cascade
+     outright and reproduced the exact same "renders at intrinsic size,
+     clipped at the page edge" failure this rule exists to prevent — this
+     was not a hypothetical, it is what actually happened first, on the
+     SAME empirical repro this doc comment cites below, before !important
+     was added. The float rule's own doc comment already establishes the
+     standing rule this codebase applies to img/svg sizing/behavior
+     corrections: never something an "honor the EPUB's own presentation"
+     auto choice should defer to, because the alternative is a text- or
+     content-legibility regression this converter must always prevent. A
+     clipped, silently-truncated illustration is that same failure mode, so
+     the same unconditional !important applies here too.
+
+     Trade-off this !important accepts (reasoned from the CSS cascade
+     rules, NOT separately reproduced against a real EPUB the way the
+     clipping bug above was): before this rule had !important, an EPUB's
+     OWN higher-specificity max-width could still legitimately win in two
+     cases this codebase used to get right — (1) an author who deliberately
+     shrinks an image below page size, e.g. a thumbnail rule scoped to a
+     class (specificity higher than this bare tag-selector rule) setting
+     max-width to a small px value, used to win via specificity, and now
+     always gets overridden by this rule's page-content-box ceiling instead
+     (harmless when the ceiling is larger than the author's own value, but
+     it does mean the author's specific choice no longer reaches the
+     renderer at all); (2) an image whose containing block WAS definite
+     (e.g. an ancestor with an explicit width), where the old
+     max-width of 100% correctly resolved against that ancestor's box — this
+     rule's fixed page-content-box px value has no notion of that ancestor
+     and could in principle now size the image past it. Accepting this was
+     a deliberate choice: silently losing page content (this fix's target
+     bug) is worse than silently ignoring an author's own size constraint,
+     and of the two, only the former was ever observed to actually destroy
+     reader-visible information. Not fixed here: making the !important
+     conditional on "does the EPUB have a competing, more specific rule"
+     would require re-deriving CSS specificity for arbitrary EPUB-authored
+     selectors in this function, which this codebase has no mechanism for
+     and is out of scope for this fix.
+
+     Residual gap even with this !important: css.ts's sanitizeDeclaration
+     keeps whatever !important flag an EPUB's own declaration already had
+     (see that file's own doc comments — parseDeclarations does not strip
+     it, and no later pass does either); it is only THIS class of hostile
+     rule that xtcChapterMarkerRule's doc comment above treats as a known,
+     already-handled threat for the chapter-marker spans specifically. For
+     ordinary img/svg sizing, that threat is NOT separately neutralized: if
+     an EPUB's own rule were ALSO marked !important (this book's
+     figure.h-figure img rule, empirically, is not), the cascade would
+     compare specificity within the "important" bucket the same way it does
+     for normal declarations, and the EPUB's 0,1,2 would still beat this
+     rule's 0,0,1 — reproducing this exact bug again. Stripping !important
+     from EPUB-authored CSS globally would close this, but that is a
+     broader change to css.ts's sanitizer than this fix's scope, and is
+     intentionally not made here.
+
+     Empirically reproduced end-to-end against a real EPUB (X3 device,
+     marginPx 40 -> 448x712px page content box): with only the percentage
+     rule (no !important, pre-dating this fix), a 752x465 in-chapter image
+     rendered at full intrinsic size, overflowed the page, and was silently
+     clipped at the page boundary in the actual PDF — not merely pushed to
+     the next page, GONE (the clipped-off portion, a chart's rightmost data
+     column and the table beneath it, appeared on no page at all). Six of
+     seven in-chapter images in that same book exceeded 448px in the block
+     direction, so this was not a rare edge case for that book. */
+  max-width: ${pageContentWidthPx}px !important;
+  max-height: ${pageContentHeightPx}px !important;
   object-fit: contain;
   break-inside: avoid;
   /* Unconditional !important, unlike this function's other rules (which
@@ -625,28 +716,35 @@ figure {
 }
 
 .epub-cover {
-  /* Both width and height must be explicit (not e.g. min-height alone):
-     max-width/max-height:100% on the <img> below only resolves against a
-     containing block whose size in that axis is definite — CSS spec's rule
-     for percentage sizes, not this codebase's assumption. With only
-     min-height set (the prior version of this rule), the box's HEIGHT
-     still counted as indefinite for that purpose, so max-height:100%
-     computed to "none" and the <img> rendered at its raw intrinsic pixel
-     size instead. Empirically reproduced against 熊野奈智山.epub's real
-     600x800 cover in an actual Chromium print render: the oversized image
-     fragment spilled onto page 2, which pushed .epub-cover's content off
-     page 1 entirely and left it fully blank. width has the same
-     requirement even though it was never observed failing on its own here
-     (a definite height alone happened to be enough for this specific
-     nearly-page-sized image) — giving both is the actually-correct fix,
-     not a guess. overflow:hidden is a backstop only, not the fix itself:
-     with both dimensions definite, max-width/max-height:100% plus
-     object-fit:contain (above) already guarantee the whole image fits and
-     is never cropped — overflow:hidden just guarantees a future regression
-     clips invisibly instead of silently pushing content onto the next
-     page's fragment the way this bug did. */
-  width: ${coverContentWidthPx}px;
-  height: ${coverContentHeightPx}px;
+  /* Both width and height must be explicit (not e.g. min-height alone). This
+     was originally required because the <img> inside relied on
+     max-width/max-height:100%, which only resolves against a containing
+     block whose size in that axis is definite — CSS spec's rule for
+     percentage sizes, not this codebase's assumption. With only min-height
+     set (the prior version of this rule), the box's HEIGHT still counted as
+     indefinite for that purpose, so max-height:100% computed to "none" and
+     the <img> rendered at its raw intrinsic pixel size instead. Empirically
+     reproduced against 熊野奈智山.epub's real 600x800 cover in an actual
+     Chromium print render: the oversized image fragment spilled onto page
+     2, which pushed .epub-cover's content off page 1 entirely and left it
+     fully blank. width has the same requirement even though it was never
+     observed failing on its own here (a definite height alone happened to
+     be enough for this specific nearly-page-sized image) — giving both is
+     the actually-correct fix, not a guess. The global img/svg rule above
+     has since moved off percentages onto its own explicit
+     pageContentWidthPx/pageContentHeightPx ceiling (same underlying bug,
+     found again for in-chapter images — see that rule's doc comment), so
+     this box's width/height are no longer load-bearing for THAT
+     percentage-resolution reason; they are kept because this box still
+     needs its own definite size for the flex-centering below and for
+     overflow:hidden's backstop role. overflow:hidden is a backstop only,
+     not the fix itself: with both dimensions definite, the img rule's
+     max-width/max-height plus object-fit:contain (above) already guarantee
+     the whole image fits and is never cropped — overflow:hidden just
+     guarantees a future regression clips invisibly instead of silently
+     pushing content onto the next page's fragment the way this bug did. */
+  width: ${pageContentWidthPx}px;
+  height: ${pageContentHeightPx}px;
   overflow: hidden;
   display: flex;
   align-items: center;

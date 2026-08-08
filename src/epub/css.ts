@@ -289,18 +289,20 @@ export type CssUrlResolver = (rawUrl: string) => string | undefined;
  * for EPUB reading layout and would otherwise widen the url()/expression()
  * surface for no reader-visible benefit.
  *
- * `writing-mode` is the one deliberate exception to "preserve whatever the
- * EPUB's own CSS says": it is dropped here, everywhere it can appear
- * (stylesheets, inline `<style>`, inline `style=""` — this allowlist is the
- * single choke point for all three), so html.ts's own correction CSS is the
- * ONLY place `writing-mode` is ever declared in the generated document. Two
- * concrete, demonstrated reasons: (1) an EPUB that ships its own
- * `body { writing-mode: ... }` otherwise wins over html.ts's root-level
- * rule for that element (an element's own declaration always beats an
- * inherited one, `!important` or not — CSS cascades per element, not
- * across the tree), which silently defeats an explicit (non-"auto")
- * `layout` choice; single-sourcing writing-mode fixes that unconditionally.
- * (2) real-world 青空文庫-derived EPUBs routinely declare
+ * `writing-mode` and `font`/`font-family` are deliberate exceptions to
+ * "preserve whatever the EPUB's own CSS says": they are dropped here,
+ * everywhere they can appear (stylesheets, inline `<style>`, inline
+ * `style=""` — this allowlist is the single choke point for all three), so
+ * html.ts's own correction CSS is the ONLY place they are ever declared in
+ * the generated document.
+ *
+ * `writing-mode`: two concrete, demonstrated reasons: (1) an EPUB that
+ * ships its own `body { writing-mode: ... }` otherwise wins over html.ts's
+ * root-level rule for that element (an element's own declaration always
+ * beats an inherited one, `!important` or not — CSS cascades per element,
+ * not across the tree), which silently defeats an explicit (non-"auto")
+ * `layout` choice; single-sourcing writing-mode fixes that
+ * unconditionally. (2) real-world 青空文庫-derived EPUBs routinely declare
  * `html, body { writing-mode: vertical-rl }` themselves, so leaving it
  * allowed doesn't just risk an override failure, it's the *common* case.
  * `text-orientation` (and everything else on spec's original preserve list
@@ -310,19 +312,103 @@ export type CssUrlResolver = (rawUrl: string) => string | undefined;
  * block-progression/fragmentation context the way writing-mode does) and
  * stays allowed.
  *
- * Trade-off: sanitizeDeclaration (below) decides purely by property name,
- * never by selector — so this drops EVERY `writing-mode` declaration in an
- * EPUB's CSS, not just the `html`/`body`-level ones the override bug above
- * is actually about. A book that locally flips a single element's run
- * direction (e.g. a `.horizontal-note { writing-mode: horizontal-tb }`
- * aside inside an otherwise-vertical chapter) loses that local override
- * too — it renders in the document's overall layout direction instead.
- * Accepted: html.ts's own correction CSS has no way to know which specific
- * descendants an EPUB intended to flip, so there is no drop-in replacement
- * for a lost local override; the alternative (a selector-aware allowlist
- * that only strips root-level writing-mode) would reintroduce the override
- * bug for any EPUB whose local override happens to sit on `html`/`body`
- * anyway, which is the common case this exists to fix.
+ * `font`/`font-family`: same mechanism, same fix. html.ts's generated CSS
+ * (buildFinalCss) only ever puts `font-family` on `html, body, .epub-book`
+ * — a root-level, inherited declaration. Any EPUB rule that names
+ * `font-family` on a more specific selector (`p`, `h1`-`h4`, `pre`, `td`,
+ * ...) sits directly on the element and always wins over that inherited
+ * value, `!important` or not, exactly like the writing-mode case above —
+ * so leaving `font-family` allowed silently defeats the user's chosen
+ * font. This override bug, on its own, is sufficient justification for the
+ * drop regardless of what the author's `font-family` would otherwise have
+ * resolved to. Measured against 3 real EPUBs via Chromium
+ * `getComputedStyle` across every text-bearing element: a
+ * self-produced/青空文庫-derived EPUB (which only ever sets `font-family`
+ * on `html`/`body`) was unaffected, but a commercial EPUB (author rules
+ * directly on `p`/`h1`-`h4`/`pre`/`td`) lost the user's font on 904 of 1119
+ * text-bearing elements (80.8%).
+ *
+ * Secondary, weaker point on top of the override bug above: keeping the
+ * declaration around would not even reliably preserve the author's actual
+ * intent, for the `@font-face`-embedded-font case specifically —
+ * `@font-face` is already dropped everywhere (D3 — see KEPT_AT_RULE_BLOCKS
+ * below, whose absence of `"font-face"` is what drops it; a separate
+ * mechanism from this allowlist, which only governs declaration
+ * properties, not at-rules), so any family an author's `font-family` names
+ * ONLY to reach a same-EPUB `@font-face` binding is never actually present
+ * in the renderer, embedded-font declaration or not. This does NOT extend
+ * to every `font-family` value, though: an author stack can also name a
+ * generic keyword (`serif`/`sans-serif`) directly, or a real system font
+ * the renderer happens to have installed — Cloudflare Browser Rendering's
+ * installed font set has not been measured or enumerated by this codebase,
+ * so for those two cases "the preserved value was already falling back to
+ * a generic family" is NOT established and is not claimed here; the
+ * override bug above is the reason those are still dropped, not this
+ * secondary point. `font` (the shorthand) is dropped for the same override
+ * reason — it can carry a `font-family` component just as directly as the
+ * longhand, and this sanitizer decides per declared property name, not per
+ * expanded component, so there is no way to keep `font` while still
+ * blocking the family it can set. The accepted trade-off is that `font`'s
+ * other components (`font-size`, `font-weight`, `font-style`,
+ * `font-variant`, `font-stretch`, `line-height` — all of which stay
+ * independently allowed as longhands, above) are dropped along with it
+ * instead of surviving on their own — this codebase's sanitizeDeclaration
+ * has no longhand-expansion step that could split `font: bold 14px/1.5
+ * serif` into "keep the non-family parts, drop only the family". Across
+ * the same 3 EPUBs, the `font` shorthand appeared exactly once total (a
+ * CSS-reset rule's `font: inherit`), so this trade-off had no measurable
+ * effect in practice. `pre, code, kbd, samp` are not a special case
+ * despite losing their author-specified `font-family` too: html.ts's
+ * generated CSS unconditionally emits a `font-family: monospace` rule for
+ * that selector group — unconditionally as in "the rule itself is always
+ * present, regardless of options.layout", not "always `!important`": that
+ * rule's `!important` is conditional on `layoutIsExplicit`, same as every
+ * other rule buildFinalCss emits (its local `important` variable). Its
+ * correctness doesn't depend on that `!important` either way: `pre, code,
+ * kbd, samp` is a more specific selector than any surviving rule that could
+ * still be inheriting a `font-family` onto it (EPUB `font-family` rules on
+ * those exact tags are gone too — the sanitizer drops the property by name,
+ * not by selector), so the direct-beats-inherited mechanism above already
+ * guarantees this rule wins without needing `!important` as a tiebreaker;
+ * `!important` here only matters for out-competing another EXPLICIT,
+ * equally-specific `pre`/`code`/`kbd`/`samp` rule, which no longer exists
+ * either.
+ *
+ * Trade-off (writing-mode specific): sanitizeDeclaration (below) decides
+ * purely by property name, never by selector — so this drops EVERY
+ * `writing-mode` declaration in an EPUB's CSS, not just the `html`/`body`-
+ * level ones the override bug above is actually about. A book that
+ * locally flips a single element's run direction (e.g. a
+ * `.horizontal-note { writing-mode: horizontal-tb }` aside inside an
+ * otherwise-vertical chapter) loses that local override too — it renders
+ * in the document's overall layout direction instead. Accepted: html.ts's
+ * own correction CSS has no way to know which specific descendants an
+ * EPUB intended to flip, so there is no drop-in replacement for a lost
+ * local override; the alternative (a selector-aware allowlist that only
+ * strips root-level writing-mode) would reintroduce the override bug for
+ * any EPUB whose local override happens to sit on `html`/`body` anyway,
+ * which is the common case this exists to fix. The same per-property (not
+ * per-selector) decision applies to `font`/`font-family`: there is no
+ * selector-level carve-out for, say, a single `.pull-quote` wanting a
+ * different display family — every such local choice is lost along with
+ * the root-level cases the fix targets.
+ *
+ * `font-size` is intentionally NOT part of this exception — it stays on
+ * the allowlist and is out of scope here (a separate concern from the
+ * font-*family* override bug this fixes).
+ *
+ * Surfaces outside this file, closed so far: `<font face="...">` and SVG's
+ * `font-family` presentation attribute plus its shorthand alias `font`
+ * (SVG 1.1 presentation attributes, e.g. `<text font-family="...">`) are
+ * HTML/SVG attributes, not CSS declarations, so they sit outside this
+ * allowlist's reach entirely; all three are removed separately in
+ * sanitize.ts's attribute-sanitizing pass
+ * (see that pass's own comments for why `<font face>` needs a tag check
+ * and the SVG pair doesn't). Unlike this file's property allowlist,
+ * attribute removal there is a denylist — it drops specific attribute
+ * names, rather than admitting only a known-safe set — so neither that
+ * pass nor this comment can claim to enumerate every font-family injection
+ * surface an EPUB could ever use; only every one found and fixed so far.
  */
 const ALLOWED_PROPERTIES: ReadonlySet<string> = new Set([
   "color",
@@ -335,8 +421,6 @@ const ALLOWED_PROPERTIES: ReadonlySet<string> = new Set([
   "background-attachment",
   "background-clip",
   "background-origin",
-  "font",
-  "font-family",
   "font-size",
   "font-weight",
   "font-style",

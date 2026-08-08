@@ -196,6 +196,46 @@ describe("prepareEpubDocument: image float reset (画像のfloatをEPUB側CSSか
   });
 });
 
+// Pins the fix for a real, reproduced content-loss bug: max-width/max-height
+// as PERCENTAGES only resolve against a containing block that is definite in
+// that axis (CSS spec), and an in-chapter <img>'s containing block in
+// writing-mode:vertical-rl body text is not reliably definite — so
+// max-width:100% regularly computed to "none" and the image rendered at its
+// raw intrinsic size. Measured against a real EPUB (X3 device, marginPx 40 ->
+// 448x712px page content box), a 752x465 in-chapter image overflowed the page
+// and was silently clipped in the actual PDF, with the clipped-off portion
+// gone from every page rather than pushed to the next one. The fix gives
+// max-width/max-height an explicit PX ceiling (the same page content box
+// .epub-cover below uses) instead of a percentage, so the value is always
+// definite. See buildFinalCss's img/svg rule doc comment for the full
+// evidence and for why this is the same root cause as .epub-cover's own
+// definite-size fix below.
+describe("prepareEpubDocument: image max-size ceiling (本文中の画像がページ幅・高さを超えてクリップされ内容が消える不具合の修正)", () => {
+  it("gives the global img/svg rule a definite PX max-width/max-height (the page content box), not a percentage", () => {
+    const zip = buildEpubZip(minimalEpub3Files());
+    const result = prepareEpubDocument(zip, options(), context());
+    // Default options: X3 device (528x792) minus marginPx 40 on every side
+    // = 448x712 page content box (src/devices.ts, src/epub-options.ts).
+    expect(result.html).toMatch(/img,\s*svg\s*{[^}]*max-width:\s*448px/);
+    expect(result.html).toMatch(/img,\s*svg\s*{[^}]*max-height:\s*712px/);
+    // Actual CSS declarations only ("max-width:"/"max-height:", with the
+    // colon) — the img/svg rule's own doc comment (also inside this `{ }`
+    // block) discusses the old percentage-based version in prose, which a
+    // bare substring check would false-positive on.
+    expect(result.html).not.toMatch(/img,\s*svg\s*{[^}]*max-width\s*:\s*100%/);
+    expect(result.html).not.toMatch(/img,\s*svg\s*{[^}]*max-height\s*:\s*100%/);
+  });
+
+  it("recomputes the img/svg max-width/max-height ceiling from a non-default device and marginPx", () => {
+    const zip = buildEpubZip(minimalEpub3Files());
+    const result = prepareEpubDocument(zip, options({ device: "x4", marginPx: 20 }), context());
+    // X4 device (480x800, src/devices.ts) minus marginPx 20 on every side
+    // = 440x760.
+    expect(result.html).toMatch(/img,\s*svg\s*{[^}]*max-width:\s*440px/);
+    expect(result.html).toMatch(/img,\s*svg\s*{[^}]*max-height:\s*760px/);
+  });
+});
+
 describe("prepareEpubDocument: cover section sizing (紙面いっぱい・中央配置・改ページ)", () => {
   function coverOnlyFiles(coverBytes: Uint8Array = new Uint8Array([1, 2, 3, 4])) {
     const files = minimalEpub3Files();

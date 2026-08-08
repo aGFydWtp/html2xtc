@@ -569,15 +569,16 @@ function buildFinalCss(
   text-orientation: mixed${important};
 }
 `;
-  // The cover page has no text to fragment across pages, so it can simply
-  // be sized to fill its one page's content box (page width/height minus
-  // the @page margin on every side) and centered — no separate padding
-  // needed, @page's margin already insets it like every other page. Both
-  // dimensions are needed, not just height — see .epub-cover's own doc
-  // comment below for why.
+  // Page content box (page size minus the @page margin on every side) —
+  // named for what it is, not for who first needed it: originally computed
+  // only for .epub-cover (see that rule's own doc comment below for why a
+  // definite box matters there), but the same number is now also the img/svg
+  // rule's max-width/max-height ceiling below, for the identical reason. Both
+  // dimensions are needed, not just height — again, see .epub-cover's doc
+  // comment for why.
   const device = resolveDeviceProfile(options.device);
-  const coverContentWidthPx = Math.max(0, device.outputWidthPx - options.marginPx * 2);
-  const coverContentHeightPx = Math.max(0, device.outputHeightPx - options.marginPx * 2);
+  const pageContentWidthPx = Math.max(0, device.outputWidthPx - options.marginPx * 2);
+  const pageContentHeightPx = Math.max(0, device.outputHeightPx - options.marginPx * 2);
   return `@page {
   size: ${device.outputWidthPx}px ${device.outputHeightPx}px;
   margin: ${options.marginPx}px;
@@ -601,8 +602,35 @@ pre, code, kbd, samp {
 }
 
 img, svg {
-  max-width: 100%;
-  max-height: 100%;
+  /* PX, not the more obvious percentage form (max-width/max-height at 100%)
+     — same underlying
+     CSS rule .epub-cover's own doc comment below documents (percentage
+     sizes only resolve against a containing block that is definite in that
+     axis), but hitting a DIFFERENT element here: .epub-cover's box is a
+     purpose-built div this function itself sizes explicitly, so it was easy
+     to make definite; an in-chapter <img>'s containing block is whatever
+     ordinary flow element the EPUB's own markup put it in, and in
+     vertical-writing-mode body text that ancestor's inline size (the img's
+     block-direction max, since size keywords are physical, not logical, on
+     max-width/max-height) is not reliably definite the way a dedicated
+     cover box is — so a max-width of 100% there regularly computed to
+     "none" and the <img> rendered at its raw intrinsic size instead of
+     being clamped to the page. Empirically reproduced against a real EPUB
+     (X3 device, marginPx 40 -> 448x712px page content box, pageContentWidthPx/
+     pageContentHeightPx above): with only the percentage rule, a 752x465
+     in-chapter image rendered at full intrinsic size, overflowed the page,
+     and was silently clipped at the page boundary in the actual PDF — not
+     merely pushed to the next page, GONE (the clipped-off portion, a
+     chart's rightmost data column, appeared on no page at all). Six of
+     seven in-chapter images in that same book exceeded 448px in the block
+     direction, so an indefinite containing block was the common case there,
+     not a rare one. pageContentWidthPx/pageContentHeightPx are always
+     definite numbers (computed above from @page's own size and margin), so
+     using them here removes the "is the containing block definite?"
+     question entirely rather than depending on how any given EPUB happens
+     to markup its image's ancestors. */
+  max-width: ${pageContentWidthPx}px;
+  max-height: ${pageContentHeightPx}px;
   object-fit: contain;
   break-inside: avoid;
   /* Unconditional !important, unlike this function's other rules (which
@@ -625,28 +653,35 @@ figure {
 }
 
 .epub-cover {
-  /* Both width and height must be explicit (not e.g. min-height alone):
-     max-width/max-height:100% on the <img> below only resolves against a
-     containing block whose size in that axis is definite — CSS spec's rule
-     for percentage sizes, not this codebase's assumption. With only
-     min-height set (the prior version of this rule), the box's HEIGHT
-     still counted as indefinite for that purpose, so max-height:100%
-     computed to "none" and the <img> rendered at its raw intrinsic pixel
-     size instead. Empirically reproduced against 熊野奈智山.epub's real
-     600x800 cover in an actual Chromium print render: the oversized image
-     fragment spilled onto page 2, which pushed .epub-cover's content off
-     page 1 entirely and left it fully blank. width has the same
-     requirement even though it was never observed failing on its own here
-     (a definite height alone happened to be enough for this specific
-     nearly-page-sized image) — giving both is the actually-correct fix,
-     not a guess. overflow:hidden is a backstop only, not the fix itself:
-     with both dimensions definite, max-width/max-height:100% plus
-     object-fit:contain (above) already guarantee the whole image fits and
-     is never cropped — overflow:hidden just guarantees a future regression
-     clips invisibly instead of silently pushing content onto the next
-     page's fragment the way this bug did. */
-  width: ${coverContentWidthPx}px;
-  height: ${coverContentHeightPx}px;
+  /* Both width and height must be explicit (not e.g. min-height alone). This
+     was originally required because the <img> inside relied on
+     max-width/max-height:100%, which only resolves against a containing
+     block whose size in that axis is definite — CSS spec's rule for
+     percentage sizes, not this codebase's assumption. With only min-height
+     set (the prior version of this rule), the box's HEIGHT still counted as
+     indefinite for that purpose, so max-height:100% computed to "none" and
+     the <img> rendered at its raw intrinsic pixel size instead. Empirically
+     reproduced against 熊野奈智山.epub's real 600x800 cover in an actual
+     Chromium print render: the oversized image fragment spilled onto page
+     2, which pushed .epub-cover's content off page 1 entirely and left it
+     fully blank. width has the same requirement even though it was never
+     observed failing on its own here (a definite height alone happened to
+     be enough for this specific nearly-page-sized image) — giving both is
+     the actually-correct fix, not a guess. The global img/svg rule above
+     has since moved off percentages onto its own explicit
+     pageContentWidthPx/pageContentHeightPx ceiling (same underlying bug,
+     found again for in-chapter images — see that rule's doc comment), so
+     this box's width/height are no longer load-bearing for THAT
+     percentage-resolution reason; they are kept because this box still
+     needs its own definite size for the flex-centering below and for
+     overflow:hidden's backstop role. overflow:hidden is a backstop only,
+     not the fix itself: with both dimensions definite, the img rule's
+     max-width/max-height plus object-fit:contain (above) already guarantee
+     the whole image fits and is never cropped — overflow:hidden just
+     guarantees a future regression clips invisibly instead of silently
+     pushing content onto the next page's fragment the way this bug did. */
+  width: ${pageContentWidthPx}px;
+  height: ${pageContentHeightPx}px;
   overflow: hidden;
   display: flex;
   align-items: center;

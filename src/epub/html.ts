@@ -619,6 +619,65 @@ html, body {
   color: #000;
 }
 
+* {
+  /* Emergency line breaking for unbreakable tokens. A single token longer
+     than the column extent — real repro: a 54-char URL in body text, which
+     at fontSizePx 30 exceeds the X3 page's 712px column in vertical-rl
+     writing mode — does not merely overflow its own line: it
+     broke pagination for the WHOLE document, with the majority of body
+     text emitted on no page at all and every page's margins collapsed
+     (measured on the minimal repro: 3 pages with the ink pushed into the
+     page margin vs 5 pages with normal margins once wrapping was enabled —
+     the 2 extra pages being the text that had silently vanished). The
+     TXT/Aozora pipeline (src/text-html.ts) has always declared
+     "overflow-wrap: anywhere" on its .content; this EPUB path had no wrap
+     declaration at all, and that one difference was the whole bug.
+
+     "anywhere", NOT "break-word": both add the same emergency break
+     opportunities in normal flow (measured identical on the plain-
+     paragraph repro), but break-word does not let those breaks into
+     min-content intrinsic-size calculation, so a long token inside a
+     table cell (or any other min-content-sized context) keeps its full
+     unbroken length as the cell's minimum size and reproduces this exact
+     text-loss failure — measured: the same repro with the URL moved into
+     a <td> stayed broken under break-word (identical page count and
+     edge-pinned ink as with no declaration at all) and was fixed by
+     anywhere. "anywhere" is also what src/text-html.ts already uses.
+
+     Universal selector, NOT an inherited html/body declaration:
+     overflow-wrap deliberately stays on css.ts's ALLOWED_PROPERTIES (an
+     author's own wrap declarations are usually harmless or helpful, so
+     they are preserved), which means an EPUB rule that declares, say,
+     "overflow-wrap: normal" directly on p sits on the element and beats
+     an inherited value regardless of any !important on the ancestor —
+     the same per-element cascade mechanism css.ts's writing-mode doc
+     comment documents. The universal selector puts the declaration
+     directly on every element, so there is no inherited value to lose.
+
+     Unconditional !important — same stance as the img/svg
+     float:none/max-width rules below: an unbreakable token that destroys
+     pagination is a text-legibility (here: text-EXISTENCE) failure this
+     converter must always prevent, never an authored presentation choice
+     for an "auto" layout to defer to. With it, this 0,0,0-specificity
+     rule still beats every non-!important author declaration (the
+     importance tier outranks specificity). Residual gaps, accepted and
+     NOT fixed here (same shape as the img rule's own residual-gap
+     paragraph): (1) an author declaration that is ITSELF !important wins
+     within the important tier on specificity (css.ts keeps authored
+     !important verbatim); (2) an author "white-space: nowrap" (also an
+     allowed property) disables wrapping outright, and overflow-wrap only
+     creates break opportunities where wrapping is enabled at all.
+
+     Japanese typography is untouched: overflow-wrap adds EMERGENCY break
+     points only, considered when a line has no otherwise-acceptable
+     break point — ordinary Japanese text has break opportunities between
+     virtually every character, so normal lines never reach them.
+     Measured pixel-identical with/without this rule on a vertical sample
+     exercising 縦中横 (text-combine-upright), ruby/rt, line-break:strict,
+     and kinsoku-relevant punctuation. */
+  overflow-wrap: anywhere !important;
+}
+
 ${writingModeRule}
 html, body, .epub-book {
   font-family: "${options.font}", ${genericFamily}${important};

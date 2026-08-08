@@ -686,7 +686,10 @@ html, body {
      !important verbatim) wins within the important tier once its
      specificity exceeds 0,1,0 — class-plus-element, two classes, any id,
      ... — while an exact 0,1,0 tie falls to source order, which this
-     stylesheet wins by coming last; (2) white-space values that disable
+     stylesheet wins by coming last. That 0,1,0 threshold holds inside
+     the epub-book main only: for the generated sections outside it, only
+     the bare 0,0,0 variant applies, so there any author !important at
+     0,0,1 or above wins; (2) white-space values that disable
      wrapping make overflow-wrap inert wherever they apply — the one
      UA-DEFAULT surface with such a value, pre, is closed by the
      dedicated pre rule below, but an author "white-space: nowrap" (an

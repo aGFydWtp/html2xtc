@@ -309,6 +309,33 @@ describe("prepareEpubDocument: writing-mode placement and single-sourcing", () =
   });
 });
 
+describe("prepareEpubDocument: font-family single-sourcing (author font-family/font dropped everywhere)", () => {
+  it("drops an author stylesheet's element-level font-family and an inline style's font-family, leaving only the generated font-family", () => {
+    const files = minimalEpub3Files();
+    const zip = buildEpubZip({
+      ...files,
+      "OEBPS/chapter1.xhtml": `<html><head><title>Chapter 1</title><style>p { font-family: "Author Font", serif; }</style></head><body><h1>Chapter 1</h1><p style="font-family: 'Inline Author Font', sans-serif;">Hello, world.</p></body></html>`,
+    });
+    const result = prepareEpubDocument(zip, options({ font: "BIZ UDMincho" }), context());
+    // Neither the stylesheet-level nor the inline-style-level author family
+    // name survives anywhere in the generated document (not even inside a
+    // dropped-but-still-serialized style attribute).
+    expect(result.html).not.toContain("Author Font");
+    expect(result.html).not.toContain("Inline Author Font");
+    // Only two font-family declarations exist anywhere in the generated
+    // document, and both are html.ts's own correction CSS (buildFinalCss):
+    // the user's chosen family on html/body/.epub-book, and the fixed
+    // `monospace` re-supplied for pre/code/kbd/samp — none of the author's.
+    const fontFamilyOccurrences = (result.html.match(/font-family\s*:/g) ?? []).length;
+    expect(fontFamilyOccurrences).toBe(2);
+    expect(result.html).toMatch(/html,\s*body,\s*\.epub-book\s*{\s*font-family:\s*"BIZ UDMincho"/);
+    expect(result.html).toMatch(/pre,\s*code,\s*kbd,\s*samp\s*{\s*font-family:\s*monospace/);
+    // The body text itself survives untouched — only the author's
+    // font-family declaration is stripped, not the paragraph.
+    expect(result.html).toContain("Hello, world.");
+  });
+});
+
 describe("prepareEpubDocument: table of contents (spec §19.1 目次)", () => {
   it("renders a generated TOC linking to the chapter section when includeTableOfContents is true", () => {
     const zip = buildEpubZip(minimalEpub3Files());

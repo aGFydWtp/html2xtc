@@ -90,12 +90,61 @@ describe("sanitizeCss: writing-mode dropped, text-orientation preserved", () => 
 
 describe("sanitizeCss: @font-face removal (spec §19.1 font-face除去, design decision D3)", () => {
   it("drops an entire @font-face block, embedded font data included", () => {
-    const css = `@font-face { font-family: "Embedded"; src: url("fonts/embedded.woff2") format("woff2"); }\nbody { font-family: "Embedded"; }`;
+    const css = `@font-face { font-family: "Embedded"; src: url("fonts/embedded.woff2") format("woff2"); }\nbody { color: red; }`;
     const out = sanitizeCss(css, noResolve);
     expect(out).not.toMatch(/@font-face/i);
     expect(out).not.toContain("embedded.woff2");
     // The unrelated body rule survives (only the @font-face block itself is dropped).
-    expect(out).toContain("font-family");
+    expect(out).toContain("color: red");
+  });
+});
+
+describe("sanitizeCss: font/font-family removal (single-sourcing font-family in html.ts's own correction CSS)", () => {
+  // font-family is dropped from every EPUB-supplied CSS surface for the same
+  // reason writing-mode is (see ALLOWED_PROPERTIES's doc comment): html.ts's
+  // generated CSS only ever sets font-family on html/body/.epub-book, so any
+  // author rule naming font-family on a more specific selector sits directly
+  // on the element and always wins over that inherited value, !important or
+  // not.
+  it("drops a font-family declaration", () => {
+    const out = sanitizeCss('p { font-family: "Author Font", serif; }', noResolve);
+    expect(out).not.toContain("font-family");
+    expect(out).not.toContain("Author Font");
+  });
+
+  it("drops a font-family declaration marked !important", () => {
+    const out = sanitizeCss('p { font-family: "Author Font" !important; }', noResolve);
+    expect(out).not.toContain("font-family");
+    expect(out).not.toContain("Author Font");
+  });
+
+  it("drops the font shorthand", () => {
+    const out = sanitizeCss('p { font: bold 14px/1.5 "Author Font", serif; }', noResolve);
+    expect(out).not.toContain("Author Font");
+    expect(out).not.toMatch(/(?<!-)\bfont\s*:/);
+  });
+
+  it("does not drop unrelated declarations in the same rule", () => {
+    const out = sanitizeCss('p { font-family: "Author Font"; color: red; font-size: 16px; }', noResolve);
+    expect(out).not.toContain("font-family");
+    expect(out).toContain("color: red");
+    expect(out).toContain("font-size: 16px");
+  });
+});
+
+describe("sanitizeInlineStyle: font/font-family removal", () => {
+  it("drops font-family from an inline style attribute", () => {
+    expect(sanitizeInlineStyle('font-family: "Author Font"; color: red', noResolve)).toBe("color: red;");
+  });
+
+  it("drops the font shorthand from an inline style attribute", () => {
+    expect(sanitizeInlineStyle('font: bold 14px "Author Font"; color: red', noResolve)).toBe("color: red;");
+  });
+
+  it("drops a !important font-family from an inline style attribute", () => {
+    expect(sanitizeInlineStyle('font-family: "Author Font" !important; color: red', noResolve)).toBe(
+      "color: red;",
+    );
   });
 });
 

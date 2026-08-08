@@ -397,20 +397,49 @@ export function sanitizeSpineChapter(
 
   for (const el of [...body.querySelectorAll("*")]) {
     for (const name of [...el.getAttributeNames()]) {
-      if (/^on/i.test(name)) {
+      // Every name-based comparison below runs against this normalized
+      // (ASCII-lowercased) copy, never the raw `name` — linkedom preserves
+      // whatever case the source markup used for an attribute name (e.g.
+      // `getAttributeNames()` can return `FONT-FAMILY` verbatim), but
+      // html.ts string-concatenates every sanitized chapter into one
+      // document for a single real Chromium parse (see the `plaintext`
+      // entry in STRIP_SELECTOR's own doc comment above), and that parse is
+      // HTML5, not XML (see the xml:base branch below) — HTML5's tokenizer
+      // ASCII-lowercases every attribute name it reads. Comparing against
+      // `name` directly would let a same-meaning, differently-cased
+      // attribute (`FONT-FAMILY`, `STYLE`, `SRCSET`, ...) slip past every
+      // branch below untouched, while Chromium still treats it as the
+      // lowercase attribute it normalizes to. `getAttribute`/
+      // `removeAttribute`/`setAttribute` calls below still use the
+      // ORIGINAL `name`, never `normalizedName` — linkedom's own accessors
+      // are themselves case-sensitive against the attribute's actual stored
+      // name (confirmed empirically: `getAttribute("font-family")` returns
+      // null when the source had `FONT-FAMILY`), so looking the value up or
+      // removing it under the normalized name would silently no-op.
+      const normalizedName = name.toLowerCase();
+      if (/^on/.test(normalizedName)) {
         el.removeAttribute(name);
         continue;
       }
-      if (name === "style") {
-        const sanitized = sanitizeInlineStyle(el.getAttribute("style") ?? "", cssResolver);
+      if (normalizedName === "style") {
+        const sanitized = sanitizeInlineStyle(el.getAttribute(name) ?? "", cssResolver);
         if (sanitized.length > 0) {
-          el.setAttribute("style", sanitized);
+          // Overwrite under the ORIGINAL `name`, not a hardcoded "style":
+          // linkedom's setAttribute treats a differently-cased name as a
+          // NEW attribute rather than an update to the existing one
+          // (confirmed empirically), so writing back to a hardcoded
+          // "style" here would leave an original `STYLE="..."` attribute
+          // in place AND add a second, lowercase `style="..."` attribute —
+          // exactly the double-attribute bug this comment is warning
+          // against. Reusing `name` guarantees an in-place update no
+          // matter what case the source used.
+          el.setAttribute(name, sanitized);
         } else {
-          el.removeAttribute("style");
+          el.removeAttribute(name);
         }
         continue;
       }
-      if (name === "srcset" || name === "sizes" || name === "loading") {
+      if (normalizedName === "srcset" || normalizedName === "sizes" || normalizedName === "loading") {
         el.removeAttribute(name);
         continue;
       }
@@ -419,15 +448,62 @@ export function sanitizeSpineChapter(
       // parsed as HTML5 (not XML), so Chromium's own resolver ignores it —
       // but this module has no business trusting that downstream behavior
       // to stay that way, so it is stripped defensively regardless.
-      if (name.toLowerCase() === "xml:base") {
+      if (normalizedName === "xml:base") {
         el.removeAttribute(name);
         continue;
       }
-      if (name === "aria-labelledby" || name === "aria-describedby") {
+      if (normalizedName === "aria-labelledby" || normalizedName === "aria-describedby") {
         const value = el.getAttribute(name);
         if (value !== null && value.trim().length > 0) {
           el.setAttribute(name, rewriteIdrefList(value, ctx));
         }
+        continue;
+      }
+      // <font face="..."> is a presentational hint (HTML5 §"rendering":
+      // maps to an internal font-family style on that exact element), which
+      // beats an inherited CSS declaration the same way a direct CSS rule
+      // does — it is outside css.ts's ALLOWED_PROPERTIES choke point
+      // entirely (that allowlist only ever sees stylesheets, inline
+      // <style>, and inline style=""), so it is a 4th font-family injection
+      // surface that needs its own removal here (a 5th, SVG's own
+      // presentation attributes, is handled by the block right below). Only
+      // `face` is dropped: `size` maps to font-size, which is out of scope
+      // for this change.
+      if (el.tagName.toLowerCase() === "font" && normalizedName === "face") {
+        el.removeAttribute(name);
+        continue;
+      }
+      // SVG presentation attributes (SVG 1.1 §"styling"): `font-family` and
+      // its shorthand alias `font` (e.g. `<text font-family="Osaka">`) apply
+      // directly to the element they're set on, in the CSS cascade, at the
+      // same "beats an inherited declaration" strength as <font face> above
+      // and as a direct CSS rule — and like <font face>, they sit outside
+      // css.ts's ALLOWED_PROPERTIES choke point entirely (that allowlist
+      // only ever sees stylesheets, inline <style>, and inline style="", not
+      // presentation attributes). This is the 5th font-family injection
+      // surface (see css.ts's ALLOWED_PROPERTIES doc comment for the running
+      // list of surfaces closed so far, and why it stops short of claiming
+      // that list is exhaustive). Unlike <font face>, no tag check is
+      // needed: both attribute names are meaningless on non-SVG elements, so
+      // dropping them by name alone, on every element, cannot remove
+      // anything a plain HTML element was relying on.
+      //
+      // `font-size` is deliberately left alone here, same as `<font size>`
+      // above and css.ts's `font-size` carve-out: it is a separate concern
+      // (font *sizing*, not the font *identity* override bug this change
+      // fixes) and stays out of scope.
+      //
+      // The other two places `font-family` could otherwise sneak in through
+      // an SVG subtree are already covered elsewhere, not by this block: an
+      // SVG `<style>` element's text is stripped from the body by
+      // STRIP_SELECTOR above (querySelectorAll matches it regardless of
+      // SVG/HTML nesting) and re-emitted only after going through css.ts's
+      // sanitizeCss; and SVG elements' `style=""` attribute goes through the
+      // same `normalizedName === "style"` -> sanitizeInlineStyle branch as
+      // any HTML element's, a few lines above this one — neither is scoped
+      // to (or skips) SVG content.
+      if (normalizedName === "font-family" || normalizedName === "font") {
+        el.removeAttribute(name);
         continue;
       }
       // SVG <image>'s href/xlink:href points at an actual image resource
@@ -435,7 +511,7 @@ export function sanitizeSpineChapter(
       // through the same image resolver as <img src>, unlike <a href> or
       // <use href="#id">, which stay anchor-shaped and go through
       // resolveChapterHref below.
-      if (el.tagName.toLowerCase() === "image" && /(?:^|:)href$/i.test(name)) {
+      if (el.tagName.toLowerCase() === "image" && /(?:^|:)href$/.test(normalizedName)) {
         const raw = el.getAttribute(name);
         // Review M4: this module's own scheme gate, not just a hope that
         // every resolveImage implementation an html.ts-style caller wires
@@ -451,7 +527,7 @@ export function sanitizeSpineChapter(
         }
         continue;
       }
-      if (CSS_URL_ATTRIBUTES.has(name)) {
+      if (CSS_URL_ATTRIBUTES.has(normalizedName)) {
         const raw = el.getAttribute(name);
         // Review M4: same defense-in-depth scheme gate as the SVG <image>
         // branch above.
@@ -471,7 +547,7 @@ export function sanitizeSpineChapter(
         }
         continue;
       }
-      if (/(?:^|:)href$/i.test(name)) {
+      if (/(?:^|:)href$/.test(normalizedName)) {
         const raw = el.getAttribute(name);
         if (raw === null) {
           continue;

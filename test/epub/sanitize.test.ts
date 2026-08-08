@@ -63,6 +63,82 @@ describe("sanitizeSpineChapter: attribute removal (spec §19.1)", () => {
     expect(result?.bodyHtml).not.toContain("https://example.com");
     expect(result?.bodyHtml).not.toContain('href="');
   });
+
+  it("removes a <font face> attribute (4th font-family injection surface, outside css.ts's ALLOWED_PROPERTIES choke point)", () => {
+    const result = sanitizeSpineChapter(xhtml('<font face="Osaka">hi</font>'), ctx(), noImage);
+    expect(result?.bodyHtml).not.toContain("face=");
+    expect(result?.bodyHtml).not.toContain("Osaka");
+    expect(result?.bodyHtml).toContain("hi");
+  });
+
+  it("does not touch <font size>, which is out of scope for this change", () => {
+    const result = sanitizeSpineChapter(xhtml('<font size="5">hi</font>'), ctx(), noImage);
+    expect(result?.bodyHtml).toContain('size="5"');
+  });
+
+  it("removes an SVG font-family presentation attribute (5th font-family injection surface)", () => {
+    const result = sanitizeSpineChapter(
+      xhtml('<svg><text font-family="Osaka">hi</text></svg>'),
+      ctx(),
+      noImage,
+    );
+    expect(result?.bodyHtml).not.toContain("font-family");
+    expect(result?.bodyHtml).not.toContain("Osaka");
+    expect(result?.bodyHtml).toContain("hi");
+  });
+
+  it("removes an SVG font presentation-attribute shorthand", () => {
+    const result = sanitizeSpineChapter(
+      xhtml('<svg><text font="italic bold 12px Osaka">hi</text></svg>'),
+      ctx(),
+      noImage,
+    );
+    expect(result?.bodyHtml).not.toMatch(/\bfont="/);
+    expect(result?.bodyHtml).not.toContain("Osaka");
+    expect(result?.bodyHtml).toContain("hi");
+  });
+
+  it("does not touch an SVG font-size presentation attribute, which is out of scope for this change", () => {
+    const result = sanitizeSpineChapter(
+      xhtml('<svg><text font-size="20">hi</text></svg>'),
+      ctx(),
+      noImage,
+    );
+    expect(result?.bodyHtml).toContain('font-size="20"');
+  });
+
+  it("removes uppercase/mixed-case FONT-FAMILY and Font SVG presentation attributes (attribute-name comparison must be case-insensitive: linkedom preserves source case, but the HTML5 tokenizer that later re-parses this document ASCII-lowercases every attribute name)", () => {
+    const result = sanitizeSpineChapter(
+      xhtml('<svg><text FONT-FAMILY="Osaka" Font="12px Papyrus">hi</text></svg>'),
+      ctx(),
+      noImage,
+    );
+    expect(result?.bodyHtml).not.toMatch(/font-family/i);
+    expect(result?.bodyHtml).not.toMatch(/\bfont=/i);
+    expect(result?.bodyHtml).not.toContain("Osaka");
+    expect(result?.bodyHtml).not.toContain("Papyrus");
+    expect(result?.bodyHtml).toContain("hi");
+  });
+
+  it("runs an uppercase STYLE attribute through sanitizeInlineStyle (font-family dropped, color kept), not left untouched", () => {
+    const result = sanitizeSpineChapter(
+      xhtml(`<p STYLE="font-family: 'Author Font', serif; color: red">hi</p>`),
+      ctx(),
+      noImage,
+    );
+    expect(result?.bodyHtml).not.toContain("Author Font");
+    expect(result?.bodyHtml).not.toMatch(/font-family/i);
+    expect(result?.bodyHtml).toContain("color: red");
+  });
+
+  it("does not duplicate the style attribute when overwriting an originally-uppercase STYLE", () => {
+    const result = sanitizeSpineChapter(xhtml('<p STYLE="color: red">hi</p>'), ctx(), noImage);
+    // Exactly one style-shaped attribute survives (case-insensitively) — not
+    // both the original `STYLE="..."` and a newly added `style="..."`.
+    const styleAttributeOccurrences = (result?.bodyHtml.match(/\bstyle\s*=/gi) ?? []).length;
+    expect(styleAttributeOccurrences).toBe(1);
+    expect(result?.bodyHtml).toContain("color: red");
+  });
 });
 
 describe("sanitizeSpineChapter: image resolution (spec §19.1 相対画像Data URL化)", () => {

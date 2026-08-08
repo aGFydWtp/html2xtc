@@ -435,10 +435,18 @@ function isCoverDuplicateSpineItem(sanitized: SanitizedChapter, coverDataUrl: st
  * X3, 480x800 for X4 — resolveDeviceProfile(options.device), src/devices.ts;
  * dynamic, not a fixed literal, despite the spec being written against the
  * X3-only baseline), the chosen font
- * forced over the EPUB's own (font references were already stripped —
- * D3/D12), the image-sizing rules (§11.2), and the optional
- * chapter-page-break rule (§9.2). Explicit (non-"auto") layout choices win
- * over the EPUB's own CSS via `!important`; "auto" only supplements it.
+ * forced over the EPUB's own (both `@font-face` data AND `font`/
+ * `font-family` CSS declarations were already stripped from every
+ * EPUB-supplied CSS surface — D3/D12, css.ts's ALLOWED_PROPERTIES — and the
+ * `font-family`/`font` presentation attributes that would otherwise bypass
+ * that allowlist entirely (`<font face>`, SVG's `font-family`/`font`) are
+ * stripped too, sanitize.ts's attribute pass, so there is no author
+ * font-family declaration or presentation attribute, among the surfaces
+ * closed so far, left to lose to — see css.ts's ALLOWED_PROPERTIES doc
+ * comment for why "closed so far" rather than "all of them"), the
+ * image-sizing rules (§11.2), and the optional chapter-page-break
+ * rule (§9.2). Explicit (non-"auto") layout choices win over the EPUB's own
+ * CSS via `!important`; "auto" only supplements it.
  *
  * Margin: applied via `@page { margin }`, not `.epub-book { padding }`. In
  * `writing-mode: vertical-rl`, the block direction runs right-to-left, and
@@ -679,8 +687,21 @@ ${xtcChapterMarkerRule}`;
  *
  * Font handling (design decision D12): the returned `html` never contains
  * `@font-face` data (EPUB's own were already dropped — D3) and never
- * fetches a web font itself. Its `<style>` only sets `font-family` to the
- * user's chosen family BY NAME; Phase 4 is responsible for calling
+ * fetches a web font itself. It also never contains an EPUB-authored
+ * `font`/`font-family` declaration or presentation attribute, on every
+ * surface found and closed so far: stylesheets, inline `<style>`, inline
+ * `style=""`, `<font face="...">`, and SVG's `font-family`/`font`
+ * presentation attributes are all stripped — css.ts's ALLOWED_PROPERTIES
+ * and sanitize.ts's attribute pass — so the only `font-family` declarations
+ * anywhere in the document are the ones this function's own `<style>`
+ * emits: the user's chosen family BY NAME on `html, body, .epub-book`, plus
+ * generic `monospace` for `pre, code, kbd, samp`. That attribute-level
+ * removal is a denylist, not an allowlist like the CSS side, so unlike the
+ * CSS half of this guarantee it is not structurally exhaustive against a
+ * font-family-carrying attribute EPUB authoring tools haven't used yet —
+ * see css.ts's ALLOWED_PROPERTIES doc comment and sanitize.ts's own
+ * attribute-pass comments for the current, non-final list. Phase 4 is
+ * responsible for calling
  * buildInlineFontCss(preparedDoc.html, jobId, fetch, options.font) — passing
  * the whole generated HTML as the subset-text source is intentional and
  * matches src/fonts.ts's own "over-inclusion is harmless" stance (the extra

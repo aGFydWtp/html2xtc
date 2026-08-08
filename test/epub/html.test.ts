@@ -240,13 +240,14 @@ describe("prepareEpubDocument: image max-size ceiling (本文中の画像がペ�
 
   // Regression test for the SECOND, independently-reproduced way this bug
   // came back: even with a definite px max-width/max-height, an EPUB's own
-  // stylesheet can carry a MORE SPECIFIC selector (e.g. a class-scoped
-  // `figure img` rule, specificity 0,1,1) that beats this bare `img, svg`
-  // rule's specificity (0,0,1) regardless of source order. Without
-  // !important, that EPUB rule's own `max-width: 100%` won the cascade
-  // outright and reintroduced the exact same intrinsic-size-and-clip
-  // failure — reproduced against a real commercial EPUB whose style.css
-  // declares `figure.h-figure img { max-width: 100%; height: auto; }`.
+  // stylesheet can carry a MORE SPECIFIC selector — `figure.h-figure img`
+  // (one class, TWO types: figure and img, so specificity 0,1,2) — that
+  // beats this bare `img, svg` rule's specificity (0,0,1) regardless of
+  // source order. Without !important, that EPUB rule's own `max-width: 100%`
+  // won the cascade outright and reintroduced the exact same
+  // intrinsic-size-and-clip failure — reproduced against a real commercial
+  // EPUB whose style.css declares exactly this selector and declaration
+  // (`figure.h-figure img { max-width: 100%; height: auto; }`).
   // vitest has no CSS cascade engine, so this can only pin that BOTH the
   // higher-specificity EPUB rule survives sanitization AND this rule's own
   // max-width/max-height carry !important (which is what actually wins that
@@ -267,6 +268,32 @@ describe("prepareEpubDocument: image max-size ceiling (本文中の画像がペ�
     // still carry !important to win against it.
     expect(result.html).toMatch(/img,\s*svg\s*{[^}]*max-width:\s*448px\s*!important/);
     expect(result.html).toMatch(/img,\s*svg\s*{[^}]*max-height:\s*712px\s*!important/);
+  });
+
+  // Documents a residual, NOT-fixed-by-this-change risk (see buildFinalCss's
+  // img/svg rule doc comment's own "Residual gap" paragraph): css.ts's
+  // sanitizeDeclaration never strips an EPUB-authored declaration's own
+  // !important (parseDeclarations keeps the value, including any
+  // "!important" suffix, verbatim). So if an EPUB's own higher-specificity
+  // img rule ALSO carries !important — unlike the real book that motivated
+  // this fix, whose figure.h-figure img rule does not — the cascade would
+  // compare specificity within the "important" bucket the same way it does
+  // for normal declarations, and the EPUB's 0,1,2 would still beat this
+  // rule's 0,0,1, reproducing this exact clipping bug again. This is not a
+  // regression from this change (the pre-fix code lost to a non-!important
+  // EPUB rule just as easily), so nothing here is asserted to "fix" it —
+  // this test only pins that an EPUB's own !important survives sanitization
+  // unmodified, which is the actual mechanism behind that residual risk.
+  it("does NOT strip an EPUB-authored !important on a competing img rule (documents why that case can still defeat this fix's !important)", () => {
+    const files = minimalEpub3Files();
+    const zip = buildEpubZip({
+      ...files,
+      "OEBPS/chapter1.xhtml":
+        "<html><head><style>figure.h-figure img { max-width: 100% !important; }</style></head>" +
+        '<body><figure class="h-figure"><img src="cover.png"/></figure></body></html>',
+    });
+    const result = prepareEpubDocument(zip, options(), context());
+    expect(result.html).toMatch(/figure\.h-figure img\s*{[^}]*max-width:\s*100%\s*!important/);
   });
 });
 

@@ -626,21 +626,62 @@ img, svg {
      function's other rules are: found necessary, not just defensive,
      against a real EPUB whose own stylesheet declares a max-width of 100%
      and a height of auto, scoped to a class-plus-tag selector matching this
-     exact figure's img (one class, one type — specificity 0,1,1). That
-     beats this bare "img, svg" rule's specificity of 0,0,1 regardless of
-     which one appears later in the document, so without !important the
-     EPUB's own percentage rule won the cascade outright and reproduced the
-     exact same "renders at intrinsic size, clipped at the page edge"
-     failure this rule exists to prevent — this was not a hypothetical, it
-     is what actually happened first, on the SAME empirical repro this doc
-     comment cites below, before !important was added. The float rule's own
-     doc comment already establishes the standing rule this codebase
-     applies to img/svg sizing/behavior corrections: never something an
-     "honor the EPUB's own presentation" auto choice should defer to,
-     because the alternative is a text- or content-legibility regression
-     this converter must always prevent. A clipped, silently-truncated
-     illustration is that same failure mode, so the same unconditional
-     !important applies here too.
+     exact figure's img (one class, two types — figure AND img — so
+     specificity 0,1,2). That beats this bare "img, svg" rule's specificity
+     of 0,0,1 regardless of which one appears later in the document, so
+     without !important the EPUB's own percentage rule won the cascade
+     outright and reproduced the exact same "renders at intrinsic size,
+     clipped at the page edge" failure this rule exists to prevent — this
+     was not a hypothetical, it is what actually happened first, on the
+     SAME empirical repro this doc comment cites below, before !important
+     was added. The float rule's own doc comment already establishes the
+     standing rule this codebase applies to img/svg sizing/behavior
+     corrections: never something an "honor the EPUB's own presentation"
+     auto choice should defer to, because the alternative is a text- or
+     content-legibility regression this converter must always prevent. A
+     clipped, silently-truncated illustration is that same failure mode, so
+     the same unconditional !important applies here too.
+
+     Trade-off this !important accepts (reasoned from the CSS cascade
+     rules, NOT separately reproduced against a real EPUB the way the
+     clipping bug above was): before this rule had !important, an EPUB's
+     OWN higher-specificity max-width could still legitimately win in two
+     cases this codebase used to get right — (1) an author who deliberately
+     shrinks an image below page size, e.g. a thumbnail rule scoped to a
+     class (specificity higher than this bare tag-selector rule) setting
+     max-width to a small px value, used to win via specificity, and now
+     always gets overridden by this rule's page-content-box ceiling instead
+     (harmless when the ceiling is larger than the author's own value, but
+     it does mean the author's specific choice no longer reaches the
+     renderer at all); (2) an image whose containing block WAS definite
+     (e.g. an ancestor with an explicit width), where the old
+     max-width of 100% correctly resolved against that ancestor's box — this
+     rule's fixed page-content-box px value has no notion of that ancestor
+     and could in principle now size the image past it. Accepting this was
+     a deliberate choice: silently losing page content (this fix's target
+     bug) is worse than silently ignoring an author's own size constraint,
+     and of the two, only the former was ever observed to actually destroy
+     reader-visible information. Not fixed here: making the !important
+     conditional on "does the EPUB have a competing, more specific rule"
+     would require re-deriving CSS specificity for arbitrary EPUB-authored
+     selectors in this function, which this codebase has no mechanism for
+     and is out of scope for this fix.
+
+     Residual gap even with this !important: css.ts's sanitizeDeclaration
+     keeps whatever !important flag an EPUB's own declaration already had
+     (see that file's own doc comments — parseDeclarations does not strip
+     it, and no later pass does either); it is only THIS class of hostile
+     rule that xtcChapterMarkerRule's doc comment above treats as a known,
+     already-handled threat for the chapter-marker spans specifically. For
+     ordinary img/svg sizing, that threat is NOT separately neutralized: if
+     an EPUB's own rule were ALSO marked !important (this book's
+     figure.h-figure img rule, empirically, is not), the cascade would
+     compare specificity within the "important" bucket the same way it does
+     for normal declarations, and the EPUB's 0,1,2 would still beat this
+     rule's 0,0,1 — reproducing this exact bug again. Stripping !important
+     from EPUB-authored CSS globally would close this, but that is a
+     broader change to css.ts's sanitizer than this fix's scope, and is
+     intentionally not made here.
 
      Empirically reproduced end-to-end against a real EPUB (X3 device,
      marginPx 40 -> 448x712px page content box): with only the percentage

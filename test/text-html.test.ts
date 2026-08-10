@@ -139,6 +139,28 @@ describe("buildTextPrintCss", () => {
     expect(css).not.toContain("height: 100%;");
   });
 
+  it("emits orphans/widows: 1 on the root html rule for vertical layout, so a paragraph's stray first/last line is never pushed whole to the next page (leaving a blank column) — src/text-html.ts's doc comment", () => {
+    const css = buildTextPrintCss({ ...DEFAULT_TEXT_OPTIONS, layout: "vertical" });
+    expect(css).toMatch(/html\s*\{\s*writing-mode:\s*vertical-rl;\s*orphans:\s*1;\s*widows:\s*1;\s*\}/);
+  });
+
+  it("never emits the vertical-only orphans/widows: 1 declarations for horizontal layout (2 stays the correct default there)", () => {
+    const css = buildTextPrintCss({ ...DEFAULT_TEXT_OPTIONS, layout: "horizontal" });
+    expect(css).not.toMatch(/orphans:\s*1\b/);
+    expect(css).not.toMatch(/widows:\s*1\b/);
+    expect(css).toMatch(/\.content p\s*\{\s*margin: 0 0 var\(--paragraph-spacing\);\s*orphans: 2;\s*widows: 2;\s*\}/);
+  });
+
+  it("resets all four margin sides before setting margin-block-end on .content p for vertical layout, so the UA's margin-block-start: 1em can never collapse-win over paragraphSpacingEm", () => {
+    const css = buildTextPrintCss({ ...DEFAULT_TEXT_OPTIONS, layout: "vertical", paragraphSpacingEm: 0.9 });
+    // [\s\S]*? (not [^}]*) because the doc comment immediately inside this
+    // rule itself contains a literal "}" (quoting the UA default rule) —
+    // a negated-brace class would stop there instead of at the rule's own
+    // closing brace.
+    expect(css).toMatch(/\.content p\s*\{[\s\S]*?margin:\s*0;\s*margin-block-end:\s*var\(--paragraph-spacing\);\s*\}/);
+    expect(css).toContain("--paragraph-spacing: 0.9em;");
+  });
+
   it("adds justify + inter-character rules only when textAlign is justify", () => {
     const justified = buildTextPrintCss({ ...DEFAULT_TEXT_OPTIONS, textAlign: "justify" });
     expect(justified).toContain("text-align: justify;");

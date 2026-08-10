@@ -604,10 +604,12 @@ function buildFinalCss(
      marginPx:0): injecting "* { orphans:1; widows:1 }" cut pages with a
      one-column gap from 91/377 (24.1%) to 1/367 (0.3%), and reduced the
      total page count by 2.65%. (A "* { break-inside:auto }" control
-     injection produced a byte-identical PDF to the unmodified baseline —
-     same page count, same per-page byte arrays — so break-inside
-     contributes nothing to this fix; the effect above is orphans/widows
-     alone.) Confirmed the same fix at marginPx:8, so this is not a
+     injection matched the unmodified baseline exactly — same page count,
+     same per-page gap measurements — so break-inside contributes nothing
+     to this fix; the effect above is orphans/widows alone. Comparisons
+     throughout are of the rasterized pages, not of the PDF files
+     themselves, which carry per-render metadata.) Confirmed the same fix
+     at marginPx:8, so this is not a
      marginPx:0 artifact: 387 pages, one-column-gap pages 84/387 (21.7%)
      before the fix down to 3/378 (0.8%) after, with total pages 387 →
      378. Post-fix, this generated CSS's rendered PDF is byte-identical,

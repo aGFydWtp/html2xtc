@@ -590,6 +590,66 @@ function buildFinalCss(
       ? `html {
   writing-mode: vertical-rl${important};
   text-orientation: mixed${important};
+  /* Chrome's UA-default orphans/widows is 2: it forbids leaving a
+     single line stranded on either side of a page break, so when a
+     paragraph would otherwise end with just one line at the top of a
+     page (or start with just one at the bottom), Chrome pushes the
+     WHOLE paragraph to the next page instead of splitting off that one
+     line — which in vertical-rl leaves one entire blank column
+     (fontSizePx * line-height) at the block-direction END (left edge)
+     of the page the paragraph was pushed off of.
+
+     Measured on 『イスラム教の論理』(377 pages, fontSizePx:24,
+     line-height:1.9 → one column = 24 * 1.9 = 45.6px, X3 528x792,
+     marginPx:0): injecting "* { orphans:1; widows:1 }" cut pages with a
+     one-column gap from 91/377 (24.1%) to 1/367 (0.3%), and reduced the
+     total page count by 2.65%. (A "* { break-inside:auto }" control
+     injection matched the unmodified baseline exactly — same page count,
+     same per-page gap measurements — so break-inside contributes nothing
+     to this fix; the effect above is orphans/widows alone. Comparisons
+     throughout are of the rasterized pages, not of the PDF files
+     themselves, which carry per-render metadata.) Confirmed the same fix
+     at marginPx:8, so this is not a
+     marginPx:0 artifact: 387 pages, one-column-gap pages 84/387 (21.7%)
+     before the fix down to 3/378 (0.8%) after, with total pages 387 →
+     378. Post-fix, this generated CSS's rendered PDF is byte-identical,
+     raster for raster, to the manually-injected-toggle version measured
+     above.
+
+     Vertical-only: deliberately NOT applied to the horizontal branch
+     below. horizontal-tb EPUB text was not part of this measurement, and
+     the UA default of 2 is the ordinary, correct typographic default
+     there — it stays untouched.
+
+     No !important: orphans/widows is not in css.ts's ALLOWED_PROPERTIES
+     (grep confirms 0 occurrences of either property anywhere
+     sanitizeCss's allowlist reaches — author stylesheets, inline
+     <style>, and inline style="" all funnel through that same
+     allowlist), so no author rule can ever set orphans/widows on any
+     element in the generated document and there is nothing for this
+     declaration to out-cascade.
+
+     Root-only: orphans/widows is an inherited property, so one
+     declaration here on html (the same root writing-mode above is
+     deliberately placed on, for the reasons this function's own doc
+     comment gives) reaches every element; unlike overflow-wrap below,
+     no non-inherited-property universal-selector rule is needed.
+
+     A SEPARATE, un-fixed residual gap of ~38px remains on every page
+     regardless of this rule: 528 mod 45.6 = 26.4px of geometric leftover
+     (a partial column that never fits in the page) plus 10.8px of
+     half-leading ((45.6 - 24) / 2). That gap is not caused by a
+     paragraph being pushed to the next page at all, so orphans/widows
+     cannot remove it — it is out of scope for this fix.
+
+     Trade-off accepted: an orphans/widows value of 1 permits a
+     paragraph's first or last line to be stranded alone at the far edge
+     of a page (泣き別れ), which a value of 2 exists to prevent. In
+     Japanese vertical typesetting a single stranded line is a
+     conventionally tolerated trade-off against losing a whole column of
+     the page to blank space, which is the defect being fixed here. */
+  orphans: 1;
+  widows: 1;
 }
 `
       : `.epub-book {

@@ -607,9 +607,12 @@ function buildFinalCss(
      injection produced a byte-identical PDF to the unmodified baseline —
      same page count, same per-page byte arrays — so break-inside
      contributes nothing to this fix; the effect above is orphans/widows
-     alone.) Raising marginPx to 8 did not remove this gap either (still
-     present on 21.7% of pages) — the one-column gap is caused by the
-     paragraph being pushed to the next page, not by leftover margin.
+     alone.) Confirmed the same fix at marginPx:8, so this is not a
+     marginPx:0 artifact: 387 pages, one-column-gap pages 84/387 (21.7%)
+     before the fix down to 3/378 (0.8%) after, with total pages 387 →
+     378. Post-fix, this generated CSS's rendered PDF is byte-identical,
+     raster for raster, to the manually-injected-toggle version measured
+     above.
 
      Vertical-only: deliberately NOT applied to the horizontal branch
      below. horizontal-tb EPUB text was not part of this measurement, and

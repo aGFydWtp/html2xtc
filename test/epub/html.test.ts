@@ -524,6 +524,22 @@ describe("prepareEpubDocument: writing-mode placement and single-sourcing", () =
   });
 });
 
+describe("prepareEpubDocument: orphans/widows tuned to 1 for vertical writing mode only", () => {
+  it("declares orphans:1/widows:1 on html when layout is vertical", () => {
+    const zip = buildEpubZip(minimalEpub3Files());
+    const css = withoutCssComments(prepareEpubDocument(zip, options({ layout: "vertical" }), context()).html);
+    expect(css).toContain("orphans: 1;");
+    expect(css).toContain("widows: 1;");
+  });
+
+  it("does not declare orphans/widows anywhere when layout is horizontal", () => {
+    const zip = buildEpubZip(minimalEpub3Files());
+    const css = withoutCssComments(prepareEpubDocument(zip, options({ layout: "horizontal" }), context()).html);
+    expect(css).not.toContain("orphans");
+    expect(css).not.toContain("widows");
+  });
+});
+
 describe("prepareEpubDocument: font-family single-sourcing (author font-family/font dropped everywhere)", () => {
   it("drops an author stylesheet's element-level font-family and an inline style's font-family, leaving only the generated font-family", () => {
     const files = minimalEpub3Files();

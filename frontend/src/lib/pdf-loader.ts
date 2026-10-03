@@ -2,12 +2,31 @@
 // ブラウザ内 PDF.js 読み込み（仕様書 §7.5）。
 // Worker は Vite アセットとして同梱し、外部 CDN から取得しない。
 // PDF.js による JavaScript 実行は isEvalSupported: false で無効化する。
+//
+// pdfjs-dist は PDF を開くときだけ動的 import で読み込む（メインバンドルに入れない）。
+// pdfjs-dist 6.3 の build/pdf.mjs はトップレベルで Iterator.prototype を参照するため、
+// グローバル Iterator の無いブラウザでは読み込み時に ReferenceError になる。静的 import
+// だとその失敗が SPA 全体の起動失敗になるので、影響を PDF 機能だけに閉じ込める。
+// このファイルで pdfjs-dist から値を import してよいのはここの動的 import のみ
+// （`import type` はバンドルに影響しないので他所で使ってよい）。
 
-import { getDocument, GlobalWorkerOptions, PasswordException, type PDFDocumentProxy } from "pdfjs-dist";
+import type { PDFDocumentProxy } from "pdfjs-dist";
 
-// Vite の `new URL(..., import.meta.url)` パターンでビルド時に Worker アセットを
-// 同梱する（CDN からの取得を避ける。仕様書 §7.1）。
-GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).href;
+type PdfJs = typeof import("pdfjs-dist");
+
+let pdfjsPromise: Promise<PdfJs> | null = null;
+
+function loadPdfJs(): Promise<PdfJs> {
+  pdfjsPromise ??= import("pdfjs-dist").then((pdfjs) => {
+    // Vite の `new URL(..., import.meta.url)` パターンでビルド時に Worker アセットを
+    // 同梱する（CDN からの取得を避ける。仕様書 §7.1）。
+    pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).href;
+    return pdfjs;
+  });
+  // 失敗を保持すると、一時的なネットワーク障害の後も再試行できなくなる。
+  pdfjsPromise.catch(() => { pdfjsPromise = null; });
+  return pdfjsPromise;
+}
 
 export type PdfLoadErrorKind = "password_protected" | "parse_failed";
 
@@ -41,6 +60,14 @@ export interface LoadedPdf {
 // pdf.sandbox.mjs を明示的に組み込んだ場合のみ有効になる機能で、ここでは読み込んで
 // いない）。よって要件は満たされている。
 export async function loadPdfDocument(bytes: ArrayBuffer): Promise<LoadedPdf> {
+  let pdfjs: PdfJs;
+  try {
+    pdfjs = await loadPdfJs();
+  } catch (error) {
+    // 古いブラウザでの評価エラーやチャンク取得失敗。既存の読み込み失敗表示に載せる。
+    throw new PdfLoadError("parse_failed", error instanceof Error ? error.message : "failed to load PDF.js");
+  }
+  const { getDocument, PasswordException } = pdfjs;
   const loadingTask = getDocument({
     data: bytes,
     useSystemFonts: true,

@@ -16,7 +16,7 @@ import type { MarkdownConverter } from "../src/types";
 /** The exact wiring src/text-prepare.ts is expected to use (spec §6.3's
  * concept example) — every test below goes through this, never a
  * hand-built token array, so these tests exercise the real markdown-it
- * 14.3.0 output this package's renderer/chapters/plain-text code must
+ * 14.3.2 output this package's renderer/chapters/plain-text code must
  * handle. */
 function makeConverter(): MarkdownConverter {
   return createMarkdownConverter(() => new MarkdownIt(MARKDOWN_IT_OPTIONS));

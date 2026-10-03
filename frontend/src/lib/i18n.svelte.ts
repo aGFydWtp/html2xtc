@@ -89,6 +89,7 @@ export interface Messages {
   pdf_err_too_large: string;
   pdf_err_encrypted: string;
   pdf_err_parse_failed: string;
+  pdf_err_engine_load_failed: string;
   pdf_err_page_range_invalid: string;
   pdf_err_no_pages_selected: string;
   pdf_err_upload_failed: string;
@@ -616,6 +617,7 @@ export const I18N: Record<Lang, Messages> = {
     pdf_err_too_large: "ファイルサイズが上限を超えています。",
     pdf_err_encrypted: "パスワードで保護されたPDFには対応していません。",
     pdf_err_parse_failed: "PDFを読み込めませんでした。ファイルが壊れている可能性があります。",
+    pdf_err_engine_load_failed: "PDFを処理する機能を読み込めませんでした。ページを再読み込みするか、ブラウザを最新版に更新してください。",
     pdf_err_page_range_invalid: "ページ範囲を確認してください。",
     pdf_err_no_pages_selected: "変換するページを1ページ以上選択してください。",
     pdf_err_upload_failed: "PDFのアップロードに失敗しました。",
@@ -1119,6 +1121,7 @@ export const I18N: Record<Lang, Messages> = {
     pdf_err_too_large: "The file size exceeds the limit.",
     pdf_err_encrypted: "Password-protected PDFs are not supported.",
     pdf_err_parse_failed: "Could not read the PDF. The file may be corrupted.",
+    pdf_err_engine_load_failed: "Could not load the PDF processing feature. Reload the page or update your browser.",
     pdf_err_page_range_invalid: "Please check the page range.",
     pdf_err_no_pages_selected: "Select at least one page to convert.",
     pdf_err_upload_failed: "Failed to upload the PDF.",

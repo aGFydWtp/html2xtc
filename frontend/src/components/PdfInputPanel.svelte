@@ -5,7 +5,7 @@
   import { submitPdf, type PdfUploadHandle } from "../lib/convert.svelte";
   import { outputSizeForDevice } from "../lib/device-profiles";
   import { t } from "../lib/i18n.svelte";
-  import { loadPdfDocument, PdfLoadError } from "../lib/pdf-loader";
+  import { loadPdfDocument, PdfLoadError, type PdfLoadErrorKind } from "../lib/pdf-loader";
   import { DEFAULT_PDF_OPTIONS, isValidPdfOptions, type PdfConvertOptions } from "../lib/pdf-options";
   import { PageRangeError, resolvePageNumbers } from "../lib/pdf-page-range";
   import { targetDeviceStore } from "../lib/targetDevice.svelte";
@@ -15,7 +15,7 @@
   let { file, onRemove }: { file: File; onRemove: () => void } = $props();
 
   let status = $state<"loading" | "ready" | "error">("loading");
-  let errorKind = $state<"password_protected" | "parse_failed" | null>(null);
+  let errorKind = $state<PdfLoadErrorKind | null>(null);
   let pdfDocument = $state<PDFDocumentProxy | null>(null);
   let destroyDocument: (() => Promise<void>) | null = null;
   // device の初期値はトグル（targetDeviceStore、ConvertForm.svelte 上部）の
@@ -88,8 +88,12 @@
     return mb >= 1 ? `${mb.toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
   }
 
-  function loadErrorText(kind: "password_protected" | "parse_failed"): string {
-    return kind === "password_protected" ? t("pdf_err_encrypted") : t("pdf_err_parse_failed");
+  function loadErrorText(kind: PdfLoadErrorKind): string {
+    switch (kind) {
+      case "password_protected": return t("pdf_err_encrypted");
+      case "engine_load_failed": return t("pdf_err_engine_load_failed");
+      case "parse_failed": return t("pdf_err_parse_failed");
+    }
   }
 
   async function onConvert(): Promise<void> {

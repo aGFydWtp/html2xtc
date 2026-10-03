@@ -76,7 +76,7 @@ const HEADING_TAGS = new Set(["h1", "h2", "h3", "h4", "h5", "h6"]);
  * attribute value. markdown-it only ever emits a `start` attribute at all
  * when the list's first marker is not `1` (spec: "`ol[start]` の安全な整
  * 数値"). The declared MarkdownToken type says every attr value is a
- * `string`, but markdown-it 14.3.0 stores this specific one as a `number`
+ * `string`, but markdown-it 14.3.2 stores this specific one as a `number`
  * at runtime (verified directly against its own list rule) — `Number(...)`
  * handles both representations identically, so this never depends on which
  * one actually arrives.

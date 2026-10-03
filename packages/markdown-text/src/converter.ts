@@ -26,7 +26,7 @@ interface ComplexityMeasurement {
  * depth from `nesting` (+1/0/-1) here — matters for one specific reason:
  * `.level` already reflects INLINE delimiter nesting (emphasis/strong can
  * recurse arbitrarily deep for a tiny adversarial input, e.g. hundreds of
- * nested `*`, verified directly against markdown-it 14.3.0 — a 300-`*`
+ * nested `*`, verified directly against markdown-it 14.3.2 — a 300-`*`
  * input yields token levels up to 150), which markdown-it's own
  * `maxNesting` option does NOT bound (that option only guards block-level
  * recursion — blockquote/list — see types.ts's MARKDOWN_MAX_NESTING doc

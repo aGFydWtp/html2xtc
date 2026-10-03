@@ -56,7 +56,7 @@ export interface MarkdownHeading {
  * `heading_open` is unconditionally immediately followed by exactly one
  * `inline` token holding that heading's parsed text (even when empty, e.g.
  * `#` alone still produces an `inline` token with an empty `children`
- * array) — verified against markdown-it 14.3.0's own heading rule, both ATX
+ * array) — verified against markdown-it 14.3.2's own heading rule, both ATX
  * and Setext forms, at any nesting depth.
  */
 export function collectHeadings(tokens: MarkdownToken[]): MarkdownHeading[] {

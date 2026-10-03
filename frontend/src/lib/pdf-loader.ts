@@ -4,11 +4,12 @@
 // PDF.js による JavaScript 実行は isEvalSupported: false で無効化する。
 //
 // pdfjs-dist は PDF を開くときだけ動的 import で読み込む（メインバンドルに入れない）。
-// pdfjs-dist 6.3 の build/pdf.mjs はトップレベルで Iterator.prototype を参照するため、
-// グローバル Iterator の無いブラウザでは読み込み時に ReferenceError になる。静的 import
-// だとその失敗が SPA 全体の起動失敗になるので、影響を PDF 機能だけに閉じ込める。
-// このファイルで pdfjs-dist から値を import してよいのはここの動的 import のみ
-// （`import type` はバンドルに影響しないので他所で使ってよい）。
+// pdfjs のモジュール評価は、新しい組み込み API を持たないブラウザでは読み込み時に
+// 例外で失敗しうる。静的 import だとその失敗が SPA 全体の起動失敗になるので、影響を
+// PDF 機能だけに閉じ込める。
+// この制約はプロジェクト全体に及ぶ: `src/` のどこからも pdfjs-dist の値を静的 import
+// しないこと（このファイルの動的 import が唯一の入口。`import type` はバンドルに
+// 影響しないので、どこで使ってもよい）。
 
 import type { PDFDocumentProxy } from "pdfjs-dist";
 
@@ -28,7 +29,9 @@ function loadPdfJs(): Promise<PdfJs> {
   return pdfjsPromise;
 }
 
-export type PdfLoadErrorKind = "password_protected" | "parse_failed";
+// engine_load_failed: PDF.js 自体を読み込めなかった（ファイルの問題ではない）。
+// 古いブラウザでの評価エラーや、デプロイ後に開きっぱなしのタブでのチャンク 404 など。
+export type PdfLoadErrorKind = "password_protected" | "parse_failed" | "engine_load_failed";
 
 export class PdfLoadError extends Error {
   readonly kind: PdfLoadErrorKind;
@@ -64,8 +67,8 @@ export async function loadPdfDocument(bytes: ArrayBuffer): Promise<LoadedPdf> {
   try {
     pdfjs = await loadPdfJs();
   } catch (error) {
-    // 古いブラウザでの評価エラーやチャンク取得失敗。既存の読み込み失敗表示に載せる。
-    throw new PdfLoadError("parse_failed", error instanceof Error ? error.message : "failed to load PDF.js");
+    // ファイルの問題ではないので parse_failed とは区別する（表示する文言が違う）。
+    throw new PdfLoadError("engine_load_failed", error instanceof Error ? error.message : "failed to load PDF.js");
   }
   const { getDocument, PasswordException } = pdfjs;
   const loadingTask = getDocument({

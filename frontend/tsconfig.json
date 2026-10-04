@@ -12,7 +12,6 @@
     "useDefineForClassFields": true,
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
-    "baseUrl": ".",
     "paths": {
       "@html2xtc/aozora-text": ["../packages/aozora-text/src/index.ts"],
       "@html2xtc/markdown-text": ["../packages/markdown-text/src/index.ts"]

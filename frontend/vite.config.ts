@@ -43,6 +43,11 @@ export default defineConfig({
     // CSS の minify（lightningcss）は JS と別のターゲットで変換する。既定のままだと
     // メディアクエリの範囲構文などへ書き換えられ、古い Safari ではその規則ごと
     // 無効になってしまうため、CSS だけ少し古い世代に合わせて変換を抑える。
+    // 範囲構文を解釈できない Safari / iOS Safari 16.0〜16.3 向けの措置で、16.4 以降は
+    // 解釈できる。この世代のサポートをやめるなら、この指定は外してよい。
+    // 値は以前の既定ターゲットに相当するブラウザ群（Chrome / Edge / Firefox / Safari）に
+    // iOS Safari を足したもの。lightningcss は Safari と iOS Safari を別のターゲットとして
+    // 扱うため、ios16 は明示が要る。
     // JS の build.target は既定のまま。ここは "baseline-widely-available" の文字列を
     // 受け付けない（配列で渡す）。
     cssTarget: ["chrome107", "edge107", "firefox104", "safari16", "ios16"],

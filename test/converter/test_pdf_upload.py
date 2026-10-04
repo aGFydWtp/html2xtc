@@ -1064,7 +1064,8 @@ class TestHttpServerUploadedPdf:
             assert json.loads(body)["code"] == "page_range_invalid"
             assert response.getheader("Connection") is None
 
-            # Same socket, third request: a success must still be served.
+            # Third request on the same http.client connection (which would
+            # reconnect if the server had closed it): a success is still served.
             with mock.patch.object(app.subprocess, "run", side_effect=run_success):
                 conn.request(
                     "POST",
@@ -1079,8 +1080,10 @@ class TestHttpServerUploadedPdf:
             conn.close()
 
     def test_truncated_body_closes_the_connection(self, server):
-        # Fewer bytes than Content-Length, then half-close: the 400 is sent
-        # for a body that was only partly read, so the connection must close.
+        # Behaviour-preservation check, not a test of the keep-alive fix (it
+        # passes with or without it): a 400 for a body that was only partly
+        # read (fewer bytes than Content-Length, then half-close) has always
+        # closed the connection, and must keep doing so.
         pdf_bytes = make_pdf()
         head = (
             "POST /convert/uploaded-pdf HTTP/1.1\r\n"

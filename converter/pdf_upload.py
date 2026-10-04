@@ -1027,7 +1027,10 @@ def handle_uploaded_pdf_request(handler) -> None:
     """Entry point called from app.Handler._handle_post for
     POST /convert/uploaded-pdf. handler is the app.Handler instance (an
     http.server.BaseHTTPRequestHandler); this function uses its
-    .headers/.rfile/._send_json/._send_bytes."""
+    .headers/.rfile/._send_json/._send_bytes, and writes a per-request
+    `upload_body_fully_read` attribute onto it: reset to False here, set to
+    True by _handle_uploaded_pdf once the body has been read to its end; it
+    decides whether a PdfUploadError response closes the connection."""
     # Reset per request: keep-alive reuses the same handler instance, so a
     # flag left by the previous request must not leak into this one.
     handler.upload_body_fully_read = False

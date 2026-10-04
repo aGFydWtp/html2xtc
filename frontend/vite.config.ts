@@ -39,6 +39,14 @@ export default defineConfig({
       "@html2xtc/markdown-text": MARKDOWN_TEXT_ENTRY,
     },
   },
+  build: {
+    // CSS の minify（lightningcss）は JS と別のターゲットで変換する。既定のままだと
+    // メディアクエリの範囲構文などへ書き換えられ、古い Safari ではその規則ごと
+    // 無効になってしまうため、CSS だけ少し古い世代に合わせて変換を抑える。
+    // JS の build.target は既定のまま。ここは "baseline-widely-available" の文字列を
+    // 受け付けない（配列で渡す）。
+    cssTarget: ["chrome107", "edge107", "firefox104", "safari16", "ios16"],
+  },
   server: {
     proxy: Object.fromEntries(WORKER_PATHS.map((p) => [p, "http://localhost:8787"])),
     // packages/aozora-text lives outside frontend/ (this project's root),

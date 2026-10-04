@@ -38,6 +38,7 @@ Image = pytest.importorskip("PIL.Image")
 
 import pdf_upload  # noqa: E402
 import pdf_worker  # noqa: E402
+from test_app import raw_request  # noqa: E402  (pytest puts this directory on sys.path)
 
 FAKE_XTC = b"XTC-FAKE-BYTES"
 
@@ -990,6 +991,110 @@ class TestHttpServerUploadedPdf:
             assert status == 503
         finally:
             pdf_upload.UPLOADED_PDF_CONVERSION_SLOTS.release()
+
+    def test_busy_conversion_slot_closes_the_connection(self, server):
+        # The 503 is sent before the body is read, so it must carry
+        # Connection: close; the 503 contract itself (status, code) is unchanged.
+        pdf_bytes = make_pdf()
+        assert pdf_upload.UPLOADED_PDF_CONVERSION_SLOTS.acquire(blocking=False)
+        try:
+            status, headers, body = request(
+                server,
+                "POST",
+                "/convert/uploaded-pdf",
+                body=pdf_bytes,
+                headers=upload_headers(pdf_bytes),
+            )
+        finally:
+            pdf_upload.UPLOADED_PDF_CONVERSION_SLOTS.release()
+        assert status == 503
+        assert json.loads(body)["code"] == "service_busy"
+        assert headers["Connection"].lower() == "close"
+
+    def test_busy_conversion_slot_unread_body_is_not_parsed_as_a_request(self, server):
+        # Raw socket, headers and body in one send: with keep-alive the unread
+        # "%PDF-..." body would be parsed as the next request line and answered
+        # with a second response (400 Bad request syntax).
+        pdf_bytes = make_pdf()
+        head = (
+            "POST /convert/uploaded-pdf HTTP/1.1\r\n"
+            "Host: localhost\r\n"
+            "Content-Type: application/pdf\r\n"
+            f"Content-Length: {len(pdf_bytes)}\r\n"
+            "\r\n"
+        ).encode("ascii")
+        assert pdf_bytes.startswith(b"%PDF-")
+        assert pdf_upload.UPLOADED_PDF_CONVERSION_SLOTS.acquire(blocking=False)
+        try:
+            raw = raw_request(server, head + pdf_bytes)
+        finally:
+            pdf_upload.UPLOADED_PDF_CONVERSION_SLOTS.release()
+        assert raw.count(b"HTTP/1.") == 1
+        assert raw.startswith(b"HTTP/1.1 503 ")
+        assert b"Bad request syntax" not in raw
+
+    def test_error_after_body_is_read_keeps_the_connection_alive(self, server):
+        # Regression guard for the other direction: once the body has been
+        # consumed, errors (here not_pdf 415, then page_range_invalid 422) leave
+        # the connection reusable, and a following request on it still works.
+        conn = http.client.HTTPConnection(
+            "127.0.0.1", server.server_address[1], timeout=10
+        )
+        try:
+            bad = MALFORMED_WITHOUT_MAGIC
+            conn.request(
+                "POST", "/convert/uploaded-pdf", body=bad, headers=upload_headers(bad)
+            )
+            response = conn.getresponse()
+            response.read()
+            assert response.status == 415
+            assert response.getheader("Connection") is None
+
+            pdf_bytes = make_pdf(pages=2)
+            options_header = encode_options(default_options(pages="5-9"))
+            conn.request(
+                "POST",
+                "/convert/uploaded-pdf",
+                body=pdf_bytes,
+                headers=upload_headers(pdf_bytes, **{"X-Pdf-Options": options_header}),
+            )
+            response = conn.getresponse()
+            body = response.read()
+            assert response.status == 422
+            assert json.loads(body)["code"] == "page_range_invalid"
+            assert response.getheader("Connection") is None
+
+            # Third request on the same http.client connection (which would
+            # reconnect if the server had closed it): a success is still served.
+            with mock.patch.object(app.subprocess, "run", side_effect=run_success):
+                conn.request(
+                    "POST",
+                    "/convert/uploaded-pdf",
+                    body=pdf_bytes,
+                    headers=upload_headers(pdf_bytes),
+                )
+                response = conn.getresponse()
+                assert response.read() == FAKE_XTC
+            assert response.status == 200
+        finally:
+            conn.close()
+
+    def test_truncated_body_closes_the_connection(self, server):
+        # Behaviour-preservation check, not a test of the keep-alive fix (it
+        # passes with or without it): a 400 for a body that was only partly
+        # read (fewer bytes than Content-Length, then half-close) has always
+        # closed the connection, and must keep doing so.
+        pdf_bytes = make_pdf()
+        head = (
+            "POST /convert/uploaded-pdf HTTP/1.1\r\n"
+            "Host: localhost\r\n"
+            "Content-Type: application/pdf\r\n"
+            f"Content-Length: {len(pdf_bytes)}\r\n"
+            "\r\n"
+        ).encode("ascii")
+        raw = raw_request(server, head + pdf_bytes[:20], half_close=True)
+        assert raw.startswith(b"HTTP/1.1 400 ")
+        assert b"connection: close" in raw.lower()
 
     def test_existing_convert_endpoint_still_works(self, server):
         # Regression guard: refactoring _handle_post's dispatch must not

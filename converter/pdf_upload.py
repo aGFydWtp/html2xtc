@@ -1027,14 +1027,23 @@ def handle_uploaded_pdf_request(handler) -> None:
     """Entry point called from app.Handler._handle_post for
     POST /convert/uploaded-pdf. handler is the app.Handler instance (an
     http.server.BaseHTTPRequestHandler); this function uses its
-    .headers/.rfile/._send_json/._send_bytes."""
+    .headers/.rfile/._send_json/._send_bytes, and writes a per-request
+    `upload_body_fully_read` attribute onto it: reset to False here, set to
+    True by _handle_uploaded_pdf once the body has been read to its end; it
+    decides whether a PdfUploadError response closes the connection."""
+    # Reset per request: keep-alive reuses the same handler instance, so a
+    # flag left by the previous request must not leak into this one.
+    handler.upload_body_fully_read = False
     try:
         _handle_uploaded_pdf(handler)
     except PdfUploadError as exc:
         logger.error("uploaded-pdf request failed (%d): %s", exc.status, exc.log_message)
-        # Connection cannot be safely reused whenever the body was never (or
-        # only partially) read -- same rule app.py's /convert follows.
-        close = exc.status in (400, 411, 413, 415)
+        # Decided by whether the body was read to its end, not by status: any
+        # unread (or partly read) body bytes would be parsed as the next
+        # request on a kept-alive connection. This covers every error raised
+        # before _receive_body_to_file succeeds (headers, size limit, busy
+        # slot) and a truncated body; errors after it can keep the connection.
+        close = not handler.upload_body_fully_read
         # `code` is the stable contract src/workflow.ts matches on to produce
         # a condition-specific NonRetryableError message (see PdfUploadError's
         # docstring); `error` stays the free-text, non-contractual detail.
@@ -1086,6 +1095,7 @@ def _handle_uploaded_pdf(handler) -> None:
             workdir = Path(workdir_str)
             pdf_path = workdir / "source.pdf"  # fixed name; never user input
             _receive_body_to_file(handler.rfile, content_length, pdf_path)
+            handler.upload_body_fully_read = True
             _validate_pdf_magic(pdf_path)
 
             xtc_bytes, title = convert_uploaded_pdf(

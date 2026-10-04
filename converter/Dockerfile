@@ -70,6 +70,9 @@ WORKDIR /app
 
 COPY app.py /app/app.py
 COPY pdf_upload.py /app/pdf_upload.py
+# Child-process entry point for /convert/uploaded-pdf; pdf_upload.py launches
+# it by path, so the image is broken for uploads without this line.
+COPY pdf_worker.py /app/pdf_worker.py
 COPY config-x3.toml /app/config-x3.toml
 COPY config-x4.toml /app/config-x4.toml
 

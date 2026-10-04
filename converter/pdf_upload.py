@@ -16,6 +16,11 @@ it is optional:
     held in memory as a whole (see _receive_body_to_file);
   - the PDF magic, encryption flag, and page count are checked before any
     page is rendered;
+  - this process never hands the PDF to PyMuPDF itself: opening, inspecting
+    and rendering all happen in short-lived child interpreters (see
+    pdf_worker.py and _run_worker) that are SIGKILLed when the request's
+    time budget runs out, because PyMuPDF can hang inside C on crafted input
+    and take this whole process (HTTP server included) with it;
   - page images are produced and packed into the XTC in bounded-size chunks
     (see _convert_in_chunks) so peak memory stays roughly constant
     regardless of how many pages were selected;
@@ -35,11 +40,14 @@ import base64
 import json
 import logging
 import re
+import shutil
+import subprocess
+import sys
 import threading
 import time
 import tomllib
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -90,6 +98,12 @@ _ALLOWED_CONTENT_TYPES = {"application/pdf", "application/x-pdf"}
 _PDF_MAGIC = b"%PDF-"
 _MAGIC_SEARCH_WINDOW = 1024
 _RECEIVE_CHUNK_SIZE = 1024 * 1024  # 1 MiB, per spec 11.3
+
+# The child-process entry point (see pdf_worker.py); shipped next to this file.
+_WORKER_SCRIPT = Path(__file__).resolve().with_name("pdf_worker.py")
+# How much of a child's stderr is kept for the server log.
+_WORKER_STDERR_TAIL_BYTES = 8192
+_PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
 class PdfUploadError(Exception):
@@ -670,6 +684,161 @@ def _chunked(items: list[int], size: int) -> list[list[int]]:
     return [items[i : i + size] for i in range(0, len(items), size)]
 
 
+def _read_stderr_tail(path: Path) -> str:
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, 2)
+            size = f.tell()
+            f.seek(max(0, size - _WORKER_STDERR_TAIL_BYTES))
+            return f.read().decode("utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def _run_worker(
+    job: dict,
+    workdir: Path,
+    name: str,
+    timeout_seconds: float,
+    total_timeout_seconds: int,
+    stage: str,
+) -> dict:
+    """Runs one pdf_worker.py job in a fresh interpreter and returns its
+    decoded result dict.
+
+    Every PyMuPDF call on the uploaded PDF goes through here, so that a PDF
+    that makes PyMuPDF spin inside C can be SIGKILLed instead of freezing
+    this process. It deliberately is not a fork or multiprocessing child: the
+    server is multi-threaded, and a forked copy of it would inherit locks
+    held by other threads.
+
+    timeout_seconds is the remaining share of the request's budget
+    (total_timeout_seconds, which is what error messages report); like
+    app._run_xtctool, nothing is started once it is used up. The job and its
+    result travel as fixed-name files under workdir, so argv carries only a
+    path this server built itself. The child's stderr goes to a file whose
+    tail is attached to the raised error for the server log, never to the
+    client.
+
+    Raises app.ConversionTimeout when the budget runs out (the child is
+    killed and reaped first), app.ConversionError when the child cannot be
+    started, dies, or leaves no usable result, and PdfUploadError for a
+    rejection the child reported itself."""
+    if timeout_seconds <= 0:
+        raise app.ConversionTimeout(
+            f"conversion timed out after {total_timeout_seconds}s ({stage})"
+        )
+
+    job_path = workdir / f"{name}.job.json"
+    result_path = workdir / f"{name}.result.json"
+    stderr_path = workdir / f"{name}.stderr"
+    job_path.write_text(json.dumps({**job, "result": str(result_path)}), encoding="utf-8")
+
+    timed_out = False
+    try:
+        with open(stderr_path, "wb") as stderr_file:
+            proc = subprocess.Popen(
+                [sys.executable, str(_WORKER_SCRIPT), str(job_path)],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=stderr_file,
+            )
+            try:
+                try:
+                    returncode = proc.wait(timeout=timeout_seconds)
+                except subprocess.TimeoutExpired:
+                    timed_out = True
+            finally:
+                # Also covers an unexpected exception in this thread: the
+                # child must never outlive the request that started it.
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.wait()
+    except OSError as exc:
+        raise app.ConversionError(f"could not start pdf worker ({stage}): {exc}") from exc
+
+    stderr_tail = _read_stderr_tail(stderr_path)
+    if timed_out:
+        raise app.ConversionTimeout(
+            f"conversion timed out after {total_timeout_seconds}s ({stage})",
+            stderr=stderr_tail,
+        )
+    if returncode != 0:
+        how = (
+            f"was killed by signal {-returncode}"
+            if returncode < 0
+            else f"exited with code {returncode}"
+        )
+        raise app.ConversionError(f"pdf worker {how} ({stage})", stderr=stderr_tail)
+
+    try:
+        result = json.loads(result_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise app.ConversionError(
+            f"pdf worker left no usable result ({stage})", stderr=stderr_tail
+        ) from exc
+    if not isinstance(result, dict) or not isinstance(result.get("status"), str):
+        raise app.ConversionError(
+            f"pdf worker left a malformed result ({stage})", stderr=stderr_tail
+        )
+
+    if result["status"] == "upload_error":
+        status, message = result.get("http_status"), result.get("message")
+        log_message, code = result.get("log_message"), result.get("code")
+        if (
+            not _is_int(status)
+            or not isinstance(message, str)
+            or not isinstance(log_message, str)
+            or not (code is None or isinstance(code, str))
+        ):
+            raise app.ConversionError(
+                f"pdf worker left a malformed result ({stage})", stderr=stderr_tail
+            )
+        raise PdfUploadError(status, message, log_message, code=code)
+    return result
+
+
+@dataclass(frozen=True)
+class _PdfInfo:
+    encrypted: bool
+    page_count: int
+    title: str
+
+
+def _inspect_pdf(
+    pdf_path: Path, workdir: Path, deadline: float, total_timeout_seconds: int
+) -> _PdfInfo:
+    """Has a child open the PDF and report encryption, page count and the
+    metadata title; an unparseable PDF is a 422 here exactly as it was when
+    this process opened it."""
+    result = _run_worker(
+        {"op": "inspect", "pdf": str(pdf_path)},
+        workdir,
+        "inspect",
+        deadline - time.monotonic(),
+        total_timeout_seconds,
+        "inspect",
+    )
+    status = result["status"]
+    if status == "open_failed":
+        detail = result.get("detail")
+        raise PdfUploadError(
+            422,
+            "unable to parse PDF",
+            detail if isinstance(detail, str) else "pymupdf.open failed",
+            code="pdf_parse_failed",
+        )
+    malformed = app.ConversionError("pdf worker left a malformed result (inspect)")
+    if status != "ok" or not isinstance(result.get("encrypted"), bool):
+        raise malformed
+    if result["encrypted"]:
+        return _PdfInfo(encrypted=True, page_count=0, title="")
+    page_count, title = result.get("page_count"), result.get("title")
+    if not _is_int(page_count) or page_count < 0 or not isinstance(title, str):
+        raise malformed
+    return _PdfInfo(encrypted=False, page_count=page_count, title=title)
+
+
 def convert_uploaded_pdf(
     pdf_path: Path,
     options: PdfConvertOptions,
@@ -679,8 +848,13 @@ def convert_uploaded_pdf(
     device_config_path: str | None = None,
 ) -> tuple[bytes, str]:
     """Validates and converts the PDF at pdf_path into XTC bytes, returning
-    (xtc_bytes, title). Raises PdfUploadError for any validation failure and
-    app.ConversionError for xtctool failures (mapped to 500 by the caller).
+    (xtc_bytes, title). Raises PdfUploadError for any validation failure,
+    app.ConversionTimeout when the time budget runs out, and
+    app.ConversionError for other worker/xtctool failures (both mapped to 500
+    by the caller).
+
+    The PDF is only ever opened by pdf_worker.py children, never by this
+    process (see _run_worker).
 
     device_config_path is the device-resolved base config (see
     app.resolve_device/app.resolve_config_path); None (every caller predating
@@ -692,58 +866,90 @@ def convert_uploaded_pdf(
     )
     canvas_size = _output_canvas_size(resolved_device_config_path)
 
-    try:
-        doc = app.pymupdf.open(pdf_path)
-    except Exception as exc:  # noqa: BLE001 - any parse failure is a 422
+    info = _inspect_pdf(pdf_path, workdir, deadline, timeout_seconds)
+
+    if info.encrypted:
+        raise PdfUploadError(422, "encrypted PDF is not supported", code="encrypted_pdf")
+
+    total_pages = info.page_count
+    if total_pages > MAX_SOURCE_PDF_PAGES:
         raise PdfUploadError(
-            422, "unable to parse PDF", f"pymupdf.open failed: {exc}",
-            code="pdf_parse_failed",
-        ) from exc
-
-    try:
-        if doc.is_encrypted or doc.needs_pass:
-            raise PdfUploadError(
-                422, "encrypted PDF is not supported", code="encrypted_pdf"
-            )
-
-        total_pages = doc.page_count
-        if total_pages > MAX_SOURCE_PDF_PAGES:
-            raise PdfUploadError(
-                422,
-                "PDF has too many pages",
-                f"{total_pages} pages exceeds MAX_SOURCE_PDF_PAGES={MAX_SOURCE_PDF_PAGES}",
-                code="page_range_invalid",
-            )
-
-        selected_pages = parse_page_range(options.pages, total_pages)
-        if len(selected_pages) > MAX_SELECTED_PDF_PAGES:
-            raise PdfUploadError(
-                422,
-                "too many pages selected",
-                f"{len(selected_pages)} pages exceeds "
-                f"MAX_SELECTED_PDF_PAGES={MAX_SELECTED_PDF_PAGES}",
-                code="page_range_invalid",
-            )
-
-        raw_title = (doc.metadata or {}).get("title") or ""
-        title = app.sanitize_title(raw_title) or _title_from_filename(filename)
-
-        config_path = workdir / "config.toml"
-        config_path.write_text(
-            config_with_pdf_options(title, options, resolved_device_config_path),
-            encoding="utf-8",
+            422,
+            "PDF has too many pages",
+            f"{total_pages} pages exceeds MAX_SOURCE_PDF_PAGES={MAX_SOURCE_PDF_PAGES}",
+            code="page_range_invalid",
         )
 
-        xtc_bytes = _convert_in_chunks(
-            doc, selected_pages, options, config_path, canvas_size, workdir, deadline, timeout_seconds
+    selected_pages = parse_page_range(options.pages, total_pages)
+    if len(selected_pages) > MAX_SELECTED_PDF_PAGES:
+        raise PdfUploadError(
+            422,
+            "too many pages selected",
+            f"{len(selected_pages)} pages exceeds "
+            f"MAX_SELECTED_PDF_PAGES={MAX_SELECTED_PDF_PAGES}",
+            code="page_range_invalid",
         )
-        return xtc_bytes, title
-    finally:
-        doc.close()
+
+    title = app.sanitize_title(info.title) or _title_from_filename(filename)
+
+    config_path = workdir / "config.toml"
+    config_path.write_text(
+        config_with_pdf_options(title, options, resolved_device_config_path),
+        encoding="utf-8",
+    )
+
+    xtc_bytes = _convert_in_chunks(
+        pdf_path, selected_pages, options, config_path, canvas_size, workdir, deadline, timeout_seconds
+    )
+    return xtc_bytes, title
+
+
+def _render_chunk(
+    pdf_path: Path,
+    chunk_pages: list[int],
+    options: PdfConvertOptions,
+    canvas_size: tuple[int, int],
+    png_dir: Path,
+    workdir: Path,
+    name: str,
+    timeout_seconds: float,
+    total_timeout_seconds: int,
+    stage: str,
+) -> list[Path]:
+    """Has a child render chunk_pages into png_dir and returns the PNG paths
+    in page order, after checking that every expected file is really there."""
+    result = _run_worker(
+        {
+            "op": "render",
+            "pdf": str(pdf_path),
+            "pages": chunk_pages,
+            "options": asdict(options),
+            "dpi": PDF_RENDER_DPI,
+            "canvas_size": list(canvas_size),
+            "out_dir": str(png_dir),
+        },
+        workdir,
+        name,
+        timeout_seconds,
+        total_timeout_seconds,
+        stage,
+    )
+    if result["status"] != "ok" or result.get("pages") != len(chunk_pages):
+        raise app.ConversionError(f"pdf worker left a malformed result ({stage})")
+    png_paths = [png_dir / f"page{i:04d}.png" for i in range(1, len(chunk_pages) + 1)]
+    for png_path in png_paths:
+        try:
+            with open(png_path, "rb") as f:
+                signature = f.read(len(_PNG_SIGNATURE))
+        except OSError as exc:
+            raise app.ConversionError(f"pdf worker produced no page image ({stage})") from exc
+        if signature != _PNG_SIGNATURE:
+            raise app.ConversionError(f"pdf worker produced an invalid page image ({stage})")
+    return png_paths
 
 
 def _convert_in_chunks(
-    doc,
+    pdf_path: Path,
     selected_pages: list[int],
     options: PdfConvertOptions,
     config_path: Path,
@@ -752,36 +958,32 @@ def _convert_in_chunks(
     deadline: float,
     total_timeout_seconds: int,
 ) -> bytes:
-    """Renders selected_pages in PDF_UPLOAD_CHUNK_SIZE_PAGES-page batches,
-    packs each batch into a chunk XTC via xtctool, deletes the batch's PNGs,
-    and finally repacks the chunk XTCs into one XTC (spec section 11.9).
-    A single-chunk PDF skips the repack step and returns its one chunk
-    directly, exactly mirroring app.convert_pdf's chunking shape."""
+    """Renders selected_pages in PDF_UPLOAD_CHUNK_SIZE_PAGES-page batches (one
+    worker child per batch), packs each batch into a chunk XTC via xtctool,
+    deletes the batch's PNGs, and finally repacks the chunk XTCs into one XTC
+    (spec section 11.9). A single-chunk PDF skips the repack step and returns
+    its one chunk directly, exactly mirroring app.convert_pdf's chunking
+    shape."""
     chunks = _chunked(selected_pages, PDF_UPLOAD_CHUNK_SIZE_PAGES)
     chunk_xtc_paths: list[Path] = []
 
     for chunk_index, chunk_pages in enumerate(chunks, start=1):
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise app.ConversionError(
-                f"conversion timed out after {total_timeout_seconds}s"
-            )
-
+        stage = f"chunk {chunk_index}/{len(chunks)} pages {chunk_pages[0]}-{chunk_pages[-1]}"
         png_dir = workdir / f"chunk{chunk_index:04d}"
         png_dir.mkdir()
-        png_paths: list[Path] = []
         try:
-            for image_index, page_number in enumerate(chunk_pages, start=1):
-                if time.monotonic() > deadline:
-                    raise app.ConversionError(
-                        f"conversion timed out after {total_timeout_seconds}s"
-                    )
-                page = doc[page_number - 1]
-                image = render_page_image(page, options, PDF_RENDER_DPI, canvas_size)
-                png_path = png_dir / f"page{image_index:04d}.png"
-                image.save(png_path)
-                png_paths.append(png_path)
-
+            png_paths = _render_chunk(
+                pdf_path,
+                chunk_pages,
+                options,
+                canvas_size,
+                png_dir,
+                workdir,
+                f"render{chunk_index:04d}",
+                deadline - time.monotonic(),
+                total_timeout_seconds,
+                f"render {stage}",
+            )
             chunk_xtc_path = workdir / f"chunk{chunk_index:04d}.xtc"
             app._run_xtctool(
                 [str(p) for p in png_paths],
@@ -789,16 +991,18 @@ def _convert_in_chunks(
                 str(config_path),
                 deadline - time.monotonic(),
                 total_timeout_seconds,
-                f"chunk {chunk_index}/{len(chunks)} pages "
-                f"{chunk_pages[0]}-{chunk_pages[-1]}",
+                stage,
             )
         finally:
             # PNGs are deleted as soon as their chunk XTC exists (or the
             # chunk failed), keeping temp disk usage bounded regardless of
-            # how many pages were selected -- spec section 11.9.
-            for p in png_paths:
-                p.unlink(missing_ok=True)
-            png_dir.rmdir()
+            # how many pages were selected -- spec section 11.9. Removing the
+            # whole directory (rather than a returned path list) also clears
+            # whatever a failed or killed worker left behind, and ignoring
+            # errors keeps this cleanup from replacing the exception that is
+            # already propagating (the workdir itself is removed by the
+            # caller's TemporaryDirectory regardless).
+            shutil.rmtree(png_dir, ignore_errors=True)
         chunk_xtc_paths.append(chunk_xtc_path)
 
     if len(chunk_xtc_paths) == 1:
@@ -837,6 +1041,12 @@ def handle_uploaded_pdf_request(handler) -> None:
         handler._send_json(
             exc.status, {"error": exc.message, "code": _error_code(exc)}, close=close
         )
+    except app.ConversionTimeout as exc:
+        # Checked before ConversionError (its base class). `code` is the
+        # contract for telling a time-out from other conversion failures;
+        # the message text is not.
+        logger.error("uploaded-pdf conversion timed out: %s; stderr: %s", exc, exc.stderr)
+        handler._send_json(500, {"error": str(exc), "code": "convert_timeout"})
     except app.ConversionError as exc:
         logger.error("uploaded-pdf conversion failed: %s; stderr: %s", exc, exc.stderr)
         handler._send_json(500, {"error": str(exc), "code": "convert_failed"})

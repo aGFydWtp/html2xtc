@@ -303,12 +303,13 @@ const UPLOADED_PDF_ERROR_MESSAGES: Record<string, string> = {
 };
 
 /**
- * Extracts converter/pdf_upload.py's `code` field from a (non-2xx) response
- * body and resolves it to a stable message. bodyText is passed in rather
- * than the Response itself, since a Response body can only be consumed
- * once and the caller already needs it for logging.
+ * Extracts converter/pdf_upload.py's `code` field from a response body, or
+ * undefined when the body isn't JSON, isn't an object, or has no string
+ * `code`. Never throws. bodyText is passed in rather than the Response
+ * itself, since a Response body can only be consumed once and the caller
+ * already needs it for logging.
  */
-export function uploadedPdfErrorMessage(bodyText: string): string {
+export function uploadedPdfErrorCode(bodyText: string): string | undefined {
   try {
     const parsed: unknown = JSON.parse(bodyText);
     if (
@@ -317,16 +318,37 @@ export function uploadedPdfErrorMessage(bodyText: string): string {
       "code" in parsed &&
       typeof (parsed as { code?: unknown }).code === "string"
     ) {
-      const code = (parsed as { code: string }).code;
-      if (code in UPLOADED_PDF_ERROR_MESSAGES) {
-        return UPLOADED_PDF_ERROR_MESSAGES[code];
-      }
+      return (parsed as { code: string }).code;
     }
   } catch {
-    // Non-JSON body shouldn't happen for this Container's error responses;
-    // fall through to the generalized message below.
+    // Non-JSON body (e.g. a Container start-up failure): no code.
+  }
+  return undefined;
+}
+
+/**
+ * Resolves a (non-2xx) 400/415/422 response body to a stable message via
+ * uploadedPdfErrorCode(); an unrecognized/missing code falls back to the
+ * generalized message.
+ */
+export function uploadedPdfErrorMessage(bodyText: string): string {
+  const code = uploadedPdfErrorCode(bodyText);
+  if (code !== undefined && Object.hasOwn(UPLOADED_PDF_ERROR_MESSAGES, code)) {
+    return UPLOADED_PDF_ERROR_MESSAGES[code];
   }
   return "invalid or unsupported PDF";
+}
+
+/**
+ * True when the Container reports that conversion of the uploaded PDF hit
+ * its own time limit (HTTP 500 with code "convert_timeout",
+ * converter/pdf_upload.py). The same PDF would time out again, and each
+ * attempt can burn the full conversion budget, so src/workflow.ts treats it
+ * as non-retryable. Any other 500 (convert_failed, internal_error, a
+ * non-JSON Container start-up failure) stays retryable.
+ */
+export function isUploadedPdfConvertTimeout(status: number, bodyText: string): boolean {
+  return status === 500 && uploadedPdfErrorCode(bodyText) === "convert_timeout";
 }
 
 async function deleteBestEffort(env: Pick<Env, "XTC_BUCKET">, key: string): Promise<void> {

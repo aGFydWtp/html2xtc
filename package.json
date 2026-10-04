@@ -12,7 +12,8 @@
     "deploy": "bash scripts/deploy.sh",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:converter": "python3 -m pytest test/converter/"
+    "test:converter": "python3 -m pytest test/converter/",
+    "test:converter:docker": "bash scripts/test-converter-docker.sh"
   },
   "dependencies": {
     "@cloudflare/containers": "^0.3.7",

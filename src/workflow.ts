@@ -60,6 +60,7 @@ import { renderPdf, renderPdfFromHtml, renderSelfStyledHtmlPdf, formatJstTimesta
 import {
   DEFAULT_PDF_OPTIONS,
   resolveMaxUploadPdfBytes,
+  isUploadedPdfConvertTimeout,
   uploadedPdfErrorMessage,
 } from "./pdf-upload";
 import { storeXtcOutput } from "./pipeline";
@@ -1153,7 +1154,16 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
               // — reaches instance.status().error (src/jobs.ts).
               throw new NonRetryableError(uploadedPdfErrorMessage(bodyText));
             }
-            // 500/503/other: xtctool failure, no free conversion slot, or an
+            if (isUploadedPdfConvertTimeout(response.status, bodyText)) {
+              // The Container itself gave up on this PDF (code
+              // "convert_timeout"). Same message as the fetch TimeoutError
+              // above: the same input would time out again, and each attempt
+              // can use the full conversion budget.
+              throw new NonRetryableError(
+                "XTC conversion timed out; the document is too large",
+              );
+            }
+            // Other 500/503: xtctool failure, no free conversion slot, or an
             // internal error — left retryable like the url-source path.
             throw new Error("XTC conversion failed");
           }

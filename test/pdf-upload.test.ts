@@ -8,9 +8,11 @@ import {
   checkContentLength,
   decodeFilenameHeader,
   isAllowedPdfContentType,
+  isUploadedPdfConvertTimeout,
   resolveMaxUploadPdfBytes,
   saveUploadedPdf,
   sanitizeUploadFilename,
+  uploadedPdfErrorCode,
   uploadedPdfErrorMessage,
 } from "../src/pdf-upload";
 
@@ -253,5 +255,51 @@ describe("uploadedPdfErrorMessage (Container error-code contract, spec §9.4/§1
     expect(uploadedPdfErrorMessage(JSON.stringify(["not", "an", "object"]))).toBe(
       "invalid or unsupported PDF",
     );
+  });
+});
+
+describe("uploadedPdfErrorCode", () => {
+  it("returns the string code from a JSON object body", () => {
+    expect(uploadedPdfErrorCode(JSON.stringify({ error: "x", code: "convert_timeout" }))).toBe(
+      "convert_timeout",
+    );
+  });
+
+  it("returns undefined for a non-JSON body, a non-object, a missing code, or a non-string code", () => {
+    expect(uploadedPdfErrorCode("not json at all")).toBeUndefined();
+    expect(uploadedPdfErrorCode(JSON.stringify(["a"]))).toBeUndefined();
+    expect(uploadedPdfErrorCode(JSON.stringify(null))).toBeUndefined();
+    expect(uploadedPdfErrorCode(JSON.stringify({ error: "x" }))).toBeUndefined();
+    expect(uploadedPdfErrorCode(JSON.stringify({ code: 500 }))).toBeUndefined();
+  });
+});
+
+describe("isUploadedPdfConvertTimeout (non-retryable conversion timeout, src/workflow.ts)", () => {
+  const timeoutBody = JSON.stringify({
+    error: "conversion timed out after 600s (xtctool)",
+    code: "convert_timeout",
+  });
+
+  it("is true for HTTP 500 with code convert_timeout", () => {
+    expect(isUploadedPdfConvertTimeout(500, timeoutBody)).toBe(true);
+  });
+
+  it("is false for HTTP 500 with convert_failed or internal_error (stays retryable)", () => {
+    expect(
+      isUploadedPdfConvertTimeout(500, JSON.stringify({ error: "x", code: "convert_failed" })),
+    ).toBe(false);
+    expect(
+      isUploadedPdfConvertTimeout(500, JSON.stringify({ error: "x", code: "internal_error" })),
+    ).toBe(false);
+  });
+
+  it("is false for HTTP 500 with a non-JSON or code-less body (stays retryable)", () => {
+    expect(isUploadedPdfConvertTimeout(500, "container failed to start")).toBe(false);
+    expect(isUploadedPdfConvertTimeout(500, "")).toBe(false);
+    expect(isUploadedPdfConvertTimeout(500, JSON.stringify({ error: "x" }))).toBe(false);
+  });
+
+  it("is false for 503 even with the timeout code (only 500 carries this contract)", () => {
+    expect(isUploadedPdfConvertTimeout(503, timeoutBody)).toBe(false);
   });
 });

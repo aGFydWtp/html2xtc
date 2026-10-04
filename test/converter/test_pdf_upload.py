@@ -8,10 +8,15 @@ generated on the fly with pymupdf rather than checked in as binary files.
 import base64
 import http.client
 import json
+import os
+import shutil
 import subprocess
 import sys
+import textwrap
 import threading
+import time
 import tomllib
+from dataclasses import asdict
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from unittest import mock
@@ -32,6 +37,7 @@ pymupdf = pytest.importorskip("pymupdf")
 Image = pytest.importorskip("PIL.Image")
 
 import pdf_upload  # noqa: E402
+import pdf_worker  # noqa: E402
 
 FAKE_XTC = b"XTC-FAKE-BYTES"
 
@@ -754,8 +760,8 @@ def server():
     srv.server_close()
 
 
-def request(srv, method, path, body=None, headers=None):
-    conn = http.client.HTTPConnection("127.0.0.1", srv.server_address[1], timeout=10)
+def request(srv, method, path, body=None, headers=None, timeout=10):
+    conn = http.client.HTTPConnection("127.0.0.1", srv.server_address[1], timeout=timeout)
     try:
         conn.request(method, path, body=body, headers=headers or {})
         response = conn.getresponse()
@@ -1081,3 +1087,604 @@ class TestHttpServerUploadedPdfDeviceHeader:
         assert status == 200
         assert body == FAKE_XTC
         assert seen["size"] == (528, 792)
+
+
+# --- worker-process isolation ------------------------------------------------
+#
+# The uploaded PDF is only ever opened by pdf_worker.py children, which the
+# server can SIGKILL on timeout. The tests below drive the real
+# subprocess plumbing, using stand-in worker scripts where a specific child
+# behaviour (hang, crash, garbage output) is needed.
+
+
+@pytest.fixture()
+def spawned(monkeypatch):
+    """Records every child process started via subprocess.Popen."""
+    procs = []
+    real_popen = subprocess.Popen
+
+    class RecordingPopen(real_popen):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            procs.append(self)
+
+    monkeypatch.setattr(subprocess, "Popen", RecordingPopen)
+    return procs
+
+
+def assert_reaped(proc):
+    """The child is dead and was waited for (no zombie, no live process)."""
+    assert proc.poll() is not None
+    with pytest.raises(ProcessLookupError):
+        os.kill(proc.pid, 0)
+
+
+def use_fake_worker(monkeypatch, tmp_path, body: str) -> Path:
+    """Replaces pdf_worker.py with a script whose body runs after the job
+    file is loaded as `job`; `reply(obj)` writes the result file."""
+    script = tmp_path / "fake_worker.py"
+    script.write_text(
+        "import json, os, signal, sys, time\n"
+        "job = json.load(open(sys.argv[1]))\n"
+        "def reply(obj):\n"
+        "    open(job['result'], 'w').write(json.dumps(obj))\n"
+        + textwrap.dedent(body)
+    )
+    monkeypatch.setattr(pdf_upload, "_WORKER_SCRIPT", script)
+    return script
+
+
+INSPECT_OK = """
+if job['op'] == 'inspect':
+    reply({'status': 'ok', 'encrypted': False, 'page_count': 1, 'title': ''})
+    sys.exit(0)
+"""
+
+
+def convert_with_workdir(tmp_path, timeout=30, pdf_bytes=None, **option_overrides):
+    workdir = tmp_path / "work"
+    workdir.mkdir(exist_ok=True)
+    pdf_path = workdir / "source.pdf"
+    pdf_path.write_bytes(pdf_bytes if pdf_bytes is not None else make_pdf(pages=1))
+    options = pdf_upload.options_from_dict(default_options(**option_overrides))
+    return pdf_upload.convert_uploaded_pdf(pdf_path, options, "x.pdf", timeout, workdir)
+
+
+class TestWorkerIsolation:
+    def test_parent_never_opens_the_pdf_with_pymupdf(self, tmp_path):
+        pdf_bytes = make_pdf(pages=2, title="T")
+        with mock.patch.object(
+            pymupdf, "open", side_effect=AssertionError("parent opened a PDF")
+        ):
+            with mock.patch.object(app.subprocess, "run", side_effect=run_success):
+                xtc_bytes, title = convert_with_workdir(tmp_path, pdf_bytes=pdf_bytes)
+        assert xtc_bytes == FAKE_XTC
+        assert title == "T"
+
+    def test_worker_argv_carries_no_request_data(self, tmp_path, spawned):
+        workdir = tmp_path / "work"
+        workdir.mkdir()
+        pdf_path = workdir / "source.pdf"
+        pdf_path.write_bytes(make_pdf(pages=1, title="Secret Title"))
+        options = pdf_upload.options_from_dict(
+            default_options(crop={"top": 0.1, "right": 0, "bottom": 0, "left": 0})
+        )
+        with mock.patch.object(app.subprocess, "run", side_effect=run_success):
+            pdf_upload.convert_uploaded_pdf(
+                pdf_path, options, "../evil;name.pdf", 30, workdir
+            )
+        assert len(spawned) == 2  # one inspect, one render
+        for proc in spawned:
+            assert len(proc.args) == 3
+            assert proc.args[0] == sys.executable
+            assert Path(proc.args[2]).parent == workdir
+            assert "evil" not in " ".join(proc.args)
+            assert_reaped(proc)
+
+    def test_options_reach_the_worker_unchanged(self, tmp_path):
+        # Every option the pipeline reads survives the JSON hand-off: a
+        # rotated, cropped, covered and margined render has the same pixels
+        # as rendering in-process.
+        pdf_bytes = make_pdf(pages=1, width=300, height=500)
+        options_dict = default_options(
+            rotation=90,
+            crop={"top": 0.05, "right": 0.1, "bottom": 0.08, "left": 0.03},
+            fit="cover",
+            marginPx=7,
+        )
+        options = pdf_upload.options_from_dict(options_dict)
+        pdf_path = tmp_path / "source.pdf"
+        pdf_path.write_bytes(pdf_bytes)
+        png_dir = tmp_path / "png"
+        png_dir.mkdir()
+        pdf_upload._render_chunk(
+            pdf_path, [1], options, (528, 792), png_dir, tmp_path, "render0001",
+            60, 60, "t",
+        )
+        doc = pymupdf.open(pdf_path)
+        expected = pdf_upload.render_page_image(doc[0], options, pdf_upload.PDF_RENDER_DPI, (528, 792))
+        doc.close()
+        actual = Image.open(png_dir / "page0001.png")
+        assert actual.mode == "L"
+        assert actual.tobytes() == expected.tobytes()
+
+    def test_worker_is_shipped_in_the_image(self):
+        dockerfile = Path(__file__).resolve().parents[2] / "converter" / "Dockerfile"
+        if not dockerfile.is_file():
+            pytest.skip("converter/Dockerfile is not available in this environment")
+        assert "COPY pdf_worker.py /app/pdf_worker.py" in dockerfile.read_text()
+
+
+class TestWorkerFailures:
+    def test_inspect_timeout_kills_the_child(self, tmp_path, monkeypatch, spawned):
+        use_fake_worker(monkeypatch, tmp_path, "time.sleep(300)")
+        started = time.monotonic()
+        with pytest.raises(app.ConversionTimeout) as excinfo:
+            convert_with_workdir(tmp_path, timeout=1)
+        assert time.monotonic() - started < 10
+        assert str(excinfo.value).startswith("conversion timed out after 1s (")
+        assert len(spawned) == 1
+        assert_reaped(spawned[0])
+
+    def test_render_timeout_kills_the_child(self, tmp_path, monkeypatch, spawned):
+        use_fake_worker(monkeypatch, tmp_path, INSPECT_OK + "time.sleep(300)")
+        with pytest.raises(app.ConversionTimeout) as excinfo:
+            convert_with_workdir(tmp_path, timeout=2)
+        assert "timed out after 2s" in str(excinfo.value)
+        assert "render chunk 1/1 pages 1-1" in str(excinfo.value)
+        assert len(spawned) == 2
+        for proc in spawned:
+            assert_reaped(proc)
+        # The killed worker's half-written PNG directory is cleaned up.
+        assert list((tmp_path / "work").glob("chunk*")) == []
+
+    def test_no_worker_starts_once_the_budget_is_used_up(self, tmp_path, spawned):
+        with pytest.raises(app.ConversionTimeout) as excinfo:
+            pdf_upload._run_worker({"op": "inspect"}, tmp_path, "x", 0, 15, "inspect")
+        assert str(excinfo.value) == "conversion timed out after 15s (inspect)"
+        assert spawned == []
+
+    def test_timeout_is_a_conversion_error_subclass(self):
+        assert issubclass(app.ConversionTimeout, app.ConversionError)
+
+    @pytest.mark.parametrize(
+        "body,expected",
+        [
+            ("sys.exit(3)", "exited with code 3"),
+            ("os.kill(os.getpid(), signal.SIGKILL)", "killed by signal 9"),
+            ("sys.exit(0)", "no usable result"),
+            ("open(job['result'], 'w').write('not json')", "no usable result"),
+            ("reply([1, 2])", "malformed result"),
+            ("reply({'status': 'surprise'})", "malformed result"),
+            (
+                "reply({'status': 'ok', 'encrypted': False, 'page_count': 'many', 'title': ''})",
+                "malformed result",
+            ),
+            ("reply({'status': 'ok', 'encrypted': 'no'})", "malformed result"),
+            (
+                "reply({'status': 'upload_error', 'http_status': 'x', 'message': 'm', 'log_message': 'l', 'code': None})",
+                "malformed result",
+            ),
+        ],
+    )
+    def test_abnormal_inspect_is_a_plain_conversion_error(
+        self, tmp_path, monkeypatch, body, expected
+    ):
+        use_fake_worker(monkeypatch, tmp_path, body)
+        with pytest.raises(app.ConversionError) as excinfo:
+            convert_with_workdir(tmp_path)
+        assert not isinstance(excinfo.value, app.ConversionTimeout)
+        assert expected in str(excinfo.value)
+
+    @pytest.mark.parametrize(
+        "body,expected",
+        [
+            ("os._exit(7)", "exited with code 7"),
+            ("reply({'status': 'ok', 'pages': 5})", "malformed result"),
+            ("reply({'status': 'ok', 'pages': 1})", "no page image"),
+            (
+                "open(os.path.join(job['out_dir'], 'page0001.png'), 'wb').write(b'junk')\n"
+                "reply({'status': 'ok', 'pages': 1})",
+                "invalid page image",
+            ),
+        ],
+    )
+    def test_abnormal_render_is_a_plain_conversion_error(
+        self, tmp_path, monkeypatch, body, expected
+    ):
+        use_fake_worker(monkeypatch, tmp_path, INSPECT_OK + body)
+        with pytest.raises(app.ConversionError) as excinfo:
+            convert_with_workdir(tmp_path)
+        assert not isinstance(excinfo.value, app.ConversionTimeout)
+        assert expected in str(excinfo.value)
+        assert list((tmp_path / "work").glob("chunk*")) == []
+
+    def test_cleanup_does_not_mask_the_original_error(self, tmp_path, monkeypatch):
+        # A failed worker may leave anything in the chunk directory,
+        # including a subdirectory; clearing it must not raise over the
+        # worker's own failure.
+        use_fake_worker(
+            monkeypatch,
+            tmp_path,
+            INSPECT_OK
+            + "os.makedirs(os.path.join(job['out_dir'], 'sub', 'deeper'))\n"
+            + "open(os.path.join(job['out_dir'], 'sub', 'x'), 'w').write('x')\n"
+            + "os._exit(7)",
+        )
+        with pytest.raises(app.ConversionError) as excinfo:
+            convert_with_workdir(tmp_path)
+        assert "exited with code 7" in str(excinfo.value)
+        assert list((tmp_path / "work").glob("chunk*")) == []
+
+    def test_worker_stderr_is_kept_for_the_log_only(self, tmp_path, monkeypatch):
+        use_fake_worker(
+            monkeypatch,
+            tmp_path,
+            "sys.stderr.write('mupdf: secret detail\\n'); sys.exit(1)",
+        )
+        with pytest.raises(app.ConversionError) as excinfo:
+            convert_with_workdir(tmp_path)
+        assert "secret detail" in excinfo.value.stderr
+        assert "secret detail" not in str(excinfo.value)
+
+    def test_unstartable_worker_is_a_conversion_error(self, tmp_path):
+        with mock.patch.object(subprocess, "Popen", side_effect=OSError("no fork")):
+            with pytest.raises(app.ConversionError) as excinfo:
+                pdf_upload._run_worker({"op": "inspect"}, tmp_path, "x", 5, 5, "inspect")
+        assert "could not start pdf worker" in str(excinfo.value)
+
+    def test_worker_reported_rejection_is_re_raised_as_pdf_upload_error(
+        self, tmp_path, monkeypatch
+    ):
+        use_fake_worker(
+            monkeypatch,
+            tmp_path,
+            INSPECT_OK
+            + "reply({'status': 'upload_error', 'http_status': 400, "
+            "'message': 'invalid crop settings', 'log_message': 'crop leaves 0x5px', "
+            "'code': 'invalid_pdf_options'})",
+        )
+        with pytest.raises(pdf_upload.PdfUploadError) as excinfo:
+            convert_with_workdir(tmp_path)
+        assert excinfo.value.status == 400
+        assert excinfo.value.code == "invalid_pdf_options"
+        assert excinfo.value.log_message == "crop leaves 0x5px"
+
+
+class TestWorkerResultsKeepExistingResponses:
+    """What a real worker reports must turn into the same errors the
+    in-process implementation raised."""
+
+    def test_encrypted_pdf(self, tmp_path):
+        with pytest.raises(pdf_upload.PdfUploadError) as excinfo:
+            convert_with_workdir(tmp_path, pdf_bytes=make_encrypted_pdf())
+        assert (excinfo.value.status, excinfo.value.code) == (422, "encrypted_pdf")
+
+    def test_unparseable_pdf(self, tmp_path):
+        with pytest.raises(pdf_upload.PdfUploadError) as excinfo:
+            convert_with_workdir(tmp_path, pdf_bytes=MALFORMED_WITH_MAGIC)
+        assert (excinfo.value.status, excinfo.value.code) == (422, "pdf_parse_failed")
+        assert excinfo.value.log_message.startswith("pymupdf.open failed")
+
+    def test_worker_run_job_reports_crop_rejection_as_a_result(self, tmp_path):
+        # The only way a render can reject the request. Options validation
+        # guarantees a crop leaves at least 20% of each axis, so a real PDF
+        # cannot trigger it; patch the check to see what the worker reports.
+        pdf_path = tmp_path / "source.pdf"
+        pdf_path.write_bytes(make_pdf(pages=1))
+        job = {
+            "op": "render",
+            "pdf": str(pdf_path),
+            "pages": [1],
+            "options": asdict(pdf_upload.options_from_dict(default_options())),
+            "dpi": 72,
+            "canvas_size": [528, 792],
+            "out_dir": str(tmp_path),
+        }
+        with mock.patch.object(
+            pdf_upload,
+            "_apply_crop",
+            side_effect=pdf_upload.PdfUploadError(
+                400, "invalid crop settings", "log detail", code="invalid_pdf_options"
+            ),
+        ):
+            result = pdf_worker.run_job(job)
+        assert result == {
+            "status": "upload_error",
+            "http_status": 400,
+            "message": "invalid crop settings",
+            "log_message": "log detail",
+            "code": "invalid_pdf_options",
+        }
+
+    def test_metadata_title_comes_back_from_the_worker(self, tmp_path):
+        with mock.patch.object(app.subprocess, "run", side_effect=run_success):
+            _, title = convert_with_workdir(
+                tmp_path, pdf_bytes=make_pdf(pages=1, title="日本語のタイトル")
+            )
+        assert title == "日本語のタイトル"
+
+
+class TestHttpTimeoutContract:
+    """POST /convert/uploaded-pdf answers any time-out with 500
+    convert_timeout; /convert is left as it was."""
+
+    def post_pdf(self, server, **headers):
+        pdf_bytes = make_pdf(pages=1)
+        return request(
+            server,
+            "POST",
+            "/convert/uploaded-pdf",
+            body=pdf_bytes,
+            headers=upload_headers(pdf_bytes, **headers),
+        )
+
+    def test_worker_timeout_is_convert_timeout(self, server, tmp_path, monkeypatch, spawned):
+        use_fake_worker(monkeypatch, tmp_path, "time.sleep(300)")
+        status, _, body = self.post_pdf(server, **{"X-Convert-Timeout-Seconds": "1"})
+        payload = json.loads(body)
+        assert status == 500
+        assert payload["code"] == "convert_timeout"
+        assert payload["error"].startswith("conversion timed out after 1s (")
+        assert "stderr" not in payload
+        for proc in spawned:
+            assert_reaped(proc)
+
+    def test_xtctool_timeout_is_convert_timeout(self, server):
+        def run_timeout(cmd, **kwargs):
+            raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout"))
+
+        with mock.patch.object(app.subprocess, "run", side_effect=run_timeout):
+            status, _, body = self.post_pdf(server)
+        payload = json.loads(body)
+        assert status == 500
+        assert payload["code"] == "convert_timeout"
+        assert payload["error"].startswith("conversion timed out after ")
+
+    def test_deadline_between_chunks_is_convert_timeout(self, server, monkeypatch):
+        monkeypatch.setattr(pdf_upload, "PDF_UPLOAD_CHUNK_SIZE_PAGES", 1)
+        pdf_bytes = make_pdf(pages=2)
+        options = encode_options(default_options(pages="1-2"))
+
+        calls = {"n": 0}
+
+        def run_slow(cmd, **kwargs):
+            calls["n"] += 1
+            return run_success(cmd, **kwargs)
+
+        real_monotonic = time.monotonic
+        offset = {"v": 0.0}
+
+        def fake_monotonic():
+            return real_monotonic() + offset["v"]
+
+        def run_then_expire(cmd, **kwargs):
+            result = run_slow(cmd, **kwargs)
+            offset["v"] = 10_000.0  # the first chunk used up the whole budget
+            return result
+
+        monkeypatch.setattr(pdf_upload.time, "monotonic", fake_monotonic)
+        with mock.patch.object(app.subprocess, "run", side_effect=run_then_expire):
+            status, _, body = request(
+                server,
+                "POST",
+                "/convert/uploaded-pdf",
+                body=pdf_bytes,
+                headers=upload_headers(pdf_bytes, **{"X-Pdf-Options": options}),
+            )
+        payload = json.loads(body)
+        assert status == 500
+        assert payload["code"] == "convert_timeout"
+        assert calls["n"] == 1  # the second chunk was never started
+
+    @pytest.mark.parametrize(
+        "body,expected_code",
+        [
+            ("sys.exit(2)", "convert_failed"),
+            ("os.kill(os.getpid(), signal.SIGKILL)", "convert_failed"),
+            ("sys.exit(0)", "convert_failed"),
+        ],
+    )
+    def test_worker_crash_is_convert_failed(
+        self, server, tmp_path, monkeypatch, body, expected_code
+    ):
+        use_fake_worker(monkeypatch, tmp_path, body)
+        status, _, resp = self.post_pdf(server)
+        payload = json.loads(resp)
+        assert status == 500
+        assert payload["code"] == expected_code
+
+    def test_xtctool_failure_stays_convert_failed(self, server):
+        with mock.patch.object(app.subprocess, "run", side_effect=run_failure):
+            status, _, body = self.post_pdf(server)
+        assert (status, json.loads(body)["code"]) == (500, "convert_failed")
+
+    def test_convert_endpoint_timeout_response_is_unchanged(self, server):
+        def run_timeout(cmd, **kwargs):
+            raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout"))
+
+        with mock.patch.object(app.subprocess, "run", side_effect=run_timeout):
+            status, _, body = request(
+                server,
+                "POST",
+                "/convert",
+                body=b"%PDF-1.4 fake",
+                headers={"Content-Length": "13"},
+            )
+        payload = json.loads(body)
+        assert status == 500
+        assert "timed out" in payload["error"]
+        assert "code" not in payload
+
+    def test_encrypted_and_broken_pdfs_keep_their_responses_over_http(self, server):
+        for pdf_bytes, expected in (
+            (make_encrypted_pdf(), "encrypted_pdf"),
+            (MALFORMED_WITH_MAGIC, "pdf_parse_failed"),
+        ):
+            status, _, body = request(
+                server,
+                "POST",
+                "/convert/uploaded-pdf",
+                body=pdf_bytes,
+                headers=upload_headers(pdf_bytes),
+            )
+            payload = json.loads(body)
+            assert (status, payload["code"]) == (422, expected)
+
+
+# --- hanging-PDF integration (real server, real worker, real xtctool) ---------
+
+# Calls a transparency-group Form XObject this many times from one page's
+# content stream. Each call is cheap but the count is large enough that
+# get_pixmap stays inside MuPDF for far longer than any timeout used below
+# (about 3 ms per call on a development machine, so minutes in total).
+SLOW_RENDER_FORM_CALLS = 89_000
+
+
+def make_slow_render_pdf() -> bytes:
+    doc = pymupdf.open()
+    page = doc.new_page(width=595, height=842)
+    gs = doc.get_new_xref()
+    doc.update_object(gs, "<</Type/ExtGState/ca 0.5/CA 0.5>>")
+    form = doc.get_new_xref()
+    doc.update_object(
+        form,
+        "<</Type/XObject/Subtype/Form/BBox[0 0 595 842]"
+        "/Group<</S/Transparency/I true>>/Resources<<>>>>",
+    )
+    doc.update_stream(form, b"0.3 g 20 20 555 802 re f")
+    contents = doc.get_new_xref()
+    doc.update_object(contents, "<<>>")
+    doc.update_stream(contents, b"q /GS0 gs /G0 Do Q\n" * SLOW_RENDER_FORM_CALLS)
+    doc.xref_set_key(
+        page.xref, "Resources", f"<</ExtGState<</GS0 {gs} 0 R>>/XObject<</G0 {form} 0 R>>>>"
+    )
+    doc.xref_set_key(page.xref, "Contents", f"{contents} 0 R")
+    data = doc.tobytes(deflate=True)
+    doc.close()
+    return data
+
+
+@pytest.fixture(scope="module")
+def slow_render_pdf() -> bytes:
+    return make_slow_render_pdf()
+
+
+HAS_XTCTOOL = shutil.which("xtctool") is not None
+
+
+def test_xtctool_is_present_when_required():
+    """The container test runner sets H2X_REQUIRE_XTCTOOL so that the
+    xtctool-dependent tests below can never be silently skipped there."""
+    if os.environ.get("H2X_REQUIRE_XTCTOOL"):
+        assert HAS_XTCTOOL, "xtctool is required in this environment but is not on PATH"
+
+
+def post_in_background(server, pdf_bytes, headers=None):
+    outcome = {}
+
+    def go():
+        started = time.monotonic()
+        outcome["response"] = request(
+            server,
+            "POST",
+            "/convert/uploaded-pdf",
+            body=pdf_bytes,
+            headers=upload_headers(pdf_bytes, **(headers or {})),
+            timeout=120,
+        )
+        outcome["elapsed"] = time.monotonic() - started
+
+    thread = threading.Thread(target=go, daemon=True)
+    thread.start()
+    return thread, outcome
+
+
+class TestHangingPdfDoesNotWedgeTheServer:
+    # Generous on purpose: the budget also pays for the inspect worker's
+    # interpreter start-up (app and pymupdf imports), which is slow on
+    # emulated or loaded machines. Every bound below is relative to it, and
+    # the checks only start once the render worker is running.
+    TIMEOUT_SECONDS = 15
+
+    def test_timeout_keeps_the_server_responsive_and_leaves_no_child(
+        self, server, slow_render_pdf, spawned
+    ):
+        small_pdf = make_pdf(pages=1)
+        thread, outcome = post_in_background(
+            server,
+            slow_render_pdf,
+            {"X-Convert-Timeout-Seconds": str(self.TIMEOUT_SECONDS)},
+        )
+
+        # Wait until the render worker (the second child: inspect comes
+        # first) is running, i.e. MuPDF is stuck inside the slow page. If it
+        # never gets there the conversion ends by itself at the deadline.
+        while len(spawned) < 2 and thread.is_alive():
+            time.sleep(0.05)
+        assert len(spawned) >= 2, (
+            "render worker never started; response: "
+            f"{outcome.get('response')!r}"
+        )
+
+        health_ok = health_bad = busy = 0
+        while thread.is_alive():
+            status, _, _ = request(server, "GET", "/healthz")
+            if status == 200:
+                health_ok += 1
+            else:
+                health_bad += 1
+            status, _, body = request(
+                server,
+                "POST",
+                "/convert/uploaded-pdf",
+                body=small_pdf,
+                headers=upload_headers(small_pdf),
+            )
+            if status == 503 and json.loads(body)["code"] == "service_busy":
+                busy += 1
+            time.sleep(0.2)
+        thread.join()
+
+        status, _, body = outcome["response"]
+        payload = json.loads(body)
+        assert status == 500
+        assert payload["code"] == "convert_timeout"
+        assert payload["error"].startswith(
+            f"conversion timed out after {self.TIMEOUT_SECONDS}s ("
+        )
+        # The render worker really was killed mid-render, not the inspect.
+        assert "render chunk" in payload["error"]
+        # Answered at the deadline, not after the render would have finished.
+        assert self.TIMEOUT_SECONDS - 1 <= outcome["elapsed"] < self.TIMEOUT_SECONDS * 1.5
+        assert health_ok >= 3 and health_bad == 0
+        assert busy >= 3
+        for proc in spawned:
+            assert_reaped(proc)
+
+    @pytest.mark.skipif(not HAS_XTCTOOL, reason="xtctool is not installed")
+    def test_normal_upload_succeeds_right_after_a_timeout(
+        self, server, slow_render_pdf, spawned
+    ):
+        status, _, body = request(
+            server,
+            "POST",
+            "/convert/uploaded-pdf",
+            body=slow_render_pdf,
+            headers=upload_headers(slow_render_pdf, **{"X-Convert-Timeout-Seconds": "3"}),
+            timeout=120,
+        )
+        assert (status, json.loads(body)["code"]) == (500, "convert_timeout")
+
+        good_pdf = make_pdf(pages=3, title="After Timeout")
+        status, headers, body = request(
+            server,
+            "POST",
+            "/convert/uploaded-pdf",
+            body=good_pdf,
+            headers=upload_headers(good_pdf),
+        )
+        assert status == 200
+        assert body[:4] == b"XTC\x00"
+        for proc in spawned:
+            assert_reaped(proc)

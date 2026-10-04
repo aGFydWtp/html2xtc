@@ -237,6 +237,12 @@ class ConversionError(Exception):
         self.stderr = stderr
 
 
+class ConversionTimeout(ConversionError):
+    """The request's time budget ran out. A subclass (not a message match) so
+    callers can tell a timeout from other conversion failures by type;
+    /convert still reports it exactly like any ConversionError."""
+
+
 # Matches MAX_TITLE_CHARS in src/jobs.ts; xtctool itself truncates the XTC
 # metadata title to 127 UTF-8 bytes on write.
 MAX_TITLE_CHARS = 100
@@ -704,7 +710,7 @@ def _run_xtctool(
     timeout_seconds is the remaining share of the request's total budget
     (total_timeout_seconds), which is what error messages report."""
     if timeout_seconds <= 0:
-        raise ConversionError(f"conversion timed out after {total_timeout_seconds}s")
+        raise ConversionTimeout(f"conversion timed out after {total_timeout_seconds}s")
     command = ["xtctool", "convert", *sources, "-o", str(out_path), "-c", config_path]
     try:
         result = subprocess.run(
@@ -715,7 +721,7 @@ def _run_xtctool(
             check=False,
         )
     except subprocess.TimeoutExpired as exc:
-        raise ConversionError(
+        raise ConversionTimeout(
             f"conversion timed out after {total_timeout_seconds}s ({stage})"
         ) from exc
 

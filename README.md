@@ -401,6 +401,16 @@ npx vitest run
 python3 -m venv .venv && .venv/bin/pip install pytest   # 初回のみ
 .venv/bin/python -m pytest test/converter/
 
+# 同じテストを本番イメージ（linux/amd64、実物の Python・PyMuPDF・xtctool）の中で実行する。
+# pytest は検証用の別イメージに入れ、本番イメージには入れない。Container 側の合否はこちらで判断する。
+npm run test:converter:docker   # = scripts/test-converter-docker.sh
+
+# ハングする PDF を渡しても Container が固まらないことを実コンテナで確認する（結果は終了コード）
+scripts/verify-converter-hang.py path/to/hanging.pdf
+
+# 上の 2 つのスクリプトはビルドしたイメージを再利用のため残す（コンテナは終了時に削除）。
+# 消すとき: docker rmi h2x-conv-test-base h2x-conv-test-pytest h2x-conv-verify-image
+
 # Container イメージのビルド確認（linux/amd64 必須）
 docker build --platform linux/amd64 -f converter/Dockerfile converter/
 

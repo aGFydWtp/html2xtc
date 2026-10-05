@@ -108,10 +108,22 @@ export function resolveSource(payload: ConvertJobParams): ConvertSource {
  * succeed" (spec §9.4/§11.11): malformed/non-PDF body (400/415), or a PDF
  * PyMuPDF could open but had to reject (422 — encrypted, unparseable,
  * page-range/selection problems). 413 is handled separately (its own
- * message). Anything else (500/503/network) is left retryable.
+ * message). Anything else is left retryable: a genuine 500/503 or a network
+ * failure, but also the synthetic 500 @cloudflare/containers returns when the
+ * converter answered before it finished reading a large request body (see
+ * runUploadedPdf), so a real status can reach us as a plain 500.
  */
 function isNonRetryableUploadedPdfStatus(status: number): boolean {
   return status === 400 || status === 415 || status === 422;
+}
+
+/**
+ * Terminal message for an uploaded PDF over MAX_UPLOAD_PDF_BYTES. The
+ * frontend maps this exact wording to its "too large" text
+ * (frontend/src/lib/server-error-text.ts), so keep it stable.
+ */
+function uploadedPdfTooLargeMessage(maxBytes: number): string {
+  return `uploaded PDF exceeds the ${maxBytes} byte limit`;
 }
 
 /**
@@ -1111,6 +1123,17 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
             // mid-job.
             throw new NonRetryableError("uploaded PDF is missing");
           }
+          // Check the size before sending, not only via the converter's 413:
+          // the converter replies 413 without reading the body and closes the
+          // connection, and for a large body @cloudflare/containers surfaces
+          // that as a synthetic 500 instead of the 413, which would be retried
+          // and end as a generic failure. An over-limit body is by definition
+          // large, so the 413 branch below is only a backstop. The limit can
+          // drop between acceptance (checkContentLength) and this step.
+          const maxUploadBytes = resolveMaxUploadPdfBytes(this.env);
+          if (input.size > maxUploadBytes) {
+            throw new NonRetryableError(uploadedPdfTooLargeMessage(maxUploadBytes));
+          }
           let response: Response;
           try {
             // Stream R2 -> container (never buffer the whole PDF): same
@@ -1137,9 +1160,7 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
             const bodyText = await response.text();
             console.error(`[${jobId}] converter returned ${response.status}: ${bodyText}`);
             if (response.status === 413) {
-              throw new NonRetryableError(
-                `uploaded PDF exceeds the ${resolveMaxUploadPdfBytes(this.env)} byte limit`,
-              );
+              throw new NonRetryableError(uploadedPdfTooLargeMessage(maxUploadBytes));
             }
             if (isNonRetryableUploadedPdfStatus(response.status)) {
               // Covers 400/415/422 (spec §9.4/§11.11): bad magic, unparseable,
@@ -1164,7 +1185,11 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
               );
             }
             // Other 500/503: xtctool failure, no free conversion slot, or an
-            // internal error — left retryable like the url-source path.
+            // internal error — left retryable like the url-source path. The
+            // converter also closes the connection on responses it sends
+            // without reading the body (e.g. the no-free-slot 503); for a
+            // large body those arrive as @cloudflare/containers' synthetic
+            // 500, so a "503" here is not necessarily a real 503.
             throw new Error("XTC conversion failed");
           }
           const { title } = await storeXtcOutput(this.env, jobId, response, deviceId);

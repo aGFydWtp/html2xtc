@@ -3,6 +3,7 @@ import { DEVICE_PROFILES } from "../src/devices";
 import {
   buildColophonScript,
   buildPrintCssWithFontImport,
+  buildPrintRules,
   DEFAULT_RENDER_OPTIONS,
   formatJstTimestamp,
   renderPdf,
@@ -253,6 +254,57 @@ describe("buildPrintCssWithFontImport — device profiles", () => {
       DEVICE_PROFILES.x4,
     );
     expect(css).toContain("size: 60mm 100mm;");
+  });
+
+  // Vertical-rl leaves the column remainder r on the page's left edge only.
+  // The rule set gives half of it to the right @page margin so both gutters
+  // match, without changing how many columns fit.
+  describe("vertical right margin (column remainder split)", () => {
+    // Independent of the implementation: 10pt font x 1.9 line-height.
+    const pitchMm = 10 * 1.9 * (25.4 / 72);
+
+    for (const id of ["x3", "x4"] as const) {
+      it(`${id}: right margin is marginMm + r/2; left/top/bottom stay at marginMm`, () => {
+        const device = DEVICE_PROFILES[id];
+        const css = buildPrintRules({ ...DEFAULT_RENDER_OPTIONS, layout: "vertical" }, device);
+        const m = css.match(/@page\s*\{[^}]*margin:\s*([\d.]+)mm\s+([\d.]+)mm\s+([\d.]+)mm\s+([\d.]+)mm;/);
+        expect(m).not.toBeNull();
+        const [top, right, bottom, left] = m!.slice(1).map(Number);
+        expect([top, bottom, left]).toEqual([device.marginMm, device.marginMm, device.marginMm]);
+
+        const contentMm = device.pageWidthMm - 2 * device.marginMm;
+        const columns = Math.floor(contentMm / pitchMm);
+        const r = contentMm - columns * pitchMm;
+        // Strictly more than marginMm, and r/2 to within the 0.01mm rounding.
+        expect(right).toBeGreaterThan(device.marginMm);
+        expect(right - device.marginMm).toBeGreaterThan(r / 2 - 0.01 - 1e-9);
+        // Rounding must only widen the content box (right margin <= exact).
+        expect(right - device.marginMm).toBeLessThanOrEqual(r / 2 + 1e-9);
+
+        // Column count unchanged, and r/2 of slack remains beyond n columns.
+        const newContentMm = device.pageWidthMm - device.marginMm - right;
+        expect(Math.floor(newContentMm / pitchMm)).toBe(columns);
+        expect(newContentMm - columns * pitchMm).toBeGreaterThan(0.4 * r);
+      });
+    }
+
+    it("pins the concrete values for the shipped profiles (8 columns on x3, 7 on x4)", () => {
+      const x3 = buildPrintRules({ ...DEFAULT_RENDER_OPTIONS, layout: "vertical" }, DEVICE_PROFILES.x3);
+      const x4 = buildPrintRules({ ...DEFAULT_RENDER_OPTIONS, layout: "vertical" }, DEVICE_PROFILES.x4);
+      expect(x3).toContain("margin: 4mm 6.18mm 4mm 4mm;");
+      expect(x4).toContain("margin: 4mm 6.54mm 4mm 4mm;");
+    });
+
+    it("emits the same font size and line height the column math uses", () => {
+      const css = buildPrintRules({ ...DEFAULT_RENDER_OPTIONS, layout: "vertical" });
+      expect(css).toContain("line-height: 1.9;");
+      expect(css).toMatch(/body \{\s*font-size: 10pt !important;/);
+    });
+
+    it("leaves the horizontal rule set's uniform margin alone", () => {
+      const css = buildPrintRules({ ...DEFAULT_RENDER_OPTIONS, layout: "horizontal" });
+      expect(css).toContain("margin: 4mm;");
+    });
   });
 });
 

@@ -318,12 +318,43 @@ function horizontalPrintRules(
 `;
 }
 
+// Vertical body text metrics: the single source for the CSS below and for
+// verticalRightMarginMm's column math, so the two cannot drift apart.
+const VERTICAL_FONT_SIZE_PT = 10;
+const VERTICAL_LINE_HEIGHT = 1.9;
+const MM_PER_PT = 25.4 / 72;
+
+/**
+ * Right @page margin (mm) for the vertical rule set: marginMm plus half of
+ * the remainder left after packing whole columns into the content width.
+ * In vertical-rl the remainder (content width mod column pitch, where pitch
+ * = font size x line-height) collects at the page's left edge (block-end)
+ * and never on the right, so left and right gutters end up lopsided. Giving
+ * half of it to the right margin leaves content width = n x pitch + r/2:
+ * the column count n is unchanged and the left keeps r/2 of natural slack.
+ * Only the right margin moves; widening both sides to fit exactly n x pitch
+ * would lose a whole column to any mm->px rounding shortfall, whereas this
+ * keeps r/2 of headroom. r/2 is floored to 0.01mm so rounding only ever
+ * widens the content box.
+ */
+function verticalRightMarginMm(device: DeviceProfile): number {
+  const pitchMm = VERTICAL_FONT_SIZE_PT * VERTICAL_LINE_HEIGHT * MM_PER_PT;
+  const contentMm = device.pageWidthMm - 2 * device.marginMm;
+  // Epsilon: a width that is an exact multiple of the pitch must not read as
+  // one column short through float error (which would inflate r to ~pitch).
+  const columns = Math.floor(contentMm / pitchMm + 1e-9);
+  if (columns < 1) return device.marginMm;
+  const remainderMm = Math.max(0, contentMm - columns * pitchMm);
+  return Math.round((device.marginMm + Math.floor((remainderMm / 2) * 100) / 100) * 100) / 100;
+}
+
 /**
  * Vertical-writing rule set. Purpose-built instead of deriving from the
  * horizontal rules: those are horizontal-writing assumptions throughout
  * (per-element font-size normalization and physical margin stripping target
- * scraped web layouts flowing left-to-right). The page geometry (66mm x
- * 99mm at 4mm margins — the Xteink X3 panel) is identical.
+ * scraped web layouts flowing left-to-right). The page geometry (size and
+ * margins from the device profile) is the same, except the right margin,
+ * which carries half the column remainder (see verticalRightMarginMm).
  *
  * Works for both sources of vertical renders: documents this service
  * authors (extract mode, Aozora Bunko — whose structure-specific CSS is
@@ -355,7 +386,7 @@ function verticalPrintRules(
   html {
     writing-mode: vertical-rl !important;
     text-orientation: mixed !important;
-    line-height: 1.9;
+    line-height: ${VERTICAL_LINE_HEIGHT};
     line-break: strict;
   }
 
@@ -368,7 +399,7 @@ function verticalPrintRules(
 
   @page {
     size: ${device.pageWidthMm}mm ${device.pageHeightMm}mm;
-    margin: ${device.marginMm}mm;
+    margin: ${device.marginMm}mm ${verticalRightMarginMm(device)}mm ${device.marginMm}mm ${device.marginMm}mm;
   }
 
   @media print {
@@ -381,7 +412,7 @@ function verticalPrintRules(
     }
 
     body {
-      font-size: 10pt !important;
+      font-size: ${VERTICAL_FONT_SIZE_PT}pt !important;
     }
 
     /* Full contrast plus the overflow guards: mid-token wraps and letting

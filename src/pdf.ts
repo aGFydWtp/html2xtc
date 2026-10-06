@@ -354,7 +354,11 @@ function verticalRightMarginMm(device: DeviceProfile): number {
  * (per-element font-size normalization and physical margin stripping target
  * scraped web layouts flowing left-to-right). The page geometry (size and
  * margins from the device profile) is the same, except the right margin,
- * which carries half the column remainder (see verticalRightMarginMm).
+ * which carries half the column remainder (see verticalRightMarginMm) when
+ * splitColumnRemainder is set. Only HTML this service authors may set it:
+ * the pitch math assumes the line-height below holds, but it is not
+ * !important, so on a full-page render of a third-party site the site's own
+ * line-height can win and narrowing the content box could then cost a column.
  *
  * Works for both sources of vertical renders: documents this service
  * authors (extract mode, Aozora Bunko — whose structure-specific CSS is
@@ -380,6 +384,7 @@ function verticalRightMarginMm(device: DeviceProfile): number {
 function verticalPrintRules(
   options: RenderOptions,
   device: DeviceProfile = DEFAULT_DEVICE_PROFILE,
+  splitColumnRemainder = false,
 ): string {
   return `
   /* Root: vertical flow. */
@@ -399,7 +404,11 @@ function verticalPrintRules(
 
   @page {
     size: ${device.pageWidthMm}mm ${device.pageHeightMm}mm;
-    margin: ${device.marginMm}mm ${verticalRightMarginMm(device)}mm ${device.marginMm}mm ${device.marginMm}mm;
+    margin: ${
+      splitColumnRemainder
+        ? `${device.marginMm}mm ${verticalRightMarginMm(device)}mm ${device.marginMm}mm ${device.marginMm}mm`
+        : `${device.marginMm}mm`
+    };
   }
 
   @media print {
@@ -502,14 +511,16 @@ function verticalPrintRules(
 /**
  * Print rules for the given options (no font @import): the layout picks the
  * rule set, the font fills the body stack. Injected next to the inlined
- * @font-face CSS on the extract path.
+ * @font-face CSS on the extract path. splitColumnRemainder (vertical only,
+ * default off) is for documents this service authors; see verticalPrintRules.
  */
 export function buildPrintRules(
   options: RenderOptions,
   device: DeviceProfile = DEFAULT_DEVICE_PROFILE,
+  splitColumnRemainder = false,
 ): string {
   return options.layout === "vertical"
-    ? verticalPrintRules(options, device)
+    ? verticalPrintRules(options, device, splitColumnRemainder)
     : horizontalPrintRules(options, device);
 }
 
@@ -523,13 +534,14 @@ export function buildPrintRules(
 export function buildPrintCssWithFontImport(
   options: RenderOptions,
   device: DeviceProfile = DEFAULT_DEVICE_PROFILE,
+  splitColumnRemainder = false,
 ): string {
   return `
   /* Must stay the first rule in this stylesheet (CSS drops later @imports).
      Injected via addStyleTag after page load, so a target page's CSP may
      block it — an accepted degradation, like the colophon script below. */
   @import url("${fontCssEndpoint(options.font)}");
-${buildPrintRules(options, device)}`;
+${buildPrintRules(options, device, splitColumnRemainder)}`;
 }
 
 // Fixed default-options variants; test/pdf.test.ts pins their exact text
@@ -883,8 +895,8 @@ export function renderPdfFromHtml(
   // like the full path, worst case the generic/WenQuanYi fallback.
   const styles =
     fontCss !== null
-      ? [{ content: fontCss }, { content: buildPrintRules(options, device) }]
-      : [{ content: buildPrintCssWithFontImport(options, device) }];
+      ? [{ content: fontCss }, { content: buildPrintRules(options, device, true) }]
+      : [{ content: buildPrintCssWithFontImport(options, device, true) }];
   return env.BROWSER.quickAction("pdf", {
     html,
     // The browser still fetches the article's images from their origin;

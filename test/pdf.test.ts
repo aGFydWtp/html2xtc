@@ -77,6 +77,16 @@ describe("renderPdfFromHtml", () => {
     expect(styleContents(quickAction)[0]).toContain("margin: 4mm;");
   });
 
+  it("splits the vertical column remainder on both style branches (self-authored HTML)", async () => {
+    const vertical = { ...DEFAULT_RENDER_OPTIONS, layout: "vertical" } as const;
+    for (const fontCss of ["@font-face{}", null]) {
+      const { env, quickAction } = captureEnv();
+      await renderPdfFromHtml(env, "<html></html>", fontCss, vertical, DEVICE_PROFILES.x3);
+      const rules = styleContents(quickAction).join("\n");
+      expect(rules).toContain("margin: 4mm 6.18mm 4mm 4mm;");
+    }
+  });
+
   it("waits a fixed grace period for the font decode and image tail", async () => {
     const { env, quickAction } = captureEnv();
     await renderPdfFromHtml(env, "<html></html>", "@font-face{}");
@@ -123,6 +133,23 @@ describe("renderPdf (full-page path)", () => {
       addStyleTag: Array<{ content: string }>;
     };
     expect(x4Options.addStyleTag[0]?.content).toContain("size: 60mm 100mm;");
+  });
+
+  it("does not split the vertical column remainder (third-party line-height may win)", async () => {
+    const { env, quickAction } = captureEnv();
+    await renderPdf(
+      env,
+      "https://example.com/article",
+      { ...DEFAULT_RENDER_OPTIONS, layout: "vertical" },
+      DEVICE_PROFILES.x3,
+    );
+    const options = quickAction.mock.calls[0]?.[1] as {
+      addStyleTag: Array<{ content: string }>;
+    };
+    const css = options.addStyleTag[0]?.content ?? "";
+    expect(css).toContain("writing-mode: vertical-rl");
+    expect(css).toContain("margin: 4mm;");
+    expect(css).not.toContain("6.18mm");
   });
 
   it("injects the lazy-image script before the colophon script", async () => {
@@ -266,7 +293,7 @@ describe("buildPrintCssWithFontImport — device profiles", () => {
     for (const id of ["x3", "x4"] as const) {
       it(`${id}: right margin is marginMm + r/2; left/top/bottom stay at marginMm`, () => {
         const device = DEVICE_PROFILES[id];
-        const css = buildPrintRules({ ...DEFAULT_RENDER_OPTIONS, layout: "vertical" }, device);
+        const css = buildPrintRules({ ...DEFAULT_RENDER_OPTIONS, layout: "vertical" }, device, true);
         const m = css.match(/@page\s*\{[^}]*margin:\s*([\d.]+)mm\s+([\d.]+)mm\s+([\d.]+)mm\s+([\d.]+)mm;/);
         expect(m).not.toBeNull();
         const [top, right, bottom, left] = m!.slice(1).map(Number);
@@ -288,9 +315,10 @@ describe("buildPrintCssWithFontImport — device profiles", () => {
       });
     }
 
-    it("pins the concrete values for the shipped profiles (8 columns on x3, 7 on x4)", () => {
-      const x3 = buildPrintRules({ ...DEFAULT_RENDER_OPTIONS, layout: "vertical" }, DEVICE_PROFILES.x3);
-      const x4 = buildPrintRules({ ...DEFAULT_RENDER_OPTIONS, layout: "vertical" }, DEVICE_PROFILES.x4);
+    it("pins the concrete values for the shipped profiles", () => {
+      const vertical = { ...DEFAULT_RENDER_OPTIONS, layout: "vertical" } as const;
+      const x3 = buildPrintRules(vertical, DEVICE_PROFILES.x3, true);
+      const x4 = buildPrintRules(vertical, DEVICE_PROFILES.x4, true);
       expect(x3).toContain("margin: 4mm 6.18mm 4mm 4mm;");
       expect(x4).toContain("margin: 4mm 6.54mm 4mm 4mm;");
     });
@@ -301,9 +329,22 @@ describe("buildPrintCssWithFontImport — device profiles", () => {
       expect(css).toMatch(/body \{\s*font-size: 10pt !important;/);
     });
 
-    it("leaves the horizontal rule set's uniform margin alone", () => {
-      const css = buildPrintRules({ ...DEFAULT_RENDER_OPTIONS, layout: "horizontal" });
-      expect(css).toContain("margin: 4mm;");
+    it("is off by default: all four margins stay at marginMm", () => {
+      const vertical = { ...DEFAULT_RENDER_OPTIONS, layout: "vertical" } as const;
+      for (const id of ["x3", "x4"] as const) {
+        expect(buildPrintRules(vertical, DEVICE_PROFILES[id])).toContain("margin: 4mm;");
+        expect(buildPrintCssWithFontImport(vertical, DEVICE_PROFILES[id])).toContain("margin: 4mm;");
+      }
+    });
+
+    it("leaves the horizontal rule set's uniform margin alone, even when enabled", () => {
+      const horizontal = { ...DEFAULT_RENDER_OPTIONS, layout: "horizontal" } as const;
+      expect(buildPrintRules(horizontal, DEVICE_PROFILES.x3, true)).toContain("margin: 4mm;");
+    });
+
+    it("keeps the exported default-options constants at uniform margins", () => {
+      expect(X3_PRINT_CSS).toContain("margin: 4mm;");
+      expect(X3_PRINT_CSS_NO_FONT_IMPORT).toContain("margin: 4mm;");
     });
   });
 });

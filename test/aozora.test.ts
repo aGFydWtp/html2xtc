@@ -870,7 +870,7 @@ describe("renderPdfFromHtml with options", () => {
     await renderPdfFromHtml(env, "<html></html>", fontCss, VERTICAL_MINCHO);
     expect(styleContents(quickAction)).toEqual([
       fontCss,
-      buildPrintRules(VERTICAL_MINCHO),
+      buildPrintRules(VERTICAL_MINCHO, undefined, true),
     ]);
   });
 
@@ -878,7 +878,7 @@ describe("renderPdfFromHtml with options", () => {
     const { env, quickAction } = captureEnv();
     await renderPdfFromHtml(env, "<html></html>", null, VERTICAL_MINCHO);
     expect(styleContents(quickAction)).toEqual([
-      buildPrintCssWithFontImport(VERTICAL_MINCHO),
+      buildPrintCssWithFontImport(VERTICAL_MINCHO, undefined, true),
     ]);
   });
 });

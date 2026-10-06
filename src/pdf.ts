@@ -318,12 +318,59 @@ function horizontalPrintRules(
 `;
 }
 
+// Vertical body text metrics: the single source for the CSS below and for
+// verticalPageMargin's column math, so the two cannot drift apart.
+const VERTICAL_FONT_SIZE_PT = 10;
+const VERTICAL_LINE_HEIGHT = 1.9;
+const MM_PER_PT = 25.4 / 72;
+// Smallest left/right page margin the column fit may leave.
+const VERTICAL_MIN_SIDE_MARGIN_MM = 2.5;
+// Extra content width beyond whole columns, kept so mm->px rounding or a
+// heading wider than body text does not cost a column. It lands on the left
+// (block-end) edge as natural slack; kept small because anything that does
+// not quantize to columns (full-width images) sits off-center by half of it.
+const VERTICAL_COLUMN_SLACK_MM = 1;
+
+/**
+ * @page margin for the vertical rule set. With fitColumns the left/right
+ * margins are derived from the column pitch (font size x line-height)
+ * instead of marginMm: as many whole columns as fit inside the minimum side
+ * margins (n), then the free width (pageWidth - n x pitch) is split evenly
+ * per side, the left one reduced by the slack. Content width becomes
+ * n x pitch + slack; in vertical-rl the slack collects at the left edge, so
+ * both visible gutters equal side + half-leading. Top/bottom stay marginMm.
+ * Both side margins are floored to 0.01mm so rounding only ever widens the
+ * content box (it must not lose a column). Falls back to a uniform marginMm
+ * when no column fits.
+ */
+function verticalPageMargin(device: DeviceProfile, fitColumns: boolean): string {
+  const uniform = `${device.marginMm}mm`;
+  if (!fitColumns) return uniform;
+  const pitchMm = VERTICAL_FONT_SIZE_PT * VERTICAL_LINE_HEIGHT * MM_PER_PT;
+  // Epsilon: a width that is an exact multiple of the pitch must not read as
+  // one column short through float error.
+  const columns = Math.floor(
+    (device.pageWidthMm - 2 * VERTICAL_MIN_SIDE_MARGIN_MM) / pitchMm + 1e-9,
+  );
+  if (columns < 1) return uniform;
+  const sideMm = (device.pageWidthMm - columns * pitchMm) / 2;
+  const floorMm = (v: number) => Math.floor(v * 100 + 1e-6) / 100;
+  const right = floorMm(sideMm);
+  const left = floorMm(Math.max(0, sideMm - VERTICAL_COLUMN_SLACK_MM));
+  return `${device.marginMm}mm ${right}mm ${device.marginMm}mm ${left}mm`;
+}
+
 /**
  * Vertical-writing rule set. Purpose-built instead of deriving from the
  * horizontal rules: those are horizontal-writing assumptions throughout
  * (per-element font-size normalization and physical margin stripping target
- * scraped web layouts flowing left-to-right). The page geometry (66mm x
- * 99mm at 4mm margins — the Xteink X3 panel) is identical.
+ * scraped web layouts flowing left-to-right). The page geometry (size and
+ * margins from the device profile) is the same, except that with fitColumns
+ * the left/right margins are fitted to the column pitch (see
+ * verticalPageMargin). Only HTML this service authors may set it: the pitch
+ * math assumes the line-height below holds, but it is not !important, so on
+ * a full-page render of a third-party site the site's own line-height can
+ * win and the fitted (narrower) margins could then cost a column.
  *
  * Works for both sources of vertical renders: documents this service
  * authors (extract mode, Aozora Bunko — whose structure-specific CSS is
@@ -349,13 +396,14 @@ function horizontalPrintRules(
 function verticalPrintRules(
   options: RenderOptions,
   device: DeviceProfile = DEFAULT_DEVICE_PROFILE,
+  fitColumns = false,
 ): string {
   return `
   /* Root: vertical flow. */
   html {
     writing-mode: vertical-rl !important;
     text-orientation: mixed !important;
-    line-height: 1.9;
+    line-height: ${VERTICAL_LINE_HEIGHT};
     line-break: strict;
   }
 
@@ -368,7 +416,7 @@ function verticalPrintRules(
 
   @page {
     size: ${device.pageWidthMm}mm ${device.pageHeightMm}mm;
-    margin: ${device.marginMm}mm;
+    margin: ${verticalPageMargin(device, fitColumns)};
   }
 
   @media print {
@@ -381,7 +429,7 @@ function verticalPrintRules(
     }
 
     body {
-      font-size: 10pt !important;
+      font-size: ${VERTICAL_FONT_SIZE_PT}pt !important;
     }
 
     /* Full contrast plus the overflow guards: mid-token wraps and letting
@@ -471,14 +519,16 @@ function verticalPrintRules(
 /**
  * Print rules for the given options (no font @import): the layout picks the
  * rule set, the font fills the body stack. Injected next to the inlined
- * @font-face CSS on the extract path.
+ * @font-face CSS on the extract path. fitColumns (vertical only, default
+ * off) is for documents this service authors; see verticalPrintRules.
  */
 export function buildPrintRules(
   options: RenderOptions,
   device: DeviceProfile = DEFAULT_DEVICE_PROFILE,
+  fitColumns = false,
 ): string {
   return options.layout === "vertical"
-    ? verticalPrintRules(options, device)
+    ? verticalPrintRules(options, device, fitColumns)
     : horizontalPrintRules(options, device);
 }
 
@@ -492,13 +542,14 @@ export function buildPrintRules(
 export function buildPrintCssWithFontImport(
   options: RenderOptions,
   device: DeviceProfile = DEFAULT_DEVICE_PROFILE,
+  fitColumns = false,
 ): string {
   return `
   /* Must stay the first rule in this stylesheet (CSS drops later @imports).
      Injected via addStyleTag after page load, so a target page's CSP may
      block it — an accepted degradation, like the colophon script below. */
   @import url("${fontCssEndpoint(options.font)}");
-${buildPrintRules(options, device)}`;
+${buildPrintRules(options, device, fitColumns)}`;
 }
 
 // Fixed default-options variants; test/pdf.test.ts pins their exact text
@@ -852,8 +903,8 @@ export function renderPdfFromHtml(
   // like the full path, worst case the generic/WenQuanYi fallback.
   const styles =
     fontCss !== null
-      ? [{ content: fontCss }, { content: buildPrintRules(options, device) }]
-      : [{ content: buildPrintCssWithFontImport(options, device) }];
+      ? [{ content: fontCss }, { content: buildPrintRules(options, device, true) }]
+      : [{ content: buildPrintCssWithFontImport(options, device, true) }];
   return env.BROWSER.quickAction("pdf", {
     html,
     // The browser still fetches the article's images from their origin;

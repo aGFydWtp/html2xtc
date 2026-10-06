@@ -3,6 +3,7 @@ import { DEVICE_PROFILES } from "../src/devices";
 import {
   buildColophonScript,
   buildPrintCssWithFontImport,
+  buildPrintRules,
   DEFAULT_RENDER_OPTIONS,
   formatJstTimestamp,
   renderPdf,
@@ -76,6 +77,16 @@ describe("renderPdfFromHtml", () => {
     expect(styleContents(quickAction)[0]).toContain("margin: 4mm;");
   });
 
+  it("fits the vertical columns to the page on both style branches (self-authored HTML)", async () => {
+    const vertical = { ...DEFAULT_RENDER_OPTIONS, layout: "vertical" } as const;
+    for (const fontCss of ["@font-face{}", null]) {
+      const { env, quickAction } = captureEnv();
+      await renderPdfFromHtml(env, "<html></html>", fontCss, vertical, DEVICE_PROFILES.x3);
+      const rules = styleContents(quickAction).join("\n");
+      expect(rules).toContain("margin: 4mm 2.83mm 4mm 1.83mm;");
+    }
+  });
+
   it("waits a fixed grace period for the font decode and image tail", async () => {
     const { env, quickAction } = captureEnv();
     await renderPdfFromHtml(env, "<html></html>", "@font-face{}");
@@ -122,6 +133,23 @@ describe("renderPdf (full-page path)", () => {
       addStyleTag: Array<{ content: string }>;
     };
     expect(x4Options.addStyleTag[0]?.content).toContain("size: 60mm 100mm;");
+  });
+
+  it("does not fit the vertical columns (third-party line-height may win)", async () => {
+    const { env, quickAction } = captureEnv();
+    await renderPdf(
+      env,
+      "https://example.com/article",
+      { ...DEFAULT_RENDER_OPTIONS, layout: "vertical" },
+      DEVICE_PROFILES.x3,
+    );
+    const options = quickAction.mock.calls[0]?.[1] as {
+      addStyleTag: Array<{ content: string }>;
+    };
+    const css = options.addStyleTag[0]?.content ?? "";
+    expect(css).toContain("writing-mode: vertical-rl");
+    expect(css).toContain("margin: 4mm;");
+    expect(css).not.toContain("2.83mm");
   });
 
   it("injects the lazy-image script before the colophon script", async () => {
@@ -253,6 +281,84 @@ describe("buildPrintCssWithFontImport — device profiles", () => {
       DEVICE_PROFILES.x4,
     );
     expect(css).toContain("size: 60mm 100mm;");
+  });
+
+  // Vertical-rl leaves whatever is not a whole column on the page's left
+  // edge only. The rule set fits as many columns as the minimum side margin
+  // allows, then splits the free width per side (left reduced by a small
+  // slack so a column is never lost to rounding or a large heading).
+  describe("vertical column fit (left/right margins)", () => {
+    // Independent of the implementation: 10pt font x 1.9 line-height.
+    const pitchMm = 10 * 1.9 * (25.4 / 72);
+    const MIN_SIDE_MM = 2.5;
+    const SLACK_MM = 1;
+    const vertical = { ...DEFAULT_RENDER_OPTIONS, layout: "vertical" } as const;
+    const parse = (css: string) => {
+      const m = css.match(/@page\s*\{[^}]*margin:\s*([\d.]+)mm\s+([\d.]+)mm\s+([\d.]+)mm\s+([\d.]+)mm;/);
+      expect(m).not.toBeNull();
+      const [top, right, bottom, left] = m!.slice(1).map(Number);
+      return { top, right, bottom, left };
+    };
+
+    for (const id of ["x3", "x4"] as const) {
+      it(`${id}: fits the most columns the minimum side margin allows`, () => {
+        const device = DEVICE_PROFILES[id];
+        const { top, right, bottom, left } = parse(buildPrintRules(vertical, device, true));
+        expect([top, bottom]).toEqual([device.marginMm, device.marginMm]);
+        expect(left).toBeGreaterThanOrEqual(0);
+
+        const contentMm = device.pageWidthMm - left - right;
+        const columns = Math.floor((device.pageWidthMm - 2 * MIN_SIDE_MM) / pitchMm);
+        // More columns than the plain marginMm layout fits...
+        expect(columns).toBeGreaterThan(Math.floor((device.pageWidthMm - 2 * device.marginMm) / pitchMm));
+        // ...and they all fit, with slack to spare but not a whole extra column.
+        expect(Math.floor(contentMm / pitchMm)).toBe(columns);
+        expect(contentMm - columns * pitchMm).toBeGreaterThanOrEqual(SLACK_MM - 1e-9);
+        expect(contentMm - columns * pitchMm).toBeLessThan(SLACK_MM + 0.03);
+        // Minimum margin respected on the right (the visible-gutter side),
+        // and the left is smaller than the right by the slack (0.01mm floor).
+        expect(right).toBeGreaterThanOrEqual(MIN_SIDE_MM);
+        expect(Math.abs(right - left - SLACK_MM)).toBeLessThanOrEqual(0.01 + 1e-9);
+        // Visible gutters match: right margin vs left margin + slack.
+        const free = device.pageWidthMm - columns * pitchMm;
+        expect(right).toBeLessThanOrEqual(free / 2 + 1e-9);
+        expect(right).toBeGreaterThan(free / 2 - 0.01 - 1e-9);
+      });
+    }
+
+    it("pins the concrete values for the shipped profiles", () => {
+      expect(buildPrintRules(vertical, DEVICE_PROFILES.x3, true)).toContain("margin: 4mm 2.83mm 4mm 1.83mm;");
+      expect(buildPrintRules(vertical, DEVICE_PROFILES.x4, true)).toContain("margin: 4mm 3.18mm 4mm 2.18mm;");
+    });
+
+    it("falls back to uniform margins when no column fits", () => {
+      const tiny = { ...DEVICE_PROFILES.x3, pageWidthMm: 8 };
+      expect(buildPrintRules(vertical, tiny, true)).toContain("margin: 4mm;");
+    });
+
+    it("emits the same font size and line height the column math uses", () => {
+      const css = buildPrintRules({ ...DEFAULT_RENDER_OPTIONS, layout: "vertical" });
+      expect(css).toContain("line-height: 1.9;");
+      expect(css).toMatch(/body \{\s*font-size: 10pt !important;/);
+    });
+
+    it("is off by default: all four margins stay at marginMm", () => {
+      const vertical = { ...DEFAULT_RENDER_OPTIONS, layout: "vertical" } as const;
+      for (const id of ["x3", "x4"] as const) {
+        expect(buildPrintRules(vertical, DEVICE_PROFILES[id])).toContain("margin: 4mm;");
+        expect(buildPrintCssWithFontImport(vertical, DEVICE_PROFILES[id])).toContain("margin: 4mm;");
+      }
+    });
+
+    it("leaves the horizontal rule set's uniform margin alone, even when enabled", () => {
+      const horizontal = { ...DEFAULT_RENDER_OPTIONS, layout: "horizontal" } as const;
+      expect(buildPrintRules(horizontal, DEVICE_PROFILES.x3, true)).toContain("margin: 4mm;");
+    });
+
+    it("keeps the exported default-options constants at uniform margins", () => {
+      expect(X3_PRINT_CSS).toContain("margin: 4mm;");
+      expect(X3_PRINT_CSS_NO_FONT_IMPORT).toContain("margin: 4mm;");
+    });
   });
 });
 

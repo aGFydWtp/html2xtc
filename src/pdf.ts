@@ -319,33 +319,45 @@ function horizontalPrintRules(
 }
 
 // Vertical body text metrics: the single source for the CSS below and for
-// verticalRightMarginMm's column math, so the two cannot drift apart.
+// verticalPageMargin's column math, so the two cannot drift apart.
 const VERTICAL_FONT_SIZE_PT = 10;
 const VERTICAL_LINE_HEIGHT = 1.9;
 const MM_PER_PT = 25.4 / 72;
+// Smallest left/right page margin the column fit may leave.
+const VERTICAL_MIN_SIDE_MARGIN_MM = 2.5;
+// Extra content width beyond whole columns, kept so mm->px rounding or a
+// heading wider than body text does not cost a column. It lands on the left
+// (block-end) edge as natural slack; kept small because anything that does
+// not quantize to columns (full-width images) sits off-center by half of it.
+const VERTICAL_COLUMN_SLACK_MM = 1;
 
 /**
- * Right @page margin (mm) for the vertical rule set: marginMm plus half of
- * the remainder left after packing whole columns into the content width.
- * In vertical-rl the remainder (content width mod column pitch, where pitch
- * = font size x line-height) collects at the page's left edge (block-end)
- * and never on the right, so left and right gutters end up lopsided. Giving
- * half of it to the right margin leaves content width = n x pitch + r/2:
- * the column count n is unchanged and the left keeps r/2 of natural slack.
- * Only the right margin moves; widening both sides to fit exactly n x pitch
- * would lose a whole column to any mm->px rounding shortfall, whereas this
- * keeps r/2 of headroom. r/2 is floored to 0.01mm so rounding only ever
- * widens the content box.
+ * @page margin for the vertical rule set. With fitColumns the left/right
+ * margins are derived from the column pitch (font size x line-height)
+ * instead of marginMm: as many whole columns as fit inside the minimum side
+ * margins (n), then the free width (pageWidth - n x pitch) is split evenly
+ * per side, the left one reduced by the slack. Content width becomes
+ * n x pitch + slack; in vertical-rl the slack collects at the left edge, so
+ * both visible gutters equal side + half-leading. Top/bottom stay marginMm.
+ * Both side margins are floored to 0.01mm so rounding only ever widens the
+ * content box (it must not lose a column). Falls back to a uniform marginMm
+ * when no column fits.
  */
-function verticalRightMarginMm(device: DeviceProfile): number {
+function verticalPageMargin(device: DeviceProfile, fitColumns: boolean): string {
+  const uniform = `${device.marginMm}mm`;
+  if (!fitColumns) return uniform;
   const pitchMm = VERTICAL_FONT_SIZE_PT * VERTICAL_LINE_HEIGHT * MM_PER_PT;
-  const contentMm = device.pageWidthMm - 2 * device.marginMm;
   // Epsilon: a width that is an exact multiple of the pitch must not read as
-  // one column short through float error (which would inflate r to ~pitch).
-  const columns = Math.floor(contentMm / pitchMm + 1e-9);
-  if (columns < 1) return device.marginMm;
-  const remainderMm = Math.max(0, contentMm - columns * pitchMm);
-  return Math.round((device.marginMm + Math.floor((remainderMm / 2) * 100) / 100) * 100) / 100;
+  // one column short through float error.
+  const columns = Math.floor(
+    (device.pageWidthMm - 2 * VERTICAL_MIN_SIDE_MARGIN_MM) / pitchMm + 1e-9,
+  );
+  if (columns < 1) return uniform;
+  const sideMm = (device.pageWidthMm - columns * pitchMm) / 2;
+  const floorMm = (v: number) => Math.floor(v * 100 + 1e-6) / 100;
+  const right = floorMm(sideMm);
+  const left = floorMm(Math.max(0, sideMm - VERTICAL_COLUMN_SLACK_MM));
+  return `${device.marginMm}mm ${right}mm ${device.marginMm}mm ${left}mm`;
 }
 
 /**
@@ -353,12 +365,12 @@ function verticalRightMarginMm(device: DeviceProfile): number {
  * horizontal rules: those are horizontal-writing assumptions throughout
  * (per-element font-size normalization and physical margin stripping target
  * scraped web layouts flowing left-to-right). The page geometry (size and
- * margins from the device profile) is the same, except the right margin,
- * which carries half the column remainder (see verticalRightMarginMm) when
- * splitColumnRemainder is set. Only HTML this service authors may set it:
- * the pitch math assumes the line-height below holds, but it is not
- * !important, so on a full-page render of a third-party site the site's own
- * line-height can win and narrowing the content box could then cost a column.
+ * margins from the device profile) is the same, except that with fitColumns
+ * the left/right margins are fitted to the column pitch (see
+ * verticalPageMargin). Only HTML this service authors may set it: the pitch
+ * math assumes the line-height below holds, but it is not !important, so on
+ * a full-page render of a third-party site the site's own line-height can
+ * win and the fitted (narrower) margins could then cost a column.
  *
  * Works for both sources of vertical renders: documents this service
  * authors (extract mode, Aozora Bunko — whose structure-specific CSS is
@@ -384,7 +396,7 @@ function verticalRightMarginMm(device: DeviceProfile): number {
 function verticalPrintRules(
   options: RenderOptions,
   device: DeviceProfile = DEFAULT_DEVICE_PROFILE,
-  splitColumnRemainder = false,
+  fitColumns = false,
 ): string {
   return `
   /* Root: vertical flow. */
@@ -404,11 +416,7 @@ function verticalPrintRules(
 
   @page {
     size: ${device.pageWidthMm}mm ${device.pageHeightMm}mm;
-    margin: ${
-      splitColumnRemainder
-        ? `${device.marginMm}mm ${verticalRightMarginMm(device)}mm ${device.marginMm}mm ${device.marginMm}mm`
-        : `${device.marginMm}mm`
-    };
+    margin: ${verticalPageMargin(device, fitColumns)};
   }
 
   @media print {
@@ -511,16 +519,16 @@ function verticalPrintRules(
 /**
  * Print rules for the given options (no font @import): the layout picks the
  * rule set, the font fills the body stack. Injected next to the inlined
- * @font-face CSS on the extract path. splitColumnRemainder (vertical only,
- * default off) is for documents this service authors; see verticalPrintRules.
+ * @font-face CSS on the extract path. fitColumns (vertical only, default
+ * off) is for documents this service authors; see verticalPrintRules.
  */
 export function buildPrintRules(
   options: RenderOptions,
   device: DeviceProfile = DEFAULT_DEVICE_PROFILE,
-  splitColumnRemainder = false,
+  fitColumns = false,
 ): string {
   return options.layout === "vertical"
-    ? verticalPrintRules(options, device, splitColumnRemainder)
+    ? verticalPrintRules(options, device, fitColumns)
     : horizontalPrintRules(options, device);
 }
 
@@ -534,14 +542,14 @@ export function buildPrintRules(
 export function buildPrintCssWithFontImport(
   options: RenderOptions,
   device: DeviceProfile = DEFAULT_DEVICE_PROFILE,
-  splitColumnRemainder = false,
+  fitColumns = false,
 ): string {
   return `
   /* Must stay the first rule in this stylesheet (CSS drops later @imports).
      Injected via addStyleTag after page load, so a target page's CSP may
      block it — an accepted degradation, like the colophon script below. */
   @import url("${fontCssEndpoint(options.font)}");
-${buildPrintRules(options, device, splitColumnRemainder)}`;
+${buildPrintRules(options, device, fitColumns)}`;
 }
 
 // Fixed default-options variants; test/pdf.test.ts pins their exact text

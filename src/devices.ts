@@ -26,9 +26,9 @@ export interface DeviceProfile {
   /** @page size, in mm, for the URL/PDF-extract render paths (src/pdf.ts). */
   readonly pageWidthMm: number;
   readonly pageHeightMm: number;
-  /** Base @page margin, in mm, for all four sides. The vertical rule set adds
-   * to the right margin only, for documents this service authors (see
-   * verticalRightMarginMm in src/pdf.ts). */
+  /** Base @page margin, in mm, for all four sides. The vertical rule set
+   * re-derives left/right from the column pitch for documents this service
+   * authors (see verticalPageMargin in src/pdf.ts). */
   readonly marginMm: number;
   /** Target width (px) used to pick a srcset candidate for extracted
    * article images (src/printhtml.ts's pickFromSrcset). */

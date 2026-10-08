@@ -108,12 +108,13 @@ export type RenderInput =
     }
   | { kind: "url"; url: string }
   /**
-   * The browser-rendered fetch of the source page reported an HTTP error
-   * status (>= 400), and every cheaper stage before it failed to produce an
-   * article. Rendering the URL in full mode would open the same page in the
-   * same browser and print the error page as the book, so the caller must
-   * fail the conversion instead. Only produced where `fallback-full` would
-   * otherwise be chosen; never in mode "full".
+   * Every fetch path was refused: the direct fetch produced no page at all
+   * and the browser-rendered fetch reported an HTTP error status (>= 400).
+   * Rendering the URL in full mode would open the same page in the same
+   * browser and print the error page as the book, so the caller must fail
+   * the conversion instead. Only produced where `fallback-full` would
+   * otherwise be chosen; never in mode "full", and never when the direct
+   * fetch succeeded (that disproves "the source errors on every path").
    */
   | { kind: "source-error"; status: number };
 
@@ -459,9 +460,10 @@ export async function fetchRenderedHtml(
  * print HTML when extraction succeeds, otherwise the original URL for the
  * classic full render. Never throws for extraction problems; the chosen path
  * is logged as "[jobId] extract path: aozora|fetch|browser|fallback-full".
- * The one exception to "always degrade to full" is a positive HTTP error
- * status from the browser fetch: that returns { kind: "source-error" } so the
- * caller fails instead of printing the error page.
+ * The one exception to "always degrade to full" is when the direct fetch
+ * produced no page AND the browser fetch reported a positive HTTP error
+ * status: that returns { kind: "source-error" } so the caller fails instead
+ * of printing the error page.
  */
 export async function prepareRenderInput(
   env: ExtractEnv,
@@ -535,15 +537,18 @@ export async function prepareRenderInput(
       return buildPrintInput(article, target.toString(), jobId, fontFetch, options, device);
     }
   }
-  if (rendered?.kind === "page-error") {
-    // The real browser was served an HTTP error for this URL, and the full
-    // render below would open the same URL in the same browser and print the
-    // error page as the book. This is the only case where the fail-soft chain
-    // gives up: everything else (content action broke, status unknown, direct
-    // fetch refused but the browser got the page) still ends in fallback-full.
+  if (rendered?.kind === "page-error" && fetched === null) {
+    // Neither the direct fetch nor the real browser got a page, and the
+    // browser was served an HTTP error: the full render below would open the
+    // same URL in the same browser and print the error page as the book.
+    // This is the only case where the fail-soft chain gives up. Everything
+    // else still ends in fallback-full: content action broke, status unknown,
+    // or the direct fetch DID return a page (so a full render may succeed even
+    // though the content action hit a 403/429/503).
     console.log(`[${jobId}] extract path: source-error`, {
       stage: "browser",
       status: rendered.status,
+      directFetch: "failed",
       host: target.host,
     });
     return { kind: "source-error", status: rendered.status };

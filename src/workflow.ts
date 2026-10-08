@@ -326,10 +326,12 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
     // never throws for extraction problems — prepareRenderInput degrades
     // internally, and a null articleKey just means "render the URL as
     // always" — so a broken extraction can never fail a job that full mode
-    // would have completed. The one deliberate exception: a positive HTTP
-    // error status from the browser fetch ({ kind: "source-error" }) fails
-    // the job, because full mode would print that same error page. The extracted HTML travels through R2, not the
-    // step return value (step outputs are capped at 1 MiB).
+    // would have completed. The one deliberate exception: when the direct
+    // fetch produced no page and the browser fetch reported a positive HTTP
+    // error status ({ kind: "source-error" }), the job fails, because full
+    // mode would print that same error page. The extracted HTML travels
+    // through R2, not the step return value (step outputs are capped at
+    // 1 MiB).
     let articleKey: string | null = null;
     let fontsKey: string | null = null;
     // True only when prepareRenderInput's dedicated Aozora extractor itself

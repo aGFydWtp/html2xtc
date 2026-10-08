@@ -294,11 +294,17 @@ describe("prepareRenderInput", () => {
       expect(input).toEqual({ kind: "source-error", status: 404 });
     });
 
-    it("returns source-error when the direct fetch got a thin page and the browser saw HTTP 500", async () => {
-      const { env } = forbiddenPage(500);
-      const input = await prepareRenderInput(env, target, JOB_ID, sourceShell, fontFetchFail);
-      expect(input).toEqual({ kind: "source-error", status: 500 });
-    });
+    it.each([403, 429, 500, 503])(
+      "degrades to full mode when the direct fetch returned a page (too thin) and only the browser saw HTTP %i",
+      async (status) => {
+        const { env, quickAction } = forbiddenPage(status);
+        const input = await prepareRenderInput(env, target, JOB_ID, sourceShell, fontFetchFail);
+        // A successful direct fetch disproves "the source errors on every
+        // path": the full render may still succeed, as it did before.
+        expect(input).toEqual({ kind: "url", url: target.toString() });
+        expect(quickAction).toHaveBeenCalledTimes(1);
+      },
+    );
 
     it("still extracts when the direct fetch was refused but the browser rendered the article", async () => {
       const { env, quickAction } = browserEnv({
@@ -356,7 +362,7 @@ describe("prepareRenderInput", () => {
         await prepareRenderInput(env, target, JOB_ID, sourceFail, fontFetchFail);
         expect(log).toHaveBeenCalledWith(
           `[${JOB_ID}] extract path: source-error`,
-          { stage: "browser", status: 403, host: "example.com" },
+          { stage: "browser", status: 403, directFetch: "failed", host: "example.com" },
         );
       } finally {
         log.mockRestore();

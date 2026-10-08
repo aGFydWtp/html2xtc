@@ -139,4 +139,32 @@ describe("resolveServerErrorKey", () => {
   it("still maps the structural EPUB-too-large EpubError string to the same key", () => {
     expect(resolveServerErrorKey("EPUB is too large to convert")).toBe("epub_err_too_large");
   });
+
+  // src/extract.ts#sourceErrorMessage: 取得先が HTTP エラーを返したときの 2 種の文言。
+  it("maps the source-site denied-access message (401/403/429)", () => {
+    expect(resolveServerErrorKey("source site denied access; try again later")).toBe(
+      "source_err_denied",
+    );
+    expect(
+      resolveServerErrorKey("NonRetryableError: source site denied access; try again later"),
+    ).toBe("source_err_denied");
+  });
+
+  it("maps the source-site HTTP-error message with any status number", () => {
+    expect(resolveServerErrorKey("source site returned an error (HTTP 404)")).toBe(
+      "source_err_http",
+    );
+    expect(resolveServerErrorKey("source site returned an error (HTTP 503)")).toBe(
+      "source_err_http",
+    );
+  });
+
+  it("does not map near-miss source-site strings", () => {
+    expect(resolveServerErrorKey("source site returned an error (HTTP )")).toBeNull();
+    expect(resolveServerErrorKey("source site returned an error (HTTP 40x)")).toBeNull();
+    expect(resolveServerErrorKey("source site returned an error (HTTP 404) extra")).toBeNull();
+    expect(resolveServerErrorKey("source site returned an error")).toBeNull();
+    expect(resolveServerErrorKey("source site denied access")).toBeNull();
+    expect(resolveServerErrorKey("source site denied access; try again later.")).toBeNull();
+  });
 });

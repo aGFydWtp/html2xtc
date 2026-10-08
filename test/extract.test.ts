@@ -2,8 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import {
   extractArticle,
   fetchRenderedHtml,
+  fetchSourceHtml,
   isExtractSufficient,
   prepareRenderInput,
+  sourceErrorMessage,
 } from "../src/extract";
 import type { SourceHtml } from "../src/extract";
 import type { FontFetcher } from "../src/fonts";
@@ -103,7 +105,7 @@ describe("fetchRenderedHtml", () => {
     });
     await expect(
       fetchRenderedHtml(env, "https://example.com/a", JOB_ID),
-    ).resolves.toBe(ARTICLE_HTML);
+    ).resolves.toEqual({ kind: "html", html: ARTICLE_HTML });
   });
 
   it("returns null when the action reports failure", async () => {
@@ -113,7 +115,7 @@ describe("fetchRenderedHtml", () => {
     ).resolves.toBeNull();
   });
 
-  it("returns null when the page itself errored (meta.status)", async () => {
+  it("reports the page's HTTP status when the page itself errored (meta.status)", async () => {
     const { env } = browserEnv({
       success: true,
       result: "<html><body>Not Found</body></html>",
@@ -121,7 +123,18 @@ describe("fetchRenderedHtml", () => {
     });
     await expect(
       fetchRenderedHtml(env, "https://example.com/gone", JOB_ID),
-    ).resolves.toBeNull();
+    ).resolves.toEqual({ kind: "page-error", status: 404 });
+  });
+
+  it("does not treat a 3xx/2xx meta.status as an error", async () => {
+    const { env } = browserEnv({
+      success: true,
+      result: ARTICLE_HTML,
+      meta: { status: 304 },
+    });
+    await expect(
+      fetchRenderedHtml(env, "https://example.com/a", JOB_ID),
+    ).resolves.toEqual({ kind: "html", html: ARTICLE_HTML });
   });
 
   it("returns null on a non-2xx action response", async () => {
@@ -258,5 +271,127 @@ describe("prepareRenderInput", () => {
       fontFetchFail,
     );
     expect(input).toEqual({ kind: "url", url: target.toString() });
+  });
+
+  describe("source HTTP errors (every stage refused)", () => {
+    const forbiddenPage = (status: number) =>
+      browserEnv({
+        success: true,
+        result: "<html><body>Forbidden</body></html>",
+        meta: { status },
+      });
+
+    it("returns source-error when the direct fetch failed and the browser saw HTTP 403", async () => {
+      const { env, quickAction } = forbiddenPage(403);
+      const input = await prepareRenderInput(env, target, JOB_ID, sourceFail, fontFetchFail);
+      expect(input).toEqual({ kind: "source-error", status: 403 });
+      expect(quickAction).toHaveBeenCalledTimes(1);
+    });
+
+    it("returns source-error with the browser's status for non-refusal errors too", async () => {
+      const { env } = forbiddenPage(404);
+      const input = await prepareRenderInput(env, target, JOB_ID, sourceFail, fontFetchFail);
+      expect(input).toEqual({ kind: "source-error", status: 404 });
+    });
+
+    it("returns source-error when the direct fetch got a thin page and the browser saw HTTP 500", async () => {
+      const { env } = forbiddenPage(500);
+      const input = await prepareRenderInput(env, target, JOB_ID, sourceShell, fontFetchFail);
+      expect(input).toEqual({ kind: "source-error", status: 500 });
+    });
+
+    it("still extracts when the direct fetch was refused but the browser rendered the article", async () => {
+      const { env, quickAction } = browserEnv({
+        success: true,
+        result: ARTICLE_HTML,
+        meta: { status: 200, title: "テスト記事のタイトル" },
+      });
+      const input = await prepareRenderInput(env, target, JOB_ID, sourceFail, fontFetchFail);
+      expect(input.kind).toBe("html");
+      expect(quickAction).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      ["a content action exception", () => ({
+        BROWSER: {
+          quickAction: async () => {
+            throw new Error("boom");
+          },
+        } as unknown as BrowserRun,
+        EXTRACT_MIN_CHARS: undefined,
+      })],
+      ["a non-2xx content action response", () => browserEnv({ success: false }, 429).env],
+      ["success:false", () => browserEnv({ success: false }).env],
+    ])("keeps degrading to full mode when the status is unknown (%s)", async (_label, makeEnv) => {
+      const input = await prepareRenderInput(makeEnv(), target, JOB_ID, sourceFail, fontFetchFail);
+      expect(input).toEqual({ kind: "url", url: target.toString() });
+    });
+
+    it("never returns source-error in full mode (Aozora URL with a failed dedicated extraction)", async () => {
+      const { env, quickAction } = forbiddenPage(403);
+      const aozora = new URL("https://www.aozora.gr.jp/cards/000148/files/789_14547.html");
+      const input = await prepareRenderInput(
+        env,
+        aozora,
+        JOB_ID,
+        sourceFail,
+        fontFetchFail,
+        "full",
+      );
+      expect(input).toEqual({ kind: "url", url: aozora.toString() });
+      expect(quickAction).not.toHaveBeenCalled();
+    });
+
+    it("fails an Aozora URL in extract mode when every stage was refused", async () => {
+      const { env } = forbiddenPage(403);
+      const aozora = new URL("https://www.aozora.gr.jp/cards/000148/files/789_14547.html");
+      const input = await prepareRenderInput(env, aozora, JOB_ID, sourceFail, fontFetchFail, "extract");
+      expect(input).toEqual({ kind: "source-error", status: 403 });
+    });
+
+    it("logs the status as a structured field", async () => {
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        const { env } = forbiddenPage(403);
+        await prepareRenderInput(env, target, JOB_ID, sourceFail, fontFetchFail);
+        expect(log).toHaveBeenCalledWith(
+          `[${JOB_ID}] extract path: source-error`,
+          { stage: "browser", status: 403, host: "example.com" },
+        );
+      } finally {
+        log.mockRestore();
+      }
+    });
+  });
+});
+
+describe("sourceErrorMessage", () => {
+  it.each([401, 403, 429])("uses the access-denied wording for %i", (status) => {
+    expect(sourceErrorMessage(status)).toBe("source site denied access; try again later");
+  });
+
+  it.each([400, 404, 410, 500, 503])("embeds the status for %i", (status) => {
+    expect(sourceErrorMessage(status)).toBe(`source site returned an error (HTTP ${status})`);
+  });
+});
+
+describe("fetchSourceHtml logging", () => {
+  it("logs the HTTP status of a rejected direct fetch as structured fields", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response("Forbidden", { status: 403 }));
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const result = await fetchSourceHtml(new URL("https://example.com/a"), JOB_ID);
+      expect(result).toBeNull();
+      expect(log).toHaveBeenCalledWith(`[${JOB_ID}] source fetch rejected`, {
+        reason: "http_status",
+        host: "example.com",
+        status: 403,
+      });
+    } finally {
+      fetchSpy.mockRestore();
+      log.mockRestore();
+    }
   });
 });

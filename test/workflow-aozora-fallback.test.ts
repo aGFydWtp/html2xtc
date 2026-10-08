@@ -478,3 +478,81 @@ describe("Aozora timeout fallback: normal success (no timeout at all)", () => {
     expect(step.callCounts["merge-aozora-fallback-pdf"]).toBeUndefined();
   });
 });
+
+// A source that answers with an HTTP error even to the real browser: the
+// extract-content step must fail the job instead of letting the full render
+// print the error page as the book.
+describe("extract-content: source HTTP error fails the job", () => {
+  const GENERAL_URL = "https://example.com/blocked";
+
+  function runExtract(env: Env, step: FakeWorkflowStep, url: string) {
+    const workflow = new ConvertWorkflow({} as never, env);
+    const payload: ConvertJobParams = { source: { kind: "url", url }, mode: "extract" };
+    const event: WorkflowEvent<ConvertJobParams> = {
+      payload,
+      timestamp: new Date(),
+      instanceId: JOB_ID,
+      workflowName: "convert",
+    };
+    return workflow.run(event, step as unknown as WorkflowStep);
+  }
+
+  it.each([
+    [403, "source site denied access; try again later"],
+    [429, "source site denied access; try again later"],
+    [404, "source site returned an error (HTTP 404)"],
+    [500, "source site returned an error (HTTP 500)"],
+  ])("HTTP %i -> NonRetryableError(%j), no render, no R2 writes, no retry", async (status, message) => {
+    const bucket = new FakeR2Bucket();
+    const step = new FakeWorkflowStep();
+    mockedPrepareRenderInput.mockResolvedValue({ kind: "source-error", status });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const failure = await runExtract(fakeEnv(bucket), step, GENERAL_URL).then(
+        () => null,
+        (error: unknown) => error,
+      );
+      expect(failure).toBeInstanceOf(NonRetryableError);
+      expect((failure as Error).message).toBe(message);
+      expect(log).toHaveBeenCalledWith(
+        `[${JOB_ID}] source returned an HTTP error; failing the job`,
+        { stage: "extract-content", status, host: "example.com" },
+      );
+    } finally {
+      log.mockRestore();
+    }
+
+    // extract-content has retries.limit = 1; a NonRetryableError must skip it.
+    expect(step.callCounts["extract-content"]).toBe(1);
+    expect(step.callCounts["render-pdf"]).toBeUndefined();
+    expect(mockedRenderPdf).not.toHaveBeenCalled();
+    expect(mockedRenderPdfFromHtml).not.toHaveBeenCalled();
+    expect(mockedConvertInContainer).not.toHaveBeenCalled();
+    // Nothing (article HTML, fonts, intermediate PDF, XTC) was written.
+    expect(bucket.objects.size).toBe(0);
+  });
+
+  it("fails an Aozora URL the same way", async () => {
+    const bucket = new FakeR2Bucket();
+    const step = new FakeWorkflowStep();
+    mockedPrepareRenderInput.mockResolvedValue({ kind: "source-error", status: 403 });
+    await expect(runExtract(fakeEnv(bucket), step, AOZORA_URL)).rejects.toThrow(
+      "source site denied access; try again later",
+    );
+    expect(mockedRenderPdf).not.toHaveBeenCalled();
+    expect(mockedRenderPdfFromHtml).not.toHaveBeenCalled();
+  });
+
+  it("still renders the URL when prepareRenderInput degrades to fallback-full", async () => {
+    const bucket = new FakeR2Bucket();
+    const step = new FakeWorkflowStep();
+    mockedPrepareRenderInput.mockResolvedValue({ kind: "url", url: GENERAL_URL });
+    const pdf = await onePagePdfBytes();
+    mockedRenderPdf.mockResolvedValue(new Response(pdf, { status: 200 }));
+
+    const result = (await runExtract(fakeEnv(bucket), step, GENERAL_URL)) as { xtcKey: string };
+
+    expect(result.xtcKey).toBe(outputXtcKey(JOB_ID));
+    expect(mockedRenderPdf).toHaveBeenCalledTimes(1);
+  });
+});

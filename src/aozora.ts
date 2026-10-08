@@ -181,15 +181,31 @@ export function extractAozoraArticle(
   html: string,
   url: string,
 ): ExtractedArticle | null {
+  const outcome = extractAozoraArticleOutcome(html, url);
+  return "article" in outcome ? outcome.article : null;
+}
+
+/** Why extractAozoraArticleOutcome produced no article (log field values). */
+type AozoraExtractFailureReason = "no_main_text" | "empty_main_text" | "exception";
+
+/**
+ * extractAozoraArticle with the reason for a null result kept, so
+ * prepareAozoraRenderInput can log it. The exported wrapper above preserves
+ * the original "article or null" contract.
+ */
+function extractAozoraArticleOutcome(
+  html: string,
+  url: string,
+): { article: ExtractedArticle } | { reason: AozoraExtractFailureReason } {
   try {
     const { document } = parseHTML(html);
     const main = document.querySelector("div.main_text");
     if (main === null) {
-      return null;
+      return { reason: "no_main_text" };
     }
     const bodyText = main.textContent ?? "";
     if (bodyText.trim().length === 0) {
-      return null;
+      return { reason: "empty_main_text" };
     }
 
     // h1.title / h2.author first (they may carry ruby: read them with rt/rp
@@ -227,18 +243,20 @@ export function extractAozoraArticle(
     }
 
     return {
-      title,
-      byline: author,
-      siteName: "青空文庫",
-      lang: "ja",
-      contentHtml,
-      textContent,
-      chapters,
-      chapterHeadingLevel,
+      article: {
+        title,
+        byline: author,
+        siteName: "青空文庫",
+        lang: "ja",
+        contentHtml,
+        textContent,
+        chapters,
+        chapterHeadingLevel,
+      },
     };
   } catch (error) {
     console.error(`extractAozoraArticle failed for ${url}`, error);
-    return null;
+    return { reason: "exception" };
   }
 }
 
@@ -260,15 +278,21 @@ export async function prepareAozoraRenderInput(
   try {
     const fetched = await fetchSource(target, jobId);
     if (fetched === null) {
+      // The fetcher's own structured log ("source fetch rejected") carries
+      // the HTTP status / content-type / size detail; this line records that
+      // the Aozora path ended here.
+      logAozoraUnavailable(jobId, target, { stage: "fetch", reason: "fetch_returned_null" });
       return null;
     }
-    const article = extractAozoraArticle(
+    const outcome = extractAozoraArticleOutcome(
       fetched.html,
       fetched.finalUrl.toString(),
     );
-    if (article === null) {
+    if (!("article" in outcome)) {
+      logAozoraUnavailable(jobId, target, { stage: "extract", reason: outcome.reason });
       return null;
     }
+    const article = outcome.article;
     const convertedAt = formatJstTimestamp(new Date());
     // Fail-soft like the default path: null fontCss makes renderPdfFromHtml
     // fall back to the @import variant of the print CSS.
@@ -295,9 +319,40 @@ export async function prepareAozoraRenderInput(
     };
   } catch (error) {
     // Fail-soft: the standard pipeline is the always-works baseline.
-    console.error(`[${jobId}] aozora preparation failed`, error);
+    logAozoraUnavailable(jobId, target, {
+      stage: "prepare",
+      reason: "exception",
+      errorName: error instanceof Error ? error.name : typeof error,
+      errorMessage: (error instanceof Error ? error.message : String(error)).slice(0, 200),
+    });
     return null;
   }
+}
+
+/**
+ * One structured log line per way prepareAozoraRenderInput can return null,
+ * so a degrade to the standard pipeline can be explained and aggregated in
+ * Workers Logs (filter on `stage` / `reason`). Values are object fields, not
+ * interpolated; only the host is logged — never the path, the body or any
+ * secret.
+ */
+function logAozoraUnavailable(
+  jobId: string,
+  target: URL,
+  fields: {
+    stage: "fetch" | "extract" | "prepare";
+    reason: string;
+    errorName?: string;
+    errorMessage?: string;
+  },
+): void {
+  // Expected degrades (fetch refused, no div.main_text) are plain log lines;
+  // an exception is the only unexpected one.
+  const log = fields.reason === "exception" ? console.error : console.log;
+  log(`[${jobId}] aozora render input unavailable`, {
+    ...fields,
+    host: target.host,
+  });
 }
 
 /**

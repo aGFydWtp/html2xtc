@@ -106,7 +106,30 @@ export type RenderInput =
        * doc comment. */
       chapterHeadingLevel?: 1 | 2 | null;
     }
-  | { kind: "url"; url: string };
+  | { kind: "url"; url: string }
+  /**
+   * The browser-rendered fetch of the source page reported an HTTP error
+   * status (>= 400), and every cheaper stage before it failed to produce an
+   * article. Rendering the URL in full mode would open the same page in the
+   * same browser and print the error page as the book, so the caller must
+   * fail the conversion instead. Only produced where `fallback-full` would
+   * otherwise be chosen; never in mode "full".
+   */
+  | { kind: "source-error"; status: number };
+
+/**
+ * Client-facing message for a { kind: "source-error" } outcome. The strings
+ * are matched exactly / by regex by the frontend
+ * (frontend/src/lib/server-error-text.ts), so keep the wording stable.
+ * 401/403/429 are access refusals (bot protection, rate limiting) and get the
+ * "denied access" wording; any other 4xx/5xx is just "returned an error", with
+ * the status embedded (same convention as the byte-limit messages).
+ */
+export function sourceErrorMessage(status: number): string {
+  return status === 401 || status === 403 || status === 429
+    ? "source site denied access; try again later"
+    : `source site returned an error (HTTP ${status})`;
+}
 
 /** Injection point for tests, mirroring validate.ts's DnsResolver pattern. */
 export type SourceHtmlFetcher = (
@@ -141,6 +164,9 @@ export async function fetchSourceHtml(
         await response.body?.cancel();
         const location = response.headers.get("Location");
         if (location === null) {
+          logSourceFetchRejected(jobId, current, "redirect_without_location", {
+            status: response.status,
+          });
           return null;
         }
         // Re-validate every hop (throws UrlValidationError -> null below).
@@ -152,6 +178,12 @@ export async function fetchSourceHtml(
 
       if (!response.ok) {
         await response.body?.cancel();
+        // The status is deliberately not part of the return value (a direct
+        // fetch 4xx alone never fails a job — the browser stage may still
+        // succeed), but it must reach the logs.
+        logSourceFetchRejected(jobId, current, "http_status", {
+          status: response.status,
+        });
         return null;
       }
 
@@ -161,24 +193,54 @@ export async function fetchSourceHtml(
         !/text\/html|application\/xhtml\+xml/i.test(contentType)
       ) {
         await response.body?.cancel();
+        logSourceFetchRejected(jobId, current, "content_type", {
+          status: response.status,
+          contentType: contentType === null ? null : contentType.slice(0, 100),
+        });
         return null;
       }
 
       const bytes = await readBodyCapped(response, MAX_SOURCE_HTML_BYTES);
       if (bytes === null) {
+        logSourceFetchRejected(jobId, current, "body_unreadable_or_too_large", {
+          status: response.status,
+        });
         return null;
       }
       const html = decodeHtml(bytes, contentType);
       if (html === null) {
+        logSourceFetchRejected(jobId, current, "charset_unsupported", {
+          status: response.status,
+        });
         return null;
       }
       return { html, finalUrl: current };
     }
-    return null; // too many redirects
+    logSourceFetchRejected(jobId, current, "too_many_redirects", {});
+    return null;
   } catch (error) {
     console.error(`[${jobId}] source fetch failed for ${target}`, error);
     return null;
   }
+}
+
+/**
+ * One structured log line for every fetchSourceHtml path that returns null
+ * without throwing, so "why did the direct fetch not yield a page" can be
+ * filtered/aggregated in Workers Logs. Values travel as object fields, never
+ * interpolated; only the host is logged (no path/query, no body).
+ */
+function logSourceFetchRejected(
+  jobId: string,
+  at: URL,
+  reason: string,
+  fields: { status?: number; contentType?: string | null },
+): void {
+  console.log(`[${jobId}] source fetch rejected`, {
+    reason,
+    host: at.host,
+    ...fields,
+  });
 }
 
 function isRedirectStatus(status: number): boolean {
@@ -322,16 +384,31 @@ export function isExtractSufficient(
 }
 
 /**
+ * Outcome of fetchRenderedHtml. `page-error` carries the page's own HTTP
+ * status (meta.status >= 400) as seen by a real browser — the one piece of
+ * positive evidence that a full render of the same URL would print an error
+ * page too. null means "no usable answer and no status" (request exception,
+ * non-2xx action response, bad JSON, success:false): the caller degrades as
+ * before.
+ */
+export type RenderedHtmlResult =
+  | { kind: "html"; html: string }
+  | { kind: "page-error"; status: number }
+  | null;
+
+/**
  * Browser Rendering fallback: fetches the JS-rendered HTML of the page via
  * quickAction("content"). Unlike the pdf action this returns JSON
  * ({ success, result, meta }), and meta.status carries the page's own HTTP
- * status. All failures are null (fail-soft, degrade to full mode).
+ * status. Failures are fail-soft (null → degrade to full mode), except that
+ * a page-level HTTP error is reported with its status so the orchestrator
+ * can tell "the site refused us" from "the action itself broke".
  */
 export async function fetchRenderedHtml(
   env: Pick<Env, "BROWSER">,
   url: string,
   jobId: string,
-): Promise<string | null> {
+): Promise<RenderedHtmlResult> {
   let response: Response;
   try {
     response = await env.BROWSER.quickAction("content", {
@@ -371,9 +448,9 @@ export async function fetchRenderedHtml(
   const pageStatus = body.meta?.status;
   if (typeof pageStatus === "number" && pageStatus >= 400) {
     console.error(`[${jobId}] content action: page returned HTTP ${pageStatus}`);
-    return null;
+    return { kind: "page-error", status: pageStatus };
   }
-  return body.result;
+  return { kind: "html", html: body.result };
 }
 
 /**
@@ -382,6 +459,9 @@ export async function fetchRenderedHtml(
  * print HTML when extraction succeeds, otherwise the original URL for the
  * classic full render. Never throws for extraction problems; the chosen path
  * is logged as "[jobId] extract path: aozora|fetch|browser|fallback-full".
+ * The one exception to "always degrade to full" is a positive HTTP error
+ * status from the browser fetch: that returns { kind: "source-error" } so the
+ * caller fails instead of printing the error page.
  */
 export async function prepareRenderInput(
   env: ExtractEnv,
@@ -446,14 +526,27 @@ export async function prepareRenderInput(
   }
 
   const rendered = await fetchRenderedHtml(env, target.toString(), jobId);
-  if (rendered !== null) {
+  if (rendered?.kind === "html") {
     // The content action reports no final URL; the submitted URL is the best
     // available base for resolving relative references.
-    const article = extractArticle(rendered, target.toString());
+    const article = extractArticle(rendered.html, target.toString());
     if (isExtractSufficient(article, env)) {
       console.log(`[${jobId}] extract path: browser`);
       return buildPrintInput(article, target.toString(), jobId, fontFetch, options, device);
     }
+  }
+  if (rendered?.kind === "page-error") {
+    // The real browser was served an HTTP error for this URL, and the full
+    // render below would open the same URL in the same browser and print the
+    // error page as the book. This is the only case where the fail-soft chain
+    // gives up: everything else (content action broke, status unknown, direct
+    // fetch refused but the browser got the page) still ends in fallback-full.
+    console.log(`[${jobId}] extract path: source-error`, {
+      stage: "browser",
+      status: rendered.status,
+      host: target.host,
+    });
+    return { kind: "source-error", status: rendered.status };
   }
 
   console.log(`[${jobId}] extract path: fallback-full`);

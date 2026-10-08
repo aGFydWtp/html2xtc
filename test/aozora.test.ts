@@ -642,6 +642,98 @@ describe("prepareAozoraRenderInput", () => {
   });
 });
 
+describe("prepareAozoraRenderInput failure logging", () => {
+  const prepare = (source: SourceHtmlFetcher) =>
+    prepareAozoraRenderInput(
+      new URL(AOZORA_URL),
+      JOB_ID,
+      source,
+      fontFetchFail,
+      VERTICAL_MINCHO,
+    );
+
+  /** Runs `body` with console.log/error captured; returns the calls. */
+  async function captureLogs(body: () => Promise<void>) {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await body();
+      return { log: [...log.mock.calls], error: [...error.mock.calls] };
+    } finally {
+      log.mockRestore();
+      error.mockRestore();
+    }
+  }
+
+  it("logs stage=fetch when the fetcher returns null", async () => {
+    const logs = await captureLogs(async () => {
+      await expect(prepare(async () => null)).resolves.toBeNull();
+    });
+    expect(logs.log).toContainEqual([
+      `[${JOB_ID}] aozora render input unavailable`,
+      { stage: "fetch", reason: "fetch_returned_null", host: "www.aozora.gr.jp" },
+    ]);
+  });
+
+  it("logs stage=extract / no_main_text for a page without div.main_text", async () => {
+    const logs = await captureLogs(async () => {
+      await expect(
+        prepare(async () => ({
+          html: "<html><body><p>old format</p></body></html>",
+          finalUrl: new URL(AOZORA_URL),
+        })),
+      ).resolves.toBeNull();
+    });
+    expect(logs.log).toContainEqual([
+      `[${JOB_ID}] aozora render input unavailable`,
+      { stage: "extract", reason: "no_main_text", host: "www.aozora.gr.jp" },
+    ]);
+  });
+
+  it("logs stage=extract / empty_main_text for an empty div.main_text", async () => {
+    const logs = await captureLogs(async () => {
+      await expect(
+        prepare(async () => ({
+          html: '<html><body><div class="main_text">  </div></body></html>',
+          finalUrl: new URL(AOZORA_URL),
+        })),
+      ).resolves.toBeNull();
+    });
+    expect(logs.log).toContainEqual([
+      `[${JOB_ID}] aozora render input unavailable`,
+      { stage: "extract", reason: "empty_main_text", host: "www.aozora.gr.jp" },
+    ]);
+  });
+
+  it("logs stage=prepare / exception with name and message (no body) when the fetcher throws", async () => {
+    const logs = await captureLogs(async () => {
+      await expect(
+        prepare(async () => {
+          throw new TypeError("boom");
+        }),
+      ).resolves.toBeNull();
+    });
+    expect(logs.error).toContainEqual([
+      `[${JOB_ID}] aozora render input unavailable`,
+      {
+        stage: "prepare",
+        reason: "exception",
+        errorName: "TypeError",
+        errorMessage: "boom",
+        host: "www.aozora.gr.jp",
+      },
+    ]);
+  });
+
+  it("logs nothing about unavailability on success", async () => {
+    const logs = await captureLogs(async () => {
+      await expect(prepare(sourceAozora)).resolves.not.toBeNull();
+    });
+    const all = [...logs.log, ...logs.error].map((c) => String(c[0]));
+    expect(all.some((m) => m.includes("render input unavailable"))).toBe(false);
+  });
+});
+
 describe("prepareRenderInput routing", () => {
   it("runs the aozora extraction for Aozora URLs regardless of mode", async () => {
     const { env, quickAction } = browserEnv();

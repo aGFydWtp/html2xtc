@@ -204,6 +204,9 @@ export interface Messages {
   epub_err_empty_spine: string;
   epub_err_encrypted: string;
   epub_err_fixed_layout: string;
+  /** 取得先が HTTP エラーを返し、Worker がジョブを失敗にした場合（src/extract.ts#sourceErrorMessage）。 */
+  source_err_denied: string;
+  source_err_http: string;
   /** ジョブ状態 "preparing" の EPUB 版表示（実装仕様書 §15「EPUB解析中」）。 */
   epub_status_preparing: string;
 
@@ -724,6 +727,8 @@ export const I18N: Record<Lang, Messages> = {
     epub_err_empty_spine: "EPUBに読み込めるコンテンツがありません。",
     epub_err_encrypted: "暗号化されたEPUBには対応していません。",
     epub_err_fixed_layout: "固定レイアウトのEPUBには対応していません。",
+    source_err_denied: "取得先がアクセスを拒否しました。時間をおいて再度お試しください。",
+    source_err_http: "取得先がエラーを返しました。",
     epub_status_preparing: "EPUB解析中",
 
     file_err_unsupported_type: "対応していないファイル形式です。PDF・TXT・EPUB のいずれかを選択してください。",
@@ -1228,6 +1233,8 @@ export const I18N: Record<Lang, Messages> = {
     epub_err_empty_spine: "EPUB contains no readable content.",
     epub_err_encrypted: "Encrypted EPUB files are not supported.",
     epub_err_fixed_layout: "Fixed-layout EPUB files are not supported.",
+    source_err_denied: "The source site denied access. Please try again later.",
+    source_err_http: "The source site returned an error.",
     epub_status_preparing: "Parsing EPUB",
 
     file_err_unsupported_type: "Unsupported file type. Please select a PDF, TXT, or EPUB file.",

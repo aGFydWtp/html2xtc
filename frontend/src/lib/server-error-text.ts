@@ -62,6 +62,8 @@ export type ServerErrorKey = keyof Pick<
   | "epub_err_empty_spine"
   | "epub_err_encrypted"
   | "epub_err_fixed_layout"
+  | "source_err_denied"
+  | "source_err_http"
 >;
 
 /** サーバーのエラー文字列から対応する i18n キーを解決する。未知のものは null。 */
@@ -161,6 +163,12 @@ export function resolveServerErrorKey(err: string): ServerErrorKey | null {
   if (err === "EPUB contains no readable content") return "epub_err_empty_spine";
   if (err === "encrypted EPUB is not supported") return "epub_err_encrypted";
   if (err === "fixed-layout EPUB is not supported") return "epub_err_fixed_layout";
+
+  // --- 取得先（URL ソース）が HTTP エラーを返した場合（src/extract.ts#sourceErrorMessage）。
+  //     401/403/429 は固定文言、それ以外の 4xx/5xx はステータス番号を埋め込む。
+  //     番号は表示せず静的文言にする（serverErrorText は引数付きメッセージを扱わない）。
+  if (err === "source site denied access; try again later") return "source_err_denied";
+  if (/^source site returned an error \(HTTP \d+\)$/.test(err)) return "source_err_http";
 
   return null;
 }

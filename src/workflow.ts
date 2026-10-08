@@ -43,7 +43,7 @@ import {
 import { EpubError } from "./epub/errors";
 import { prepareEpubDocument } from "./epub/html";
 import { resolveMaxUploadEpubBytes } from "./epub-upload";
-import { prepareRenderInput } from "./extract";
+import { prepareRenderInput, sourceErrorMessage } from "./extract";
 import { resolveAozoraTimeoutFallbackEnabled } from "./feature-flags";
 import { buildInlineFontCss } from "./fonts";
 import {
@@ -326,8 +326,12 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
     // never throws for extraction problems — prepareRenderInput degrades
     // internally, and a null articleKey just means "render the URL as
     // always" — so a broken extraction can never fail a job that full mode
-    // would have completed. The extracted HTML travels through R2, not the
-    // step return value (step outputs are capped at 1 MiB).
+    // would have completed. The one deliberate exception: when the direct
+    // fetch produced no page and the browser fetch reported a positive HTTP
+    // error status ({ kind: "source-error" }), the job fails, because full
+    // mode would print that same error page. The extracted HTML travels
+    // through R2, not the step return value (step outputs are capped at
+    // 1 MiB).
     let articleKey: string | null = null;
     let fontsKey: string | null = null;
     // True only when prepareRenderInput's dedicated Aozora extractor itself
@@ -385,6 +389,18 @@ export class ConvertWorkflow extends WorkflowEntrypoint<Env, ConvertJobParams> {
             options,
             device,
           );
+          if (input.kind === "source-error") {
+            // The source answered with an HTTP error even to the real
+            // browser, so the full render would just print the error page as
+            // the book. Retrying cannot change that: fail terminally, before
+            // anything is written to R2.
+            console.log(`[${jobId}] source returned an HTTP error; failing the job`, {
+              stage: "extract-content",
+              status: input.status,
+              host: new URL(url).host,
+            });
+            throw new NonRetryableError(sourceErrorMessage(input.status));
+          }
           if (input.kind === "url") {
             return {
               articleKey: null,

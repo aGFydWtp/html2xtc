@@ -22,7 +22,7 @@ import {
   peekLeadingBytes,
   resolveMaxUploadEpubBytes,
 } from "./epub-upload";
-import { prepareRenderInput } from "./extract";
+import { prepareRenderInput, sourceErrorMessage } from "./extract";
 import { resolveConversionMode } from "./feature-flags";
 import { registerInternalRoutes } from "./internal/routes";
 import {
@@ -892,6 +892,17 @@ async function handleConvert(request: Request, env: Env): Promise<Response> {
         options,
         deviceProfile,
       );
+      if (input.kind === "source-error") {
+        // Same condition as the Workflow's extract-content step: the source
+        // answered with an HTTP error, so rendering would print the error
+        // page as the book.
+        console.log(`[${jobId}] source returned an HTTP error; rejecting the conversion`, {
+          stage: "convert",
+          status: input.status,
+          host: target.host,
+        });
+        return Response.json({ error: sourceErrorMessage(input.status), jobId }, { status: 502 });
+      }
       if (input.kind === "html") {
         chapters = input.chapters ?? [];
       }
